@@ -78,8 +78,7 @@ end $$;
 -- Core identity & user profile
 -- -----------------------------------------------------------------------------
 create table if not exists public.users (
-  id uuid primary key default gen_random_uuid(),
-  auth_user_id uuid unique references auth.users(id) on delete set null,
+  id uuid primary key references auth.users(id) on delete cascade,
   telegram_id bigint unique,
   telegram_username text,
   name text,
@@ -400,22 +399,21 @@ alter table public.support_tickets enable row level security;
 alter table public.support_messages enable row level security;
 alter table public.admin_audit_logs enable row level security;
 alter table public.notification_jobs enable row level security;
-alter table public.app_sessions enable row level security;
 alter table public.api_cache enable row level security;
 
 -- users
 create policy if not exists users_select_own
   on public.users for select
-  using (id = auth.uid() or auth_user_id = auth.uid() or public.current_user_is_admin());
+  using (id = auth.uid() or public.current_user_is_admin());
 
 create policy if not exists users_update_own
   on public.users for update
-  using (id = auth.uid() or auth_user_id = auth.uid() or public.current_user_is_admin())
-  with check (id = auth.uid() or auth_user_id = auth.uid() or public.current_user_is_admin());
+  using (id = auth.uid() or public.current_user_is_admin())
+  with check (id = auth.uid() or public.current_user_is_admin());
 
 create policy if not exists users_insert_self
   on public.users for insert
-  with check (id = auth.uid() or auth_user_id = auth.uid() or public.current_user_is_admin());
+  with check (id = auth.uid() or public.current_user_is_admin());
 
 -- plans (public readable)
 create policy if not exists plans_read_all
