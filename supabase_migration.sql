@@ -1,44 +1,61 @@
--- Migration file for Flash AI Supabase Database
-
--- 1. Create the users table
-CREATE TABLE IF NOT EXISTS users (
-    id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
-    telegram_id BIGINT UNIQUE NOT NULL,
+-- Create profiles table
+CREATE TABLE IF NOT EXISTS public.profiles (
+    id BIGINT PRIMARY KEY, -- Telegram User ID
     username TEXT,
-    full_name TEXT,
-    phone_number TEXT,
-    role TEXT DEFAULT 'user' CHECK (role IN ('user', 'admin')),
-    created_at TIMESTAMPTZ DEFAULT now()
+    first_name TEXT,
+    last_name TEXT,
+    credits INTEGER DEFAULT 150,
+    referral_code TEXT UNIQUE,
+    referred_by BIGINT REFERENCES public.profiles(id),
+    created_at TIMESTAMP WITH TIME ZONE DEFAULT timezone('utc'::text, now()) NOT NULL
 );
 
--- 2. Enable Row Level Security (Optional but recommended)
-ALTER TABLE users ENABLE ROW LEVEL SECURITY;
-
--- 3. Create basic policies (Adjust based on your security needs)
--- Note: Since the Telegram bot handles registration server-side, 
--- you might want to use the Service Role Key to bypass RLS in server.ts.
--- If using the Anon Key, these policies allow basic operations:
-
--- Allow anyone to check if a user exists (needed for bot start)
-CREATE POLICY "Allow public select" ON users FOR SELECT USING (true);
-
--- Allow anyone to register (needed for bot contact handler)
-CREATE POLICY "Allow public insert" ON users FOR INSERT WITH CHECK (true);
-
--- Allow users to update their own info (if needed later)
--- This is a simple policy; in production, you'd want more strict checks.
-CREATE POLICY "Allow individual update" ON users FOR UPDATE USING (true);
-
--- 4. (Optional) Create a matches table if you want to store fixtures in the DB later
-/*
-CREATE TABLE IF NOT EXISTS matches (
-    id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+-- Create predictions table
+CREATE TABLE IF NOT EXISTS public.predictions (
+    id UUID DEFAULT gen_random_uuid() PRIMARY KEY,
+    user_id BIGINT REFERENCES public.profiles(id) ON DELETE CASCADE,
+    match_id BIGINT,
     home_team TEXT NOT NULL,
     away_team TEXT NOT NULL,
-    league TEXT NOT NULL,
-    match_time TIMESTAMPTZ NOT NULL,
-    home_logo TEXT,
-    away_logo TEXT,
-    created_at TIMESTAMPTZ DEFAULT now()
+    league TEXT,
+    prediction TEXT,
+    confidence INTEGER,
+    odds TEXT,
+    analysis TEXT,
+    created_at TIMESTAMP WITH TIME ZONE DEFAULT timezone('utc'::text, now()) NOT NULL
 );
-*/
+
+-- Set up Row Level Security (RLS)
+ALTER TABLE public.profiles ENABLE ROW LEVEL SECURITY;
+ALTER TABLE public.predictions ENABLE ROW LEVEL SECURITY;
+
+-- Profiles policies
+CREATE POLICY "Users can view their own profile" 
+ON public.profiles FOR SELECT 
+USING (auth.uid()::text = id::text OR true); -- Simplified for Mini App context if not using Supabase Auth directly
+
+CREATE POLICY "Users can update their own profile" 
+ON public.profiles FOR UPDATE 
+USING (true);
+
+-- Predictions policies
+CREATE POLICY "Users can view their own predictions" 
+ON public.predictions FOR SELECT 
+USING (true);
+
+CREATE POLICY "Users can insert their own predictions" 
+ON public.predictions FOR INSERT 
+WITH CHECK (true);
+
+-- Function to handle new user credits/referrals could be added here
+
+-- Create api_cache table for global API caching
+CREATE TABLE IF NOT EXISTS public.api_cache (
+    endpoint TEXT PRIMARY KEY,
+    data JSONB NOT NULL,
+    updated_at TIMESTAMP WITH TIME ZONE DEFAULT timezone('utc'::text, now()) NOT NULL
+);
+
+ALTER TABLE public.api_cache ENABLE ROW LEVEL SECURITY;
+CREATE POLICY "Public read access for api_cache" ON public.api_cache FOR SELECT USING (true);
+CREATE POLICY "Service role write access for api_cache" ON public.api_cache FOR ALL USING (true);
