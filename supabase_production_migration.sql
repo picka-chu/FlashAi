@@ -100,6 +100,7 @@ create table if not exists public.users (
 );
 
 create index if not exists idx_users_telegram_id on public.users (telegram_id);
+create index if not exists idx_users_auth_user_id on public.users (auth_user_id);
 create index if not exists idx_users_role_status on public.users (role, status);
 create unique index if not exists idx_users_referral_code_unique
   on public.users (lower(referral_code))
@@ -353,6 +354,20 @@ before update on public.notification_jobs
 for each row
 execute function public.set_updated_at();
 
+create table if not exists public.app_sessions (
+  id uuid primary key default gen_random_uuid(),
+  user_id uuid not null references public.users(id) on delete cascade,
+  refresh_token_hash text not null unique,
+  expires_at timestamptz not null,
+  last_used_at timestamptz,
+  revoked_at timestamptz,
+  ip_address inet,
+  user_agent text,
+  created_at timestamptz not null default timezone('utc', now())
+);
+
+create index if not exists idx_app_sessions_user_expires on public.app_sessions (user_id, expires_at);
+
 create table if not exists public.api_cache (
   key text primary key,
   data jsonb not null,
@@ -536,6 +551,23 @@ create policy if not exists notification_read_own
 
 create policy if not exists notification_admin_write
   on public.notification_jobs for all
+  using (public.current_user_is_admin())
+  with check (public.current_user_is_admin());
+
+-- app sessions
+create policy if not exists app_sessions_read_own
+  on public.app_sessions for select
+  using (
+    user_id in (
+      select u.id
+      from public.users u
+      where u.id = auth.uid() or u.auth_user_id = auth.uid()
+    )
+    or public.current_user_is_admin()
+  );
+
+create policy if not exists app_sessions_admin_write
+  on public.app_sessions for all
   using (public.current_user_is_admin())
   with check (public.current_user_is_admin());
 

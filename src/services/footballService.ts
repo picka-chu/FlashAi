@@ -2,13 +2,6 @@ import axios from 'axios';
 import { MatchData, TeamStats } from '../types/prediction';
 import { fetchLiveMatchesFallback, getTopFixturesFromSearch } from './geminiService';
 
-const API_KEY = 'cd225a94-3811-4d50-9f5d-0e1d458ddb0a';
-const API_BASE = 'https://v2.football.sportsapipro.com/api';
-
-const HEADERS = {
-  'x-api-key': API_KEY
-};
-
 const ESPN_BASE = 'https://site.api.espn.com/apis/site/v2/sports/soccer';
 
 const POPULAR_LEAGUES = [
@@ -270,56 +263,6 @@ export async function getMatchDetails(fixtureId: number | string, match?: any): 
     }
   }
 
-  // Fallback to sportsapipro if needed
-  let sportsApiId = idStr;
-  if (sportsApiId.startsWith('espn_') && match) {
-    try {
-      const dateStr = new Date(match.fixture?.date || Date.now()).toISOString().split('T')[0];
-      const res = await axios.get(`${API_BASE}/matches`, {
-        headers: HEADERS,
-        params: { date: dateStr }
-      });
-      const events = res.data.events || [];
-      const found = events.find((e: any) => 
-        (e.homeTeam.toLowerCase().includes(match.home.toLowerCase()) || match.home.toLowerCase().includes(e.homeTeam.toLowerCase())) &&
-        (e.awayTeam.toLowerCase().includes(match.away.toLowerCase()) || match.away.toLowerCase().includes(e.awayTeam.toLowerCase()))
-      );
-      if (found) {
-        sportsApiId = found.id.toString();
-      }
-    } catch (e: any) {
-      // Ignore
-    }
-  }
-
-  if (sportsApiId.startsWith('sportsapi_')) {
-    sportsApiId = sportsApiId.replace('sportsapi_', '');
-  }
-
-  if (!sportsApiId.startsWith('espn_')) {
-    try {
-      const statsRes = await axios.get(`${API_BASE}/match/${sportsApiId}/statistics`, { headers: HEADERS }).catch(() => null);
-      const h2hRes = await axios.get(`${API_BASE}/match/${sportsApiId}/h2h`, { headers: HEADERS }).catch(() => null);
-      
-      if (h2hRes?.data?.data?.teamDuel) {
-        const duel = h2hRes.data.data.teamDuel;
-        homeStats.last5.results = Array(duel.homeWins).fill('W').concat(Array(duel.draws).fill('D')).concat(Array(duel.awayWins).fill('L'));
-        awayStats.last5.results = Array(duel.awayWins).fill('W').concat(Array(duel.draws).fill('D')).concat(Array(duel.homeWins).fill('L'));
-      }
-      
-      if (statsRes?.data?.data?.statistics) {
-        const stats = statsRes.data.data.statistics[0]?.groups?.[0]?.statisticsItems || [];
-        const possession = stats.find((s: any) => s.key === 'ballPossession');
-        if (possession) {
-          homeStats.season.played = 10;
-          awayStats.season.played = 10;
-        }
-      }
-    } catch (e: any) {
-      // Ignore
-    }
-  }
-
   return {
     id: idStr,
     home: homeStats,
@@ -365,22 +308,6 @@ export async function getLiveMatches() {
     let mapped: any[] = [];
     if (liveEvents.length > 0) {
       mapped = liveEvents.map((e: any) => mapESPNEvent(e, e._leagueSlug || 'soccer'));
-    }
-
-    // If ESPN is thin, fallback to SportsAPIPro
-    if (mapped.length < 5) {
-      const sportsApiRes = await axios.get(`${API_BASE}/live`, { headers: HEADERS }).catch(() => ({ data: { events: [] } }));
-      const sportsEvents = sportsApiRes.data.events || [];
-      const mappedSports = sportsEvents.map(mapSportsApiEvent);
-      
-      // Merge and remove duplicates by team names
-      const existingTeams = new Set(mapped.map(m => `${m.teams.home.name}-${m.teams.away.name}`));
-      mappedSports.forEach(m => {
-        const key = `${m.teams.home.name}-${m.teams.away.name}`;
-        if (!existingTeams.has(key)) {
-          mapped.push(m);
-        }
-      });
     }
 
     if (mapped.length > 0) {

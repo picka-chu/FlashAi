@@ -8,13 +8,12 @@ import { History } from "./pages/History";
 import { Profile } from "./pages/Profile";
 import { useTelegram } from "./hooks/useTelegram";
 import { useUserStore } from "./store/useUserStore";
-import { supabase } from "./lib/supabase";
 import { motion, AnimatePresence } from "motion/react";
 import { useMarketingBot } from "./hooks/useMarketingBot";
 
 export default function App() {
   const [activeTab, setActiveTab] = useState<TabType>("home");
-  const { user: tgUser, isReady, setHeaderColor, setBackgroundColor } = useTelegram();
+  const { initData, isReady, setHeaderColor, setBackgroundColor } = useTelegram();
   const { setUser, isLoading, setLoading } = useUserStore();
 
   useMarketingBot();
@@ -27,32 +26,36 @@ export default function App() {
   }, [isReady, setHeaderColor, setBackgroundColor]);
 
   useEffect(() => {
-    const fetchProfile = async () => {
-      if (!tgUser?.id || !supabase) {
+    const authenticateTelegramUser = async () => {
+      if (!initData) {
         setLoading(false);
         return;
       }
 
       try {
-        const { data, error } = await supabase
-          .from('users')
-          .select('*')
-          .eq('telegram_id', tgUser.id)
-          .single();
+        const authRes = await fetch("/api/auth/telegram/exchange", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ initData }),
+        });
 
-        if (error && error.code === 'PGRST116') {
-          console.warn("User not found in 'users' table.");
+        if (!authRes.ok) {
+          console.error("Telegram auth exchange failed");
           setLoading(false);
-        } else if (data) {
-          setUser({
-            id: data.id,
-            telegram_id: data.telegram_id,
-            name: data.name,
-            phone: data.phone,
-            credits: data.credits || 0,
-            plan: data.plan || "free",
-            photo_url: data.photo_url
-          });
+          return;
+        }
+
+        const authData = await authRes.json();
+        if (authData?.accessToken) {
+          localStorage.setItem("flash_ai_access_token", authData.accessToken);
+        }
+        if (authData?.refreshToken) {
+          localStorage.setItem("flash_ai_refresh_token", authData.refreshToken);
+        }
+
+        if (authData?.user) {
+          setUser(authData.user);
+          return;
         }
       } catch (err) {
         console.error("Error fetching profile:", err);
@@ -60,12 +63,35 @@ export default function App() {
       }
     };
 
-    if (tgUser?.id) {
-      fetchProfile();
-    } else if (isReady && !tgUser) {
+    if (isReady && initData) {
+      authenticateTelegramUser();
+    } else if (isReady && !initData) {
       setLoading(false);
     }
-  }, [tgUser, isReady, setUser, setLoading]);
+  }, [initData, isReady, setUser, setLoading]);
+
+  useEffect(() => {
+    const interval = setInterval(async () => {
+      const refreshToken = localStorage.getItem("flash_ai_refresh_token");
+      if (!refreshToken) return;
+      try {
+        const res = await fetch("/api/auth/refresh", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ refreshToken }),
+        });
+        if (!res.ok) return;
+        const data = await res.json();
+        if (data?.accessToken) {
+          localStorage.setItem("flash_ai_access_token", data.accessToken);
+        }
+      } catch {
+        // Silent refresh errors are non-fatal for UI rendering.
+      }
+    }, 10 * 60 * 1000);
+
+    return () => clearInterval(interval);
+  }, []);
 
   const renderPage = () => {
     switch (activeTab) {

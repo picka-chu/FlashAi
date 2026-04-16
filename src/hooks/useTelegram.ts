@@ -12,6 +12,7 @@ export const useTelegram = () => {
   const [user, setUser] = useState<any>(null);
   const [theme, setTheme] = useState<any>(null);
   const [isReady, setIsReady] = useState(false);
+  const [initData, setInitData] = useState<string>('');
 
   const tg = typeof window !== 'undefined' ? window.Telegram?.WebApp : null;
 
@@ -20,6 +21,7 @@ export const useTelegram = () => {
       tg.ready();
       tg.expand();
       setUser(tg.initDataUnsafe?.user);
+      setInitData(tg.initData || '');
       setTheme(tg.themeParams);
       setIsReady(true);
 
@@ -87,6 +89,7 @@ export const useTelegram = () => {
   return {
     tg,
     user,
+    initData,
     theme,
     hapticFeedback,
     showAlert,
