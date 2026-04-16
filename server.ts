@@ -8,6 +8,7 @@ import axios from "axios";
 import path from "path";
 import { fileURLToPath } from "url";
 import fs from "fs";
+import crypto from "crypto";
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
@@ -22,12 +23,201 @@ if (!supabaseUrl || !supabaseKey || supabaseUrl === "YOUR_SUPABASE_URL") {
 
 const supabase = createClient(supabaseUrl || "https://placeholder.supabase.co", supabaseKey || "placeholder");
 
+const SESSION_SECRET = process.env.APP_SESSION_SECRET || "dev_session_secret_change_me";
+const REFRESH_SECRET = process.env.APP_REFRESH_SECRET || "dev_refresh_secret_change_me";
+const SESSION_TTL_SECONDS = 15 * 60;
+const REFRESH_TTL_SECONDS = 30 * 24 * 60 * 60;
+
+type TelegramAuthPayload = {
+  telegram_id: number;
+  username?: string;
+  first_name?: string;
+  last_name?: string;
+  iat: number;
+  exp: number;
+};
+
+function signToken(payload: TelegramAuthPayload, secret: string): string {
+  const header = Buffer.from(JSON.stringify({ alg: "HS256", typ: "JWT" })).toString("base64url");
+  const body = Buffer.from(JSON.stringify(payload)).toString("base64url");
+  const signature = crypto.createHmac("sha256", secret).update(`${header}.${body}`).digest("base64url");
+  return `${header}.${body}.${signature}`;
+}
+
+function verifyToken(token: string, secret: string): TelegramAuthPayload | null {
+  const parts = token.split(".");
+  if (parts.length !== 3) return null;
+  const [header, body, signature] = parts;
+  const expected = crypto.createHmac("sha256", secret).update(`${header}.${body}`).digest("base64url");
+  if (!crypto.timingSafeEqual(Buffer.from(signature), Buffer.from(expected))) return null;
+  try {
+    const payload = JSON.parse(Buffer.from(body, "base64url").toString("utf-8")) as TelegramAuthPayload;
+    if (payload.exp < Math.floor(Date.now() / 1000)) return null;
+    return payload;
+  } catch {
+    return null;
+  }
+}
+
+function verifyTelegramInitData(initData: string, botToken: string) {
+  const params = new URLSearchParams(initData);
+  const hash = params.get("hash");
+  if (!hash) return null;
+  params.delete("hash");
+  const pairs = Array.from(params.entries())
+    .map(([k, v]) => `${k}=${v}`)
+    .sort();
+  const dataCheckString = pairs.join("\n");
+  const secretKey = crypto.createHmac("sha256", "WebAppData").update(botToken).digest();
+  const hmac = crypto.createHmac("sha256", secretKey).update(dataCheckString).digest("hex");
+  if (!crypto.timingSafeEqual(Buffer.from(hmac), Buffer.from(hash))) return null;
+  const authDate = Number(params.get("auth_date") || 0);
+  if (!authDate || Date.now() / 1000 - authDate > 3600) return null;
+  const userRaw = params.get("user");
+  if (!userRaw) return null;
+  return JSON.parse(userRaw);
+}
+
 async function startServer() {
   const app = new Hono();
   const PORT = 3000;
 
   // API Routes
   app.get("/api/health", (c) => c.json({ status: "ok" }));
+
+  app.post("/api/auth/telegram/exchange", async (c) => {
+    const botToken = process.env.TELEGRAM_BOT_TOKEN;
+    if (!botToken) return c.json({ error: "Bot token not configured" }, 500);
+
+    try {
+      const { initData } = await c.req.json();
+      if (!initData || typeof initData !== "string") return c.json({ error: "Missing initData" }, 400);
+
+      const telegramUser = verifyTelegramInitData(initData, botToken);
+      if (!telegramUser?.id) return c.json({ error: "Invalid Telegram auth payload" }, 401);
+
+      const fullName = `${telegramUser.first_name || ""} ${telegramUser.last_name || ""}`.trim() || "Telegram User";
+      const telegramId = Number(telegramUser.id);
+
+      let { data: user, error } = await supabase
+        .from("users")
+        .select("*")
+        .eq("telegram_id", telegramId)
+        .single();
+
+      if (error && error.code !== "PGRST116") {
+        console.error("Auth user fetch error:", error);
+        return c.json({ error: "Database error" }, 500);
+      }
+
+      if (!user) {
+        const { data: inserted, error: insertError } = await supabase
+          .from("users")
+          .insert([
+            {
+              telegram_id: telegramId,
+              telegram_username: telegramUser.username || null,
+              name: fullName,
+              credits: 5,
+              plan: "free",
+              role: "user",
+              status: "active",
+              last_active_at: new Date().toISOString(),
+            },
+          ])
+          .select("*")
+          .single();
+        if (insertError) {
+          console.error("Auth user insert error:", insertError);
+          return c.json({ error: "Failed to create user" }, 500);
+        }
+        user = inserted;
+      } else {
+        await supabase
+          .from("users")
+          .update({ last_active_at: new Date().toISOString() })
+          .eq("id", user.id);
+      }
+
+      const now = Math.floor(Date.now() / 1000);
+      const accessToken = signToken(
+        {
+          telegram_id: telegramId,
+          username: telegramUser.username,
+          first_name: telegramUser.first_name,
+          last_name: telegramUser.last_name,
+          iat: now,
+          exp: now + SESSION_TTL_SECONDS,
+        },
+        SESSION_SECRET,
+      );
+      const refreshToken = signToken(
+        {
+          telegram_id: telegramId,
+          username: telegramUser.username,
+          first_name: telegramUser.first_name,
+          last_name: telegramUser.last_name,
+          iat: now,
+          exp: now + REFRESH_TTL_SECONDS,
+        },
+        REFRESH_SECRET,
+      );
+
+      return c.json({
+        accessToken,
+        refreshToken,
+        expiresIn: SESSION_TTL_SECONDS,
+        user: {
+          id: user.id,
+          telegram_id: user.telegram_id,
+          name: user.name,
+          username: user.telegram_username || telegramUser.username || undefined,
+          plan: user.plan || "free",
+          credits: user.credits || 0,
+          photo_url: user.photo_url || undefined,
+        },
+      });
+    } catch (e: any) {
+      console.error("Auth exchange error:", e.message);
+      return c.json({ error: "Auth exchange failed" }, 500);
+    }
+  });
+
+  app.post("/api/auth/refresh", async (c) => {
+    try {
+      const { refreshToken } = await c.req.json();
+      if (!refreshToken || typeof refreshToken !== "string") return c.json({ error: "Missing refresh token" }, 400);
+      const payload = verifyToken(refreshToken, REFRESH_SECRET);
+      if (!payload) return c.json({ error: "Invalid refresh token" }, 401);
+      const now = Math.floor(Date.now() / 1000);
+      const accessToken = signToken({ ...payload, iat: now, exp: now + SESSION_TTL_SECONDS }, SESSION_SECRET);
+      return c.json({ accessToken, expiresIn: SESSION_TTL_SECONDS });
+    } catch (e: any) {
+      return c.json({ error: e.message || "Failed to refresh token" }, 500);
+    }
+  });
+
+  app.get("/api/auth/me", async (c) => {
+    const authHeader = c.req.header("Authorization");
+    const token = authHeader?.startsWith("Bearer ") ? authHeader.slice(7) : "";
+    const payload = token ? verifyToken(token, SESSION_SECRET) : null;
+    if (!payload?.telegram_id) return c.json({ error: "Unauthorized" }, 401);
+    const { data: user } = await supabase
+      .from("users")
+      .select("*")
+      .eq("telegram_id", payload.telegram_id)
+      .single();
+    if (!user) return c.json({ error: "User not found" }, 404);
+    return c.json({
+      id: user.id,
+      telegram_id: user.telegram_id,
+      name: user.name,
+      username: user.telegram_username,
+      plan: user.plan,
+      credits: user.credits,
+      photo_url: user.photo_url,
+    });
+  });
 
   app.get("/api/espn", async (c) => {
     const urlObj = new URL(c.req.url);
@@ -47,12 +237,12 @@ async function startServer() {
     const { data: cached } = await supabase
       .from("api_cache")
       .select("*")
-      .eq("endpoint", cacheKey)
+      .eq("key", cacheKey)
       .single();
 
     if (cached) {
-      const updatedAt = new Date(cached.updated_at).getTime();
-      if (Date.now() - updatedAt < parseInt(ttl) * 1000) {
+      const expiresAt = new Date(cached.expires_at).getTime();
+      if (Date.now() < expiresAt) {
         return c.json(cached.data);
       }
     }
@@ -61,9 +251,10 @@ async function startServer() {
       const response = await axios.get(espnUrl.toString());
       if (response.data) {
         await supabase.from("api_cache").upsert({
-          endpoint: cacheKey,
+          key: cacheKey,
           data: response.data,
-          updated_at: new Date().toISOString()
+          expires_at: new Date(Date.now() + parseInt(ttl, 10) * 1000).toISOString(),
+          updated_at: new Date().toISOString(),
         });
         return c.json(response.data);
       }
@@ -87,7 +278,7 @@ async function startServer() {
       const { data: cached } = await supabase
         .from("api_cache")
         .select("*")
-        .eq("endpoint", "trending_picks")
+        .eq("key", "trending_picks")
         .single();
 
       let trendingData = cached?.data || {};
@@ -102,9 +293,10 @@ async function startServer() {
       trendingData[matchId].last_clicked = new Date().toISOString();
 
       await supabase.from("api_cache").upsert({
-        endpoint: "trending_picks",
+        key: "trending_picks",
         data: trendingData,
-        updated_at: new Date().toISOString()
+        expires_at: new Date(Date.now() + 7 * 24 * 60 * 60 * 1000).toISOString(),
+        updated_at: new Date().toISOString(),
       });
 
       return c.json({ success: true });
@@ -119,7 +311,7 @@ async function startServer() {
       const { data: cached } = await supabase
         .from("api_cache")
         .select("*")
-        .eq("endpoint", "trending_picks")
+        .eq("key", "trending_picks")
         .single();
 
       const trendingData = cached?.data || {};
@@ -176,10 +368,13 @@ async function startServer() {
             .from("users")
             .insert([{
               telegram_id: telegramId,
+              telegram_username: username || null,
               name: fullName,
               credits: 5,
               plan: 'free',
-              role: 'user'
+              role: 'user',
+              status: 'active',
+              last_active_at: new Date().toISOString(),
             }])
             .select()
             .single();
