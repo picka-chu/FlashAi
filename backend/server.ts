@@ -17,14 +17,20 @@ const __dirname = path.dirname(__filename);
 
 // Initialize Supabase
 const supabaseUrl = process.env.SUPABASE_URL;
-const supabaseKey = process.env.SUPABASE_ANON_KEY;
+const supabaseServiceKey = process.env.SUPABASE_SERVICE_ROLE_KEY;
+const supabaseAnonKey = process.env.SUPABASE_ANON_KEY;
+const supabaseKey = supabaseServiceKey || supabaseAnonKey;
 const bootstrapAdminId = process.env.ADMIN_TELEGRAM_ID ? Number(process.env.ADMIN_TELEGRAM_ID) : null;
 
 if (!supabaseUrl || !supabaseKey || supabaseUrl === "YOUR_SUPABASE_URL" || supabaseKey === "YOUR_SUPABASE_ANON_KEY") {
-  throw new Error("Missing required Supabase configuration. Set SUPABASE_URL and SUPABASE_ANON_KEY.");
+  throw new Error("Missing required Supabase configuration. Set SUPABASE_URL and SUPABASE_SERVICE_ROLE_KEY.");
 }
 
 const supabase = createClient(supabaseUrl, supabaseKey);
+
+if (!supabaseServiceKey) {
+  console.warn("⚠️ SUPABASE_SERVICE_ROLE_KEY is not set. Backend will use anon key and may hit RLS errors on write operations.");
+}
 
 const PLAN_CREDITS: Record<string, number> = {
   free: 0,

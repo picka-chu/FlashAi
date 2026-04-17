@@ -191,8 +191,7 @@ export async function getLiveMatches() {
 
 export async function getUpcomingMatches(topFixtures: string[] = []) {
   const startDate = getTodayDateString();
-  const endDate = getTodayDateString(14);
-  const dateRange = `${startDate}-${endDate}`;
+  const dateRange = `${startDate}`;
 
   const promises = POPULAR_LEAGUES.map((league) =>
     axios.get(`${ESPN_BASE}/${league}/scoreboard?dates=${dateRange}`).then((res) => (res.data.events || []).map((e: any) => ({ ...e, _leagueSlug: league }))).catch(() => []),

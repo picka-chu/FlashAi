@@ -131,6 +131,10 @@ export default function App() {
     );
   }
 
+  if (activeTab === "admin") {
+    return <Admin />;
+  }
+
   return (
     <MainLayout 
       activeTab={activeTab} 
