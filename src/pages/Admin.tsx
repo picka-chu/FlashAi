@@ -253,10 +253,7 @@ export const Admin: React.FC = () => {
     );
   }
 
-  const trafficData = Array.isArray(analytics?.traffic) ? analytics.traffic : [];
-  const patternData = Array.isArray(analytics?.patterns) ? analytics.patterns : [];
-
-  if (isForbidden) {
+  if (isForbidden || user?.role !== 'admin') {
     return (
       <div className="min-h-[100dvh] bg-black text-white flex items-center justify-center p-6">
         <div className="max-w-md w-full bg-zinc-900/50 border border-zinc-800 rounded-3xl p-6 text-center space-y-3">
