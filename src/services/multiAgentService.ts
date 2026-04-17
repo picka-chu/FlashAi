@@ -2,16 +2,17 @@ import { GoogleGenAI } from "@google/genai";
 
 // Initialize multiple Gemini API keys
 const keys = [
-  process.env.GEMINI_API_KEY_1,
-  process.env.GEMINI_API_KEY_2,
-  process.env.GEMINI_API_KEY_3,
-  process.env.GEMINI_API_KEY_4,
-  process.env.GEMINI_API_KEY_5,
+  process.env.GEMINI_AGENT_KEY_1 || process.env.GEMINI_API_KEY_4,
+  process.env.GEMINI_AGENT_KEY_2 || process.env.GEMINI_API_KEY_5,
 ].filter(Boolean) as string[];
 
 // Fallback to default if no numbered keys are provided
 if (keys.length === 0 && process.env.GEMINI_API_KEY) {
-  keys.push(process.env.GEMINI_API_KEY);
+  keys.push(
+    process.env.GEMINI_API_KEY_4 ||
+    process.env.GEMINI_API_KEY_5 ||
+    process.env.GEMINI_API_KEY
+  );
 }
 
 /**
@@ -382,8 +383,11 @@ class MultiAgentService {
       }
       return data || [];
     } catch (error: any) {
-      if (error?.status === 429 || error?.message?.includes('429') || error?.message?.includes('RESOURCE_EXHAUSTED')) {
-        console.warn("Gemini Search Rate Limit Hit - using empty fallback");
+      const message = String(error?.message || "");
+      const isRateLimited = error?.status === 429 || message.includes('429') || message.includes('RESOURCE_EXHAUSTED');
+      const isUnavailable = error?.status === 503 || message.includes('503') || message.includes('UNAVAILABLE');
+      if (isRateLimited || isUnavailable) {
+        console.warn("Gemini Search temporarily unavailable - using empty fallback");
         return [];
       }
       console.error("Error getting top fixtures from search:", error);

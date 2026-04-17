@@ -38,20 +38,19 @@ import {
   Cell
 } from 'recharts';
 import { useTelegram } from '../hooks/useTelegram';
-import { useUserStore } from '../store/useUserStore';
 
 type AdminTab = 'dashboard' | 'analytics' | 'tasks' | 'ads' | 'users';
 
 export const Admin: React.FC = () => {
   const [activeTab, setActiveTab] = useState<AdminTab>('dashboard');
   const { tg, hapticFeedback, showAlert, showConfirm, initData } = useTelegram();
-  const { user } = useUserStore();
   
   const [stats, setStats] = useState<any>(null);
   const [analytics, setAnalytics] = useState<any>(null);
   const [tasks, setTasks] = useState<any[]>([]);
   const [ads, setAds] = useState<any[]>([]);
   const [isLoading, setIsLoading] = useState(true);
+  const [isForbidden, setIsForbidden] = useState(false);
 
   // Form states for adding items
   const [isAddingTask, setIsAddingTask] = useState(false);
@@ -82,11 +81,18 @@ export const Admin: React.FC = () => {
       const res = await fetch('/api/admin/dashboard', {
         headers: { 'X-TG-Init-Data': initData }
       });
+      if (res.status === 403) {
+        setIsForbidden(true);
+        setIsLoading(false);
+        return;
+      }
+      if (!res.ok) throw new Error(`Dashboard request failed (${res.status})`);
       const data = await res.json();
       setStats(data.stats);
-      setIsLoading(false);
     } catch (e) {
       console.error(e);
+    } finally {
+      setIsLoading(false);
     }
   };
 
@@ -95,6 +101,10 @@ export const Admin: React.FC = () => {
       const res = await fetch('/api/admin/analytics', {
         headers: { 'X-TG-Init-Data': initData }
       });
+      if (!res.ok) {
+        setAnalytics(null);
+        return;
+      }
       const data = await res.json();
       setAnalytics(data);
     } catch (e) {
@@ -107,10 +117,15 @@ export const Admin: React.FC = () => {
       const res = await fetch('/api/admin/tasks', {
         headers: { 'X-TG-Init-Data': initData }
       });
+      if (!res.ok) {
+        setTasks([]);
+        return;
+      }
       const data = await res.json();
-      setTasks(data);
+      setTasks(Array.isArray(data) ? data : []);
     } catch (e) {
       console.error(e);
+      setTasks([]);
     }
   };
 
@@ -119,10 +134,15 @@ export const Admin: React.FC = () => {
       const res = await fetch('/api/admin/ads', {
         headers: { 'X-TG-Init-Data': initData }
       });
+      if (!res.ok) {
+        setAds([]);
+        return;
+      }
       const data = await res.json();
-      setAds(data);
+      setAds(Array.isArray(data) ? data : []);
     } catch (e) {
       console.error(e);
+      setAds([]);
     }
   };
 
@@ -233,8 +253,23 @@ export const Admin: React.FC = () => {
     );
   }
 
+  const trafficData = Array.isArray(analytics?.traffic) ? analytics.traffic : [];
+  const patternData = Array.isArray(analytics?.patterns) ? analytics.patterns : [];
+
+  if (isForbidden) {
+    return (
+      <div className="min-h-[100dvh] bg-black text-white flex items-center justify-center p-6">
+        <div className="max-w-md w-full bg-zinc-900/50 border border-zinc-800 rounded-3xl p-6 text-center space-y-3">
+          <AlertCircle className="w-8 h-8 text-amber-400 mx-auto" />
+          <h2 className="text-lg font-black">Admin Access Required</h2>
+          <p className="text-xs text-zinc-400 font-semibold">This page is restricted to admin accounts only.</p>
+        </div>
+      </div>
+    );
+  }
+
   return (
-    <div className="flex-1 flex flex-col bg-black overflow-hidden pb-24">
+    <div className="min-h-[100dvh] flex flex-col bg-black overflow-hidden">
       {/* Header */}
       <div className="px-6 pt-8 pb-4 border-b border-zinc-900 bg-black/50 backdrop-blur-md sticky top-0 z-20">
         <div className="flex items-center justify-between mb-4">
@@ -344,7 +379,7 @@ export const Admin: React.FC = () => {
                 </div>
                 <div className="h-64 w-full">
                   <ResponsiveContainer width="100%" height="100%">
-                    <AreaChart data={analytics?.traffic || []}>
+                    <AreaChart data={trafficData}>
                       <defs>
                         <linearGradient id="colorValue" x1="0" y1="0" x2="0" y2="1">
                           <stop offset="5%" stopColor="#ccff00" stopOpacity={0.3}/>
@@ -380,7 +415,7 @@ export const Admin: React.FC = () => {
                 </div>
                 <div className="h-64 w-full">
                   <ResponsiveContainer width="100%" height="100%">
-                    <BarChart data={analytics?.patterns || []}>
+                    <BarChart data={patternData}>
                       <XAxis 
                         dataKey="label" 
                         stroke="#71717a" 
@@ -395,7 +430,7 @@ export const Admin: React.FC = () => {
                         contentStyle={{ backgroundColor: '#18181b', border: 'none', borderRadius: '12px', fontSize: '10px' }}
                       />
                       <Bar dataKey="value" radius={[10, 10, 10, 10]}>
-                        {analytics?.patterns?.map((entry: any, index: number) => (
+                        {patternData.map((entry: any, index: number) => (
                           <Cell key={`cell-${index}`} fill={index % 2 === 0 ? '#ccff00' : '#3b82f6'} />
                         ))}
                       </Bar>
@@ -682,7 +717,7 @@ export const Admin: React.FC = () => {
       </div>
 
       {/* Admin Safety Notice */}
-      <div className="px-6 py-4 bg-zinc-950/50 border-t border-zinc-900 absolute bottom-0 left-0 right-0 flex items-center justify-center gap-2">
+      <div className="px-6 py-4 bg-zinc-950/50 border-t border-zinc-900 flex items-center justify-center gap-2">
          <div className="w-1.5 h-1.5 rounded-full bg-[#ccff00] animate-pulse" />
          <p className="text-[9px] font-bold text-zinc-600 uppercase tracking-[2px]">Encrypted Admin Session Active</p>
       </div>
