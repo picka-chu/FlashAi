@@ -617,6 +617,9 @@ async function startServer() {
           .single();
 
         const isNewRegistration = !existingUser?.phone;
+        const signupCredits = isNewRegistration
+          ? (existingUser?.referrer_id ? 7 : 5)
+          : (existingUser?.credits || 0);
 
         // 2. Perform registration/update
         const { data: user, error } = await supabase
@@ -626,7 +629,7 @@ async function startServer() {
             name: fullName,
             username: ctx.from.username || "",
             phone: phone,
-            credits: isNewRegistration ? 5 : existingUser?.credits || 0,
+            credits: signupCredits,
             plan: existingUser?.plan || 'free',
             last_active: new Date().toISOString()
           }, { onConflict: 'telegram_id' })
@@ -648,7 +651,7 @@ async function startServer() {
              .single();
            
            if (referrer) {
-             const rewardAmount = 50; // 50 credits for referring a friend
+             const rewardAmount = 2;
              await supabase.from("users")
                .update({ credits: (referrer.credits || 0) + rewardAmount })
                .eq("telegram_id", existingUser.referrer_id);
@@ -662,7 +665,10 @@ async function startServer() {
            }
         }
 
-        ctx.reply(`✅ Registration successful, ${firstName}!\n\nYou've been rewarded with 5 free credits. Welcome to the elite squad! ⚽🔥`, {
+        const rewardText = isNewRegistration && existingUser?.referrer_id
+          ? "7 credits (5 signup + 2 referral bonus)"
+          : "5 free credits";
+        ctx.reply(`✅ Registration successful, ${firstName}!\n\nYou've been rewarded with ${rewardText}. Welcome to the elite squad! ⚽🔥`, {
           reply_markup: {
             remove_keyboard: true
           }

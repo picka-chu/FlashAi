@@ -185,7 +185,14 @@ export const Home: React.FC<HomeProps> = ({ onTabChange }) => {
             };
           }));
         } else {
-          setTrendingMatches([]);
+          setTrendingMatches(mappedUpcoming.slice(0, 3).map((m: any) => {
+            const hash = String(m.id || `${m.home}-${m.away}`).split('').reduce((acc: number, c: string) => acc + c.charCodeAt(0), 0);
+            return {
+              id: m.id,
+              teams: `${m.home} vs ${m.away}`,
+              activity: String(10 + (hash % 90)),
+            };
+          }));
         }
 
         setUpcomingMatches(mappedUpcoming.slice(0, 200));
@@ -265,11 +272,17 @@ export const Home: React.FC<HomeProps> = ({ onTabChange }) => {
           {user?.phone ? (
             <>
               <div className="relative">
-                <img 
-                  src={user.photo_url || "https://i.pravatar.cc/150?img=11"} 
-                  alt="User" 
-                  className="w-10 h-10 rounded-full border-2 border-[#ccff00]/50" 
-                />
+                {user.photo_url ? (
+                  <img 
+                    src={user.photo_url}
+                    alt="User" 
+                    className="w-10 h-10 rounded-full border-2 border-[#ccff00]/50 object-cover" 
+                  />
+                ) : (
+                  <div className="w-10 h-10 rounded-full border-2 border-[#ccff00]/50 bg-zinc-800 flex items-center justify-center">
+                    <Users className="w-4 h-4 text-zinc-400" />
+                  </div>
+                )}
                 <div className="absolute bottom-0 right-0 w-2.5 h-2.5 bg-[#ccff00] rounded-full border-2 border-[#0a0a0a]"></div>
               </div>
               <div>
@@ -668,4 +681,3 @@ export const Home: React.FC<HomeProps> = ({ onTabChange }) => {
     </div>
   );
 };
-

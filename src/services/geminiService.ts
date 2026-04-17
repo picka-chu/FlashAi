@@ -24,7 +24,7 @@ function getPredictionKeys() {
 
 export async function analyzeMatchWithSearch(matchString: string): Promise<PredictionResult> {
   const keys = getPredictionKeys();
-  const ai = new GoogleGenAI({ apiKey: keys[Math.floor(Math.random() * keys.length)] || process.env.GEMINI_API_KEY || "" });
+  const candidateKeys = keys.length > 0 ? keys : [process.env.GEMINI_API_KEY || ""];
 
   const prompt = `
     You are an expert sports betting analyst.
@@ -55,36 +55,48 @@ export async function analyzeMatchWithSearch(matchString: string): Promise<Predi
     }
   `;
 
-  try {
-    const result = await ai.models.generateContent({
-      model: "gemini-2.5-pro",
-      contents: [{ role: "user", parts: [{ text: prompt }] }],
-      config: { 
-        tools: [{ googleSearch: {} }] as any
+  const models = ["gemini-2.5-pro", "gemini-2.5-flash", "gemini-2.0-flash"];
+
+  for (const model of models) {
+    for (const key of candidateKeys) {
+      try {
+        const ai = new GoogleGenAI({ apiKey: key });
+        const result = await ai.models.generateContent({
+          model,
+          contents: [{ role: "user", parts: [{ text: prompt }] }],
+          config: { 
+            tools: [{ googleSearch: {} }] as any
+          }
+        });
+
+        const parsed = parseJsonFromText(result.text || "");
+        if (!parsed || !parsed.predictions) throw new Error("Failed to parse prediction data");
+
+        const topPredictions = parsed.predictions
+          .sort((a: any, b: any) => b.confidence - a.confidence)
+          .slice(0, 2);
+
+        return {
+          matchId: matchString,
+          predictions: topPredictions,
+          overallReasoning: parsed.overallReasoning || "No reasoning provided.",
+          teamData: parsed.teamData || {
+            home: { name: matchString.split('vs')[0]?.trim() || 'Home', form: 'N/A', injuries: [], keyStats: [] },
+            away: { name: matchString.split('vs')[1]?.trim() || 'Away', form: 'N/A', injuries: [], keyStats: [] }
+          }
+        };
+      } catch (error: any) {
+        const msg = String(error?.message || "");
+        const isQuota = error?.status === 429 || msg.includes("RESOURCE_EXHAUSTED") || msg.includes("quota");
+        if (!isQuota) {
+          console.error(`analyzeMatchWithSearch error (${model}):`, error);
+          throw error;
+        }
       }
-    });
-
-    const parsed = parseJsonFromText(result.text || "");
-    if (!parsed || !parsed.predictions) throw new Error("Failed to parse prediction data");
-
-    // Sort by confidence descending and take top 2
-    const topPredictions = parsed.predictions
-      .sort((a: any, b: any) => b.confidence - a.confidence)
-      .slice(0, 2);
-
-    return {
-      matchId: matchString, // Using matchString as a fallback ID
-      predictions: topPredictions,
-      overallReasoning: parsed.overallReasoning || "No reasoning provided.",
-      teamData: parsed.teamData || {
-        home: { name: matchString.split('vs')[0]?.trim() || 'Home', form: 'N/A', injuries: [], keyStats: [] },
-        away: { name: matchString.split('vs')[1]?.trim() || 'Away', form: 'N/A', injuries: [], keyStats: [] }
-      }
-    };
-  } catch (error) {
-    console.error("analyzeMatchWithSearch error:", error);
-    throw error;
+    }
   }
+
+  throw new Error("All Gemini prediction keys/models are temporarily rate-limited. Please retry shortly.");
 }
 
 export async function fetchContextData(matchName: string): Promise<ContextData> {
