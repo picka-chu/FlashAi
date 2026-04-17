@@ -10,6 +10,7 @@ import { fileURLToPath } from "url";
 import fs from "fs";
 import crypto from "crypto";
 import { getLiveMatches, getMatchDetails, getUpcomingMatches, searchMatches } from "./services/footballService";
+import { generateSupportReply, getDefaultFaqs } from "./services/supportService";
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
@@ -76,7 +77,29 @@ function getTelegramUserFromInitData(initData: string): any {
 
 async function startServer() {
   const app = new Hono();
-  const PORT = 3000;
+  const PORT = Number(process.env.PORT || 3000);
+
+  const requestBuckets = new Map<string, { count: number; resetAt: number }>();
+  const RATE_LIMIT_WINDOW_MS = 60 * 1000;
+  const RATE_LIMIT_MAX = 25;
+
+  const getRequestIp = (c: any) =>
+    c.req.header("x-forwarded-for")?.split(",")[0]?.trim() ||
+    c.req.header("x-real-ip") ||
+    "unknown";
+
+  const isRateLimited = (identifier: string) => {
+    const now = Date.now();
+    const current = requestBuckets.get(identifier);
+    if (!current || now > current.resetAt) {
+      requestBuckets.set(identifier, { count: 1, resetAt: now + RATE_LIMIT_WINDOW_MS });
+      return false;
+    }
+
+    current.count += 1;
+    requestBuckets.set(identifier, current);
+    return current.count > RATE_LIMIT_MAX;
+  };
 
   // Usage Logging Middleware
   app.use("*", async (c, next) => {
@@ -201,6 +224,12 @@ async function startServer() {
   
   app.post("/api/analyze", async (c) => {
     const initData = c.req.header("X-TG-Init-Data");
+    const tgUserForRateLimit = initData ? getTelegramUserFromInitData(initData) : null;
+    const rateIdentifier = `analyze:${tgUserForRateLimit?.id || getRequestIp(c)}`;
+    if (isRateLimited(rateIdentifier)) {
+      return c.json({ error: "Too many requests. Please try again shortly." }, 429);
+    }
+
     if (!isPlaceholderToken && botToken && (!initData || !validateTelegramInitData(initData, botToken))) {
       return c.json({ error: "Invalid Telegram authentication" }, 401);
     }
@@ -259,6 +288,12 @@ async function startServer() {
 
   app.post("/api/analyze-betslip", async (c) => {
     const initData = c.req.header("X-TG-Init-Data");
+    const tgUserForRateLimit = initData ? getTelegramUserFromInitData(initData) : null;
+    const rateIdentifier = `analyze-betslip:${tgUserForRateLimit?.id || getRequestIp(c)}`;
+    if (isRateLimited(rateIdentifier)) {
+      return c.json({ error: "Too many requests. Please try again shortly." }, 429);
+    }
+
     if (!isPlaceholderToken && botToken && (!initData || !validateTelegramInitData(initData, botToken))) {
       return c.json({ error: "Invalid Telegram authentication" }, 401);
     }
@@ -718,6 +753,53 @@ async function startServer() {
     } catch (e: any) {
       console.error("Task claim error:", e.message);
       return c.json({ error: "Failed to claim task reward" }, 500);
+    }
+  });
+
+  app.get("/api/support/faqs", async (c) => {
+    try {
+      const { data, error } = await supabase
+        .from("faqs")
+        .select("*");
+
+      if (error) throw error;
+      return c.json(data && data.length > 0 ? data : getDefaultFaqs());
+    } catch (e: any) {
+      console.error("Support FAQ fetch error:", e?.message || e);
+      return c.json(getDefaultFaqs());
+    }
+  });
+
+  app.post("/api/support/chat", async (c) => {
+    const initData = c.req.header("X-TG-Init-Data");
+    const tgUserForRateLimit = initData ? getTelegramUserFromInitData(initData) : null;
+    const rateIdentifier = `support-chat:${tgUserForRateLimit?.id || getRequestIp(c)}`;
+    if (isRateLimited(rateIdentifier)) {
+      return c.json({ error: "Too many support requests. Please try again shortly." }, 429);
+    }
+
+    if (!isPlaceholderToken && botToken && (!initData || !validateTelegramInitData(initData, botToken))) {
+      return c.json({ error: "Invalid Telegram authentication" }, 401);
+    }
+
+    try {
+      const body = await c.req.json();
+      const message = typeof body?.message === "string" ? body.message.trim() : "";
+      const history = Array.isArray(body?.history) ? body.history : [];
+      const faqs = Array.isArray(body?.faqs) ? body.faqs : getDefaultFaqs();
+
+      if (!message) {
+        return c.json({ error: "Message is required." }, 400);
+      }
+
+      const reply = await generateSupportReply(message, history, faqs);
+      return c.json({ reply });
+    } catch (e: any) {
+      console.error("Support chat error:", e?.message || e);
+      return c.json(
+        { reply: "I'm having trouble responding right now. Please try again in a moment." },
+        500
+      );
     }
   });
 
