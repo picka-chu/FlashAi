@@ -17,14 +17,25 @@ const __dirname = path.dirname(__filename);
 
 // Initialize Supabase
 const supabaseUrl = process.env.SUPABASE_URL;
-const supabaseKey = process.env.SUPABASE_ANON_KEY;
+const supabaseServiceKey =
+  process.env.SUPABASE_SERVICE_ROLE_KEY ||
+  process.env.SUPABASE_SERVICE_ROLE ||
+  process.env.SUPABASE_SERVICE_KEY;
+const supabaseAnonKey = process.env.SUPABASE_ANON_KEY;
+const supabaseKey = supabaseServiceKey || supabaseAnonKey;
 const bootstrapAdminId = process.env.ADMIN_TELEGRAM_ID ? Number(process.env.ADMIN_TELEGRAM_ID) : null;
 
 if (!supabaseUrl || !supabaseKey || supabaseUrl === "YOUR_SUPABASE_URL" || supabaseKey === "YOUR_SUPABASE_ANON_KEY") {
-  throw new Error("Missing required Supabase configuration. Set SUPABASE_URL and SUPABASE_ANON_KEY.");
+  throw new Error("Missing required Supabase configuration. Set SUPABASE_URL and SUPABASE_SERVICE_ROLE_KEY.");
 }
 
 const supabase = createClient(supabaseUrl, supabaseKey);
+
+if (!supabaseServiceKey) {
+  console.warn("⚠️ SUPABASE_SERVICE_ROLE_KEY is not set. Backend will use anon key and may hit RLS errors on write operations.");
+} else {
+  console.log("✅ Supabase service role key detected for backend writes.");
+}
 
 const PLAN_CREDITS: Record<string, number> = {
   free: 0,
@@ -546,28 +557,44 @@ async function startServer() {
       const telegramId = ctx.from.id;
       
       const welcomeMsg = `Welcome to *Flash AI* – your own elite football companion in Telegram!\n\n🚀 *High-confidence AI predictions* for every match\n🔥 *Deep analysis* and data-driven insights\n💸 *Earn credits* by completing daily tasks or referrals\n\nJoin the community of winning bettors and get started in just a few taps`;
+      const adminWelcomeMsg = `👋 Welcome back, *Admin*.\n\nOpen your dashboard to manage users, analytics, tasks, and broadcasts.`;
       
       // Upsert basic info and capture referrer if present
+      let isAdminUser = false;
       try {
         const isBootstrapAdmin = bootstrapAdminId && telegramId === bootstrapAdminId;
+        const { data: existingUser } = await supabase
+          .from("users")
+          .select("role")
+          .eq("telegram_id", telegramId)
+          .maybeSingle();
+
+        isAdminUser = Boolean(isBootstrapAdmin || existingUser?.role === "admin");
         
         await supabase.from("users").upsert({
           telegram_id: telegramId,
           name: ctx.from.first_name + (ctx.from.last_name ? ` ${ctx.from.last_name}` : ""),
           username: ctx.from.username || "",
           referrer_id: startPayload && !isNaN(Number(startPayload)) && Number(startPayload) !== telegramId ? Number(startPayload) : null,
-          role: isBootstrapAdmin ? 'admin' : 'user',
+          role: isAdminUser ? 'admin' : 'user',
           last_active: new Date().toISOString()
         }, { onConflict: 'telegram_id' });
         
-        if (isBootstrapAdmin) {
+        if (isAdminUser) {
            console.log(`🚀 Bootstrap Admin Detected: ${telegramId}`);
         }
       } catch (err) {
         console.error("Error saving start user:", err);
       }
 
-      ctx.replyWithMarkdown(welcomeMsg, Markup.inlineKeyboard([
+      if (isAdminUser) {
+        await ctx.replyWithMarkdown(adminWelcomeMsg, Markup.inlineKeyboard([
+          [Markup.button.webApp("🛡️ Open Admin Dashboard", `${appUrl}?tab=admin`)]
+        ]));
+        return;
+      }
+
+      await ctx.replyWithMarkdown(welcomeMsg, Markup.inlineKeyboard([
         [Markup.button.webApp("🚀 Get Started", `${appUrl}`)]
       ]));
     });
@@ -708,6 +735,65 @@ async function startServer() {
   }
 
   // Auth/Signup Request Endpoint
+  app.get("/api/auth/me", async (c) => {
+    const initData = c.req.header("X-TG-Init-Data");
+    if (!isPlaceholderToken && botToken && (!initData || !validateTelegramInitData(initData, botToken))) {
+      return c.json({ error: "Invalid Telegram authentication" }, 401);
+    }
+
+    try {
+      const params = new URLSearchParams(initData || "");
+      const userParam = params.get("user");
+      if (!userParam) return c.json({ error: "Missing Telegram user payload" }, 400);
+
+      const tgUser = JSON.parse(decodeURIComponent(userParam));
+      const isBootstrapAdmin = Boolean(bootstrapAdminId && tgUser?.id === bootstrapAdminId);
+
+      const { data: existing, error: fetchError } = await supabase
+        .from("users")
+        .select("*")
+        .eq("telegram_id", tgUser.id)
+        .maybeSingle();
+      if (fetchError) throw fetchError;
+
+      if (!existing) {
+        const { error: insertError } = await supabase.from("users").insert({
+          telegram_id: tgUser.id,
+          name: `${tgUser.first_name || ""}${tgUser.last_name ? ` ${tgUser.last_name}` : ""}`.trim() || tgUser.username || "User",
+          username: tgUser.username || "",
+          role: isBootstrapAdmin ? "admin" : "user",
+          plan: isBootstrapAdmin ? "admin" : "free",
+          credits: isBootstrapAdmin ? 999 : 0,
+          last_active: new Date().toISOString(),
+        });
+        if (insertError) throw insertError;
+      }
+
+      if (existing && isBootstrapAdmin && existing.role !== "admin") {
+        await supabase.from("users")
+          .update({ role: "admin", plan: "admin", last_active: new Date().toISOString() })
+          .eq("telegram_id", tgUser.id);
+      }
+
+      const { data: user, error: userError } = await supabase
+        .from("users")
+        .select("*")
+        .eq("telegram_id", tgUser.id)
+        .single();
+      if (userError || !user) return c.json({ error: "User profile not found" }, 404);
+
+      return c.json({
+        user: {
+          ...user,
+          role: isBootstrapAdmin ? "admin" : (user.role || "user")
+        }
+      });
+    } catch (e: any) {
+      console.error("Auth profile error:", e?.message || e);
+      return c.json({ error: "Failed to fetch authenticated profile" }, 500);
+    }
+  });
+
   app.post("/api/auth/request-signup", async (c) => {
     // Validate Telegram Init Data
     const initData = c.req.header("X-TG-Init-Data");
@@ -731,6 +817,65 @@ async function startServer() {
     } catch (e: any) {
       console.error("Request signup error:", e.message);
       return c.json({ error: "Failed to send request" }, 500);
+    }
+  });
+
+  app.get("/api/user/activities", async (c) => {
+    const initData = c.req.header("X-TG-Init-Data");
+    if (!isPlaceholderToken && botToken && (!initData || !validateTelegramInitData(initData, botToken))) {
+      return c.json({ error: "Invalid Telegram authentication" }, 401);
+    }
+
+    try {
+      const tgUser = initData ? getTelegramUserFromInitData(initData) : null;
+      if (!tgUser?.id) return c.json({ error: "User not identified" }, 401);
+
+      const { data, error } = await supabase
+        .from("usage_logs")
+        .select("id, endpoint, method, status, created_at")
+        .eq("telegram_id", tgUser.id)
+        .order("created_at", { ascending: false })
+        .limit(20);
+      if (error) throw error;
+
+      const activities = (data || []).map((item: any) => ({
+        id: item.id,
+        endpoint: item.endpoint,
+        method: item.method,
+        status: item.status,
+        created_at: item.created_at,
+      }));
+
+      return c.json(activities);
+    } catch (e: any) {
+      console.error("Activities API error:", e?.message || e);
+      return c.json([], 500);
+    }
+  });
+
+  app.get("/api/user/history", async (c) => {
+    const initData = c.req.header("X-TG-Init-Data");
+    if (!isPlaceholderToken && botToken && (!initData || !validateTelegramInitData(initData, botToken))) {
+      return c.json({ error: "Invalid Telegram authentication" }, 401);
+    }
+
+    try {
+      const tgUser = initData ? getTelegramUserFromInitData(initData) : null;
+      if (!tgUser?.id) return c.json({ error: "User not identified" }, 401);
+
+      const { data: logs, error } = await supabase
+        .from("usage_logs")
+        .select("id, endpoint, method, status, created_at")
+        .eq("telegram_id", tgUser.id)
+        .in("endpoint", ["/api/analyze", "/api/analyze-betslip", "/api/tasks/claim"])
+        .order("created_at", { ascending: false })
+        .limit(100);
+      if (error) throw error;
+
+      return c.json(logs || []);
+    } catch (e: any) {
+      console.error("History API error:", e?.message || e);
+      return c.json([], 500);
     }
   });
 
