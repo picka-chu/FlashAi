@@ -68,6 +68,9 @@ export const Admin: React.FC = () => {
     primary_color: '#3b82f6'
   });
   const [isBroadcasting, setIsBroadcasting] = useState(false);
+  const [users, setUsers] = useState<any[]>([]);
+  const [userSearch, setUserSearch] = useState('');
+  const [notifyMessage, setNotifyMessage] = useState('');
 
   useEffect(() => {
     if (!initData) return;
@@ -75,7 +78,25 @@ export const Admin: React.FC = () => {
     fetchAnalytics();
     fetchTasks();
     fetchAds();
+    fetchUsers();
   }, [initData]);
+
+  const fetchUsers = async (q = '') => {
+    try {
+      const res = await fetch(`/api/admin/users${q ? `?q=${encodeURIComponent(q)}` : ''}`, {
+        headers: { 'X-TG-Init-Data': initData }
+      });
+      if (!res.ok) {
+        setUsers([]);
+        return;
+      }
+      const data = await res.json();
+      setUsers(Array.isArray(data) ? data : []);
+    } catch (e) {
+      console.error(e);
+      setUsers([]);
+    }
+  };
 
   const fetchDashboard = async () => {
     try {
@@ -217,13 +238,49 @@ export const Admin: React.FC = () => {
 
   const triggerAutomation = async (type: string) => {
     try {
-      const res = await fetch('/api/bot/notify/inactive', { // This might be better as a test trigger
+      const res = await fetch('/api/admin/automation/retention', {
         method: 'POST',
-        headers: { 'X-TG-Init-Data': initData }
+        headers: { 'Content-Type': 'application/json', 'X-TG-Init-Data': initData },
+        body: JSON.stringify({ type })
       });
-      showAlert('Automation triggered (check server logs)');
+      const data = await res.json().catch(() => ({}));
+      if (res.ok) {
+        showAlert(`Automation triggered. Sent to ${data.sentCount ?? 0} users.`);
+      } else {
+        showAlert(data.error || 'Failed to trigger automation');
+      }
     } catch (e) {
       showAlert('Failed to trigger');
+    }
+  };
+
+  const promoteUser = async (telegramId: number, role: 'user' | 'admin') => {
+    const res = await fetch('/api/admin/users/promote', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json', 'X-TG-Init-Data': initData },
+      body: JSON.stringify({ telegramId, role })
+    });
+    if (res.ok) {
+      fetchUsers(userSearch);
+      showAlert(`User updated to ${role}`);
+    }
+  };
+
+  const notifyUser = async (telegramId: number) => {
+    if (!notifyMessage.trim()) {
+      showAlert('Please type a message first.');
+      return;
+    }
+    const res = await fetch('/api/admin/users/notify', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json', 'X-TG-Init-Data': initData },
+      body: JSON.stringify({ telegramId, message: notifyMessage })
+    });
+    const data = await res.json().catch(() => ({}));
+    if (res.ok) {
+      showAlert('Notification sent.');
+    } else {
+      showAlert(data.error || 'Failed to notify user');
     }
   };
 
@@ -692,25 +749,51 @@ export const Admin: React.FC = () => {
             >
                <div className="bg-zinc-900/50 border border-zinc-800 rounded-3xl p-5 flex items-center gap-3">
                  <Search className="w-4 h-4 text-zinc-600" />
-                 <input placeholder="Search user ID or name..." className="bg-transparent border-none text-sm font-bold text-white focus:outline-none w-full" />
+                 <input
+                   value={userSearch}
+                   onChange={(e) => setUserSearch(e.target.value)}
+                   onKeyDown={(e) => { if (e.key === 'Enter') fetchUsers(userSearch); }}
+                   placeholder="Search user ID or name..."
+                   className="bg-transparent border-none text-sm font-bold text-white focus:outline-none w-full"
+                 />
+                 <button onClick={() => fetchUsers(userSearch)} className="text-[10px] text-[#ccff00] font-black">GO</button>
+               </div>
+
+               <div className="bg-zinc-900/50 border border-zinc-800 rounded-3xl p-4">
+                 <textarea
+                   value={notifyMessage}
+                   onChange={(e) => setNotifyMessage(e.target.value)}
+                   placeholder="Message template for user notification..."
+                   className="w-full bg-zinc-800 border-none rounded-2xl p-3 text-white text-xs font-bold placeholder:text-zinc-600 h-20 focus:ring-2 ring-[#ccff00]/40"
+                 />
                </div>
 
                <div className="space-y-4">
-                 <div className="p-4 bg-zinc-900/50 border border-zinc-800 rounded-3xl relative">
-                   <div className="flex items-center gap-4">
-                      <div className="w-12 h-12 rounded-2xl bg-[#ccff00] flex items-center justify-center font-black text-black">
-                         AV
-                      </div>
-                      <div>
-                         <p className="text-sm font-black text-white">Alex Volkov (You)</p>
-                         <div className="flex items-center gap-2">
-                            <span className="text-[10px] font-bold text-[#ccff00] tracking-widest uppercase">Admin</span>
-                            <span className="w-1 h-1 rounded-full bg-zinc-800" />
-                            <span className="text-[10px] font-bold text-zinc-600 uppercase">Pro Plan</span>
+                 {users.map((u) => (
+                   <div key={u.telegram_id} className="p-4 bg-zinc-900/50 border border-zinc-800 rounded-3xl relative space-y-3">
+                     <div className="flex items-center gap-4">
+                       <div className="w-12 h-12 rounded-2xl bg-[#ccff00] flex items-center justify-center font-black text-black">
+                         {(u.name || u.username || 'U').substring(0, 2).toUpperCase()}
+                       </div>
+                       <div className="min-w-0">
+                         <p className="text-sm font-black text-white truncate">{u.name || 'Unknown User'}</p>
+                         <div className="flex items-center gap-2 flex-wrap">
+                           <span className="text-[10px] font-bold text-[#ccff00] tracking-widest uppercase">{u.role}</span>
+                           <span className="w-1 h-1 rounded-full bg-zinc-800" />
+                           <span className="text-[10px] font-bold text-zinc-500 uppercase">{u.plan}</span>
+                           <span className="w-1 h-1 rounded-full bg-zinc-800" />
+                           <span className="text-[10px] font-bold text-zinc-400">ID {u.telegram_id}</span>
                          </div>
-                      </div>
+                       </div>
+                     </div>
+
+                     <div className="flex gap-2">
+                       <button onClick={() => promoteUser(u.telegram_id, 'admin')} className="flex-1 py-2 rounded-xl bg-[#ccff00]/10 text-[10px] font-black uppercase text-[#ccff00]">Make Admin</button>
+                       <button onClick={() => promoteUser(u.telegram_id, 'user')} className="flex-1 py-2 rounded-xl bg-zinc-800 text-[10px] font-black uppercase text-zinc-300">Make User</button>
+                       <button onClick={() => notifyUser(u.telegram_id)} className="flex-1 py-2 rounded-xl bg-blue-500/10 text-[10px] font-black uppercase text-blue-300">Notify</button>
+                     </div>
                    </div>
-                 </div>
+                 ))}
                </div>
             </motion.div>
           )}

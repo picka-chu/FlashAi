@@ -159,6 +159,97 @@ function getTelegramUserFromInitData(initData: string): any {
   }
 }
 
+type HistoryStatus = "pending" | "won" | "lost";
+
+type UserHistoryItem = {
+  id: string;
+  fixtureId: string | null;
+  match: string;
+  home: string;
+  away: string;
+  predictionMarket: string;
+  confidence: number;
+  reasoning: string;
+  status: HistoryStatus;
+  created_at: string;
+  resolved_at?: string | null;
+};
+
+async function getUserHistory(telegramId: number): Promise<UserHistoryItem[]> {
+  const cacheKey = `user_history_${telegramId}`;
+  const { data } = await supabase
+    .from("api_cache")
+    .select("data")
+    .eq("endpoint", cacheKey)
+    .single();
+
+  const raw = data?.data;
+  return Array.isArray(raw) ? raw : [];
+}
+
+async function setUserHistory(telegramId: number, history: UserHistoryItem[]) {
+  const cacheKey = `user_history_${telegramId}`;
+  await supabase.from("api_cache").upsert({
+    endpoint: cacheKey,
+    data: history.slice(0, 100),
+    updated_at: new Date().toISOString(),
+  }, { onConflict: "endpoint" });
+}
+
+function normalizeMarket(market: string) {
+  return (market || "").toLowerCase().trim();
+}
+
+function evaluatePredictionMarket(market: string, homeGoals: number, awayGoals: number): HistoryStatus {
+  const mk = normalizeMarket(market);
+  const total = homeGoals + awayGoals;
+
+  if (!mk) return "pending";
+  if (mk.includes("home") && mk.includes("win")) return homeGoals > awayGoals ? "won" : "lost";
+  if (mk.includes("away") && mk.includes("win")) return awayGoals > homeGoals ? "won" : "lost";
+  if (mk.includes("draw")) return homeGoals === awayGoals ? "won" : "lost";
+  if (mk.includes("over 2.5") || mk.includes("over2.5")) return total > 2.5 ? "won" : "lost";
+  if (mk.includes("under 2.5") || mk.includes("under2.5")) return total < 2.5 ? "won" : "lost";
+  if (mk.includes("btts") && (mk.includes("yes") || mk.includes("- yes"))) return homeGoals > 0 && awayGoals > 0 ? "won" : "lost";
+  if (mk.includes("btts") && (mk.includes("no") || mk.includes("- no"))) return homeGoals === 0 || awayGoals === 0 ? "won" : "lost";
+  if (mk.includes("1x")) return homeGoals >= awayGoals ? "won" : "lost";
+  if (mk.includes("x2")) return awayGoals >= homeGoals ? "won" : "lost";
+  if (mk.includes("12")) return homeGoals !== awayGoals ? "won" : "lost";
+
+  return "pending";
+}
+
+async function resolveHistoryItemResult(item: UserHistoryItem): Promise<UserHistoryItem> {
+  if (!item.fixtureId || item.status !== "pending" || !item.fixtureId.startsWith("espn_")) {
+    return item;
+  }
+
+  try {
+    const parts = item.fixtureId.split("_");
+    const eventId = parts[1];
+    const leagueSlug = parts[2] || "eng.1";
+    const summaryUrl = `https://site.api.espn.com/apis/site/v2/sports/soccer/${leagueSlug}/summary?event=${eventId}`;
+    const summary = await axios.get(summaryUrl);
+
+    const competition = summary.data?.header?.competitions?.[0];
+    const state = competition?.status?.type?.state;
+    const isFinished = state === "post";
+    if (!isFinished) return item;
+
+    const competitors = competition?.competitors || [];
+    const home = competitors.find((c: any) => c.homeAway === "home");
+    const away = competitors.find((c: any) => c.homeAway === "away");
+    const homeGoals = Number(home?.score ?? 0);
+    const awayGoals = Number(away?.score ?? 0);
+    const result = evaluatePredictionMarket(item.predictionMarket, homeGoals, awayGoals);
+
+    if (result === "pending") return item;
+    return { ...item, status: result, resolved_at: new Date().toISOString() };
+  } catch {
+    return item;
+  }
+}
+
 async function startServer() {
   const app = new Hono();
   const PORT = Number(process.env.PORT || 3000);
@@ -351,6 +442,28 @@ async function startServer() {
       // 2. Perform Analysis
       const { analyzeMatchWithSearch } = await import("../src/services/geminiService.js");
       const result = await analyzeMatchWithSearch(matchString);
+
+      const topPrediction = result?.predictions?.[0];
+      const [home = "Home", away = "Away"] = String(matchString).split("vs").map((p: string) => p.trim());
+      const newHistoryItem: UserHistoryItem = {
+        id: crypto.randomUUID(),
+        fixtureId: String(matchId || "").startsWith("espn_") ? String(matchId) : null,
+        match: matchString,
+        home,
+        away,
+        predictionMarket: topPrediction?.market || "Unknown Market",
+        confidence: Number(topPrediction?.confidence || 0),
+        reasoning: topPrediction?.reasoning || result?.overallReasoning || "",
+        status: "pending",
+        created_at: new Date().toISOString(),
+      };
+
+      try {
+        const history = await getUserHistory(telegramId);
+        await setUserHistory(telegramId, [newHistoryItem, ...history]);
+      } catch (historyError) {
+        console.error("Failed to persist analysis history:", historyError);
+      }
 
       // 3. Deduct Credits
       const { error: updateError } = await supabase
@@ -883,16 +996,15 @@ async function startServer() {
       const tgUser = initData ? getTelegramUserFromInitData(initData) : null;
       if (!tgUser?.id) return c.json({ error: "User not identified" }, 401);
 
-      const { data: logs, error } = await supabase
-        .from("usage_logs")
-        .select("id, endpoint, method, status, created_at")
-        .eq("telegram_id", tgUser.id)
-        .in("endpoint", ["/api/analyze", "/api/analyze-betslip", "/api/tasks/claim"])
-        .order("created_at", { ascending: false })
-        .limit(100);
-      if (error) throw error;
+      const history = await getUserHistory(tgUser.id);
+      const resolved = await Promise.all(history.map((item) => resolveHistoryItemResult(item)));
 
-      return c.json(logs || []);
+      const hasChanges = resolved.some((item, index) => item.status !== history[index]?.status || item.resolved_at !== history[index]?.resolved_at);
+      if (hasChanges) {
+        await setUserHistory(tgUser.id, resolved);
+      }
+
+      return c.json(resolved);
     } catch (e: any) {
       console.error("History API error:", e?.message || e);
       return c.json([], 500);
@@ -1319,6 +1431,39 @@ async function startServer() {
     return c.json({ success: true });
   });
 
+  app.get("/api/admin/users", adminOnly, async (c) => {
+    const query = (c.req.query("q") || "").trim();
+    let dbQuery = supabase
+      .from("users")
+      .select("telegram_id,name,username,role,plan,credits,last_active,created_at")
+      .order("created_at", { ascending: false })
+      .limit(150);
+
+    if (query) {
+      dbQuery = dbQuery.or(`name.ilike.%${query}%,username.ilike.%${query}%,telegram_id.eq.${Number(query) || 0}`);
+    }
+
+    const { data, error } = await dbQuery;
+    if (error) return c.json({ error: error.message }, 500);
+    return c.json(data || []);
+  });
+
+  app.post("/api/admin/users/notify", adminOnly, async (c) => {
+    if (!bot) return c.json({ error: "Bot not configured" }, 500);
+
+    const { telegramId, message } = await c.req.json().catch(() => ({} as any));
+    if (!telegramId || !message) return c.json({ error: "telegramId and message are required" }, 400);
+
+    try {
+      await bot.telegram.sendMessage(Number(telegramId), String(message), {
+        ...Markup.inlineKeyboard([[Markup.button.webApp("Open Flash AI", appUrl)]]),
+      });
+      return c.json({ success: true });
+    } catch (e: any) {
+      return c.json({ error: e?.message || "Failed to notify user" }, 500);
+    }
+  });
+
   // Public Overrides
   app.get("/api/common/tasks", async (c) => {
     const { data } = await supabase.from("tasks").select("*").eq("active", true);
@@ -1352,7 +1497,70 @@ async function startServer() {
   });
 
   app.post("/api/bot/notify", async (c) => {
-    // Basic notify for specific events
+    const body = await c.req.json().catch(() => ({} as any));
+    const telegramId = Number(body?.telegram_id);
+    const type = String(body?.type || "").trim().toLowerCase();
+
+    if (!bot) return c.json({ error: "Bot not configured" }, 500);
+    if (!telegramId || !type) return c.json({ error: "telegram_id and type are required" }, 400);
+
+    const templates: Record<string, { text: string; cta: string }> = {
+      fomo: {
+        text: "⚡ Big fixtures are moving fast right now. Your edge is one analysis away.",
+        cta: "Analyze now",
+      },
+      addiction: {
+        text: "🔥 You're on a streak. Keep your momentum with today's top AI picks.",
+        cta: "Keep streak",
+      },
+      comeback: {
+        text: "👋 We saved your seat. New high-confidence football insights are ready.",
+        cta: "I'm back",
+      },
+      inactive: {
+        text: "⏳ We miss you. Fresh matches are live and your credits are waiting.",
+        cta: "Return now",
+      },
+    };
+
+    const template = templates[type] || templates.comeback;
+    await bot.telegram.sendMessage(telegramId, template.text, {
+      ...Markup.inlineKeyboard([[Markup.button.webApp(template.cta, appUrl)]]),
+    });
+
+    return c.json({ success: true });
+  });
+
+  app.post("/api/admin/automation/retention", adminOnly, async (c) => {
+    const { type } = await c.req.json().catch(() => ({ type: "inactive" }));
+    if (!bot) return c.json({ error: "Bot not configured" }, 500);
+
+    try {
+      let users: any[] = [];
+      if (type === "registration") {
+        const { data } = await supabase.from("users").select("telegram_id").is("phone", null).not("telegram_id", "is", null);
+        users = data || [];
+      } else {
+        const daysAgo = new Date();
+        daysAgo.setDate(daysAgo.getDate() - 5);
+        const { data } = await supabase.from("users").select("telegram_id").lt("last_active", daysAgo.toISOString()).not("telegram_id", "is", null);
+        users = data || [];
+      }
+
+      let sent = 0;
+      for (const u of users) {
+        try {
+          await bot.telegram.sendMessage(u.telegram_id, "📣 Flash AI update: fresh opportunities are available now.", {
+            ...Markup.inlineKeyboard([[Markup.button.webApp("Open Flash AI", appUrl)]]),
+          });
+          sent += 1;
+        } catch {}
+      }
+
+      return c.json({ success: true, sentCount: sent });
+    } catch (e: any) {
+      return c.json({ error: e?.message || "Automation failed" }, 500);
+    }
   });
 
   // Retention & Engagement Automation
@@ -1446,7 +1654,7 @@ async function startServer() {
   });
 
   // n8n Automation: Retention Flow
-  app.post("/api/automation/retention", async (c) => {
+  app.post("/api/automation/retention/personalized", async (c) => {
     const authHeader = c.req.header("Authorization");
     if (authHeader !== `Bearer ${process.env.AUTOMATION_SECRET}`) {
       return c.json({ error: "Unauthorized" }, 401);
