@@ -70,11 +70,12 @@ export const Admin: React.FC = () => {
   const [isBroadcasting, setIsBroadcasting] = useState(false);
 
   useEffect(() => {
+    if (!initData) return;
     fetchDashboard();
     fetchAnalytics();
     fetchTasks();
     fetchAds();
-  }, []);
+  }, [initData]);
 
   const fetchDashboard = async () => {
     try {

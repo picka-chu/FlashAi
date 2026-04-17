@@ -91,6 +91,11 @@ export const Profile: React.FC = () => {
   const [editUsername, setEditUsername] = useState(user?.username || 'alex_v');
   const [tonConnectUI] = useTonConnectUI();
   const [dynamicTasks, setDynamicTasks] = useState<any[]>([]);
+  const [referralStats, setReferralStats] = useState<{ totalReferred: number; earnedCredits: number; referralLink: string }>({
+    totalReferred: 0,
+    earnedCredits: 0,
+    referralLink: '',
+  });
 
   useEffect(() => {
      fetch('/api/common/tasks')
@@ -100,6 +105,21 @@ export const Profile: React.FC = () => {
        })
        .catch(err => console.error("Failed to fetch tasks:", err));
   }, []);
+
+  useEffect(() => {
+    if (!isViewingReferral) return;
+    fetch('/api/user/referral', { headers: { 'X-TG-Init-Data': initData || '' } })
+      .then(r => r.ok ? r.json() : null)
+      .then((data) => {
+        if (!data) return;
+        setReferralStats({
+          totalReferred: Number(data.totalReferred || 0),
+          earnedCredits: Number(data.earnedCredits || 0),
+          referralLink: data.referralLink || '',
+        });
+      })
+      .catch((err) => console.error("Failed to fetch referral stats:", err));
+  }, [isViewingReferral, initData]);
 
   // Payment State
   const [isPaymentSheetOpen, setIsPaymentSheetOpen] = useState(false);
@@ -299,12 +319,16 @@ export const Profile: React.FC = () => {
   };
 
   const copyReferralLink = () => {
+    const fallbackRefId = user?.telegram_id || user?.id;
+    const link = referralStats.referralLink || (fallbackRefId ? `https://t.me/flash_ai_bot?start=${fallbackRefId}` : '');
+    if (!link) {
+      showAlert('Referral link is not ready yet.');
+      return;
+    }
     hapticFeedback('success');
-    // Use telegram_id for referral link as it's the identifier used in bot start payload
-    const refId = user?.telegram_id || user?.id || 'ref123';
-    const link = `https://t.me/flash_ai_bot?start=${refId}`;
-    navigator.clipboard.writeText(link);
-    showAlert('Referral link copied to clipboard!');
+    navigator.clipboard.writeText(link)
+      .then(() => showAlert('Referral link copied to clipboard!'))
+      .catch(() => showAlert('Copy failed. Please copy manually.'));
   };
 
   const handleTaskAction = async (task: any) => {
@@ -545,12 +569,12 @@ export const Profile: React.FC = () => {
                 {/* Stats Grid */}
                 <div className="grid grid-cols-2 gap-4">
                   <div className="bg-zinc-900 border border-zinc-800 rounded-[32px] p-6 text-center space-y-2">
-                    <p className="text-4xl font-black text-[#ccff00]">12</p>
+                    <p className="text-4xl font-black text-[#ccff00]">{referralStats.totalReferred}</p>
                     <p className="text-[10px] font-bold text-zinc-500 tracking-widest">Total referred</p>
                   </div>
                   <div className="bg-zinc-900 border border-zinc-800 rounded-[32px] p-6 text-center space-y-2">
-                    <p className="text-4xl font-black text-white">450</p>
-                    <p className="text-[10px] font-bold text-zinc-500 tracking-widest">Points earned</p>
+                    <p className="text-4xl font-black text-white">{referralStats.earnedCredits}</p>
+                    <p className="text-[10px] font-bold text-zinc-500 tracking-widest">Credits earned</p>
                   </div>
                 </div>
 
@@ -558,11 +582,11 @@ export const Profile: React.FC = () => {
                 <div className="space-y-4">
                   <div className="text-center space-y-1">
                     <h3 className="text-lg font-black text-white">Your referral link</h3>
-                    <p className="text-xs font-bold text-zinc-500">Every friend gives you 50 credits</p>
+                    <p className="text-xs font-bold text-zinc-500">Every friend gives you 2 credits</p>
                   </div>
                   <div className="bg-zinc-900 border border-zinc-800 rounded-[32px] p-4 flex items-center justify-between">
                     <code className="text-[10px] sm:text-xs font-mono text-zinc-400 truncate flex-1 block px-2">
-                      https://t.me/flash_ai_bot?start={user?.telegram_id || user?.id || 'ref123'}
+                      {referralStats.referralLink || `https://t.me/flash_ai_bot?start=${user?.telegram_id || ''}`}
                     </code>
                     <button 
                       onClick={copyReferralLink}
@@ -587,7 +611,7 @@ export const Profile: React.FC = () => {
                     </div>
                     <div className="flex items-center gap-4">
                       <div className="w-8 h-8 rounded-xl bg-[#ccff00]/20 flex items-center justify-center text-[#ccff00] text-xs font-black">3</div>
-                      <p className="text-xs font-bold text-zinc-400">You instantly receive 50 bonus credits</p>
+                      <p className="text-xs font-bold text-zinc-400">You instantly receive 2 bonus credits</p>
                     </div>
                   </div>
                 </div>

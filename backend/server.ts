@@ -361,11 +361,24 @@ async function startServer() {
         })
         .eq("telegram_id", telegramId);
 
-      if (updateError) console.error("Credit deduction error:", updateError);
+      if (updateError) {
+        if (updateError.code === "42703" && String(updateError.message || "").includes("updated_at")) {
+          console.warn("Credit deduction skipped due to DB trigger/schema mismatch (missing users.updated_at).");
+        } else {
+          console.error("Credit deduction error:", updateError);
+        }
+      }
 
       return c.json({ result, newCredits: credits - cost });
     } catch (e: any) {
       console.error("Analysis API error:", e.message);
+      const message = String(e?.message || "");
+      if (message.includes("RESOURCE_EXHAUSTED") || message.includes("quota") || e?.status === 429) {
+        return c.json({ error: "AI quota temporarily exhausted. Please retry in a minute." }, 429);
+      }
+      if (message.includes("UNAVAILABLE") || e?.status === 503) {
+        return c.json({ error: "AI model temporarily unavailable. Please retry shortly." }, 503);
+      }
       return c.json({ error: "Failed to perform analysis" }, 500);
     }
   });
@@ -544,6 +557,7 @@ async function startServer() {
   });
 
   const botToken = process.env.TELEGRAM_BOT_TOKEN;
+  const botUsername = process.env.TELEGRAM_BOT_USERNAME || "flash_ai_bot";
   const appUrl = process.env.APP_URL || `http://localhost:${PORT}`;
   const isPlaceholderToken = !botToken || botToken === "YOUR_TELEGRAM_BOT_TOKEN" || botToken.trim() === "";
 
@@ -882,6 +896,37 @@ async function startServer() {
     } catch (e: any) {
       console.error("History API error:", e?.message || e);
       return c.json([], 500);
+    }
+  });
+
+  app.get("/api/user/referral", async (c) => {
+    const initData = c.req.header("X-TG-Init-Data");
+    if (!isPlaceholderToken && botToken && (!initData || !validateTelegramInitData(initData, botToken))) {
+      return c.json({ error: "Invalid Telegram authentication" }, 401);
+    }
+
+    try {
+      const tgUser = initData ? getTelegramUserFromInitData(initData) : null;
+      if (!tgUser?.id) return c.json({ error: "User not identified" }, 401);
+
+      const [{ count: referredCount }, { data: referrers }] = await Promise.all([
+        supabase.from("users").select("*", { count: "exact", head: true }).eq("referrer_id", tgUser.id),
+        supabase.from("users").select("telegram_id").eq("referrer_id", tgUser.id),
+      ]);
+
+      const totalReferred = referredCount || 0;
+      const earnedCredits = totalReferred * 2;
+      const referralLink = `https://t.me/${botUsername}?start=${tgUser.id}`;
+
+      return c.json({
+        totalReferred,
+        earnedCredits,
+        referralLink,
+        referredUsers: referrers || [],
+      });
+    } catch (e: any) {
+      console.error("Referral API error:", e?.message || e);
+      return c.json({ totalReferred: 0, earnedCredits: 0, referralLink: `https://t.me/${botUsername}` }, 500);
     }
   });
 
