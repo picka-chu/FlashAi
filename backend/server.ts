@@ -62,6 +62,43 @@ async function applyPlanCredits(telegramId: number, planId: string) {
   return creditsToAdd;
 }
 
+async function ensureBootstrapAdminRole() {
+  if (!bootstrapAdminId || Number.isNaN(bootstrapAdminId)) return;
+
+  try {
+    const { data: existingUser, error: fetchError } = await supabase
+      .from("users")
+      .select("telegram_id, role")
+      .eq("telegram_id", bootstrapAdminId)
+      .maybeSingle();
+
+    if (fetchError) throw fetchError;
+
+    if (!existingUser) {
+      await supabase.from("users").insert({
+        telegram_id: bootstrapAdminId,
+        role: "admin",
+        name: "Admin",
+        plan: "admin",
+        credits: 999,
+        last_active: new Date().toISOString(),
+      });
+      console.log(`✅ Bootstrap admin user created for telegram_id=${bootstrapAdminId}`);
+      return;
+    }
+
+    if (existingUser.role !== "admin") {
+      await supabase
+        .from("users")
+        .update({ role: "admin", plan: "admin", last_active: new Date().toISOString() })
+        .eq("telegram_id", bootstrapAdminId);
+      console.log(`✅ Bootstrap admin promoted for telegram_id=${bootstrapAdminId}`);
+    }
+  } catch (error) {
+    console.error("Failed to ensure bootstrap admin role:", error);
+  }
+}
+
 /**
  * Validates the data received from the Telegram Web App.
  * @param initData - The initialization data string from Telegram.
@@ -914,7 +951,8 @@ async function startServer() {
       .eq("telegram_id", tgUser.id)
       .single();
 
-    if (!user || user.role !== "admin") {
+    const isBootstrapAdmin = bootstrapAdminId && tgUser.id === bootstrapAdminId;
+    if (!isBootstrapAdmin && (!user || user.role !== "admin")) {
       return c.json({ error: "Forbidden: Admins Only" }, 403);
     }
 
@@ -1324,6 +1362,7 @@ async function startServer() {
   };
 
   // Run once on startup, then on interval
+  await ensureBootstrapAdminRole();
   refreshLiveCache();
   setInterval(refreshLiveCache, CACHE_INTERVAL);
 
