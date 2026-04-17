@@ -376,7 +376,7 @@ export const Admin: React.FC = () => {
                 </div>
                 <div className="h-64 w-full">
                   <ResponsiveContainer width="100%" height="100%">
-                    <AreaChart data={analytics?.traffic || []}>
+                    <AreaChart data={trafficData}>
                       <defs>
                         <linearGradient id="colorValue" x1="0" y1="0" x2="0" y2="1">
                           <stop offset="5%" stopColor="#ccff00" stopOpacity={0.3}/>
@@ -412,7 +412,7 @@ export const Admin: React.FC = () => {
                 </div>
                 <div className="h-64 w-full">
                   <ResponsiveContainer width="100%" height="100%">
-                    <BarChart data={analytics?.patterns || []}>
+                    <BarChart data={patternData}>
                       <XAxis 
                         dataKey="label" 
                         stroke="#71717a" 
@@ -427,7 +427,7 @@ export const Admin: React.FC = () => {
                         contentStyle={{ backgroundColor: '#18181b', border: 'none', borderRadius: '12px', fontSize: '10px' }}
                       />
                       <Bar dataKey="value" radius={[10, 10, 10, 10]}>
-                        {analytics?.patterns?.map((entry: any, index: number) => (
+                        {patternData.map((entry: any, index: number) => (
                           <Cell key={`cell-${index}`} fill={index % 2 === 0 ? '#ccff00' : '#3b82f6'} />
                         ))}
                       </Bar>

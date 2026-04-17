@@ -2,16 +2,17 @@ import { GoogleGenAI } from "@google/genai";
 
 // Initialize multiple Gemini API keys
 const keys = [
-  process.env.GEMINI_API_KEY_1,
-  process.env.GEMINI_API_KEY_2,
-  process.env.GEMINI_API_KEY_3,
-  process.env.GEMINI_API_KEY_4,
-  process.env.GEMINI_API_KEY_5,
+  process.env.GEMINI_AGENT_KEY_1 || process.env.GEMINI_API_KEY_4,
+  process.env.GEMINI_AGENT_KEY_2 || process.env.GEMINI_API_KEY_5,
 ].filter(Boolean) as string[];
 
 // Fallback to default if no numbered keys are provided
 if (keys.length === 0 && process.env.GEMINI_API_KEY) {
-  keys.push(process.env.GEMINI_API_KEY);
+  keys.push(
+    process.env.GEMINI_API_KEY_4 ||
+    process.env.GEMINI_API_KEY_5 ||
+    process.env.GEMINI_API_KEY
+  );
 }
 
 /**

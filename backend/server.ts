@@ -820,6 +820,65 @@ async function startServer() {
     }
   });
 
+  app.get("/api/user/activities", async (c) => {
+    const initData = c.req.header("X-TG-Init-Data");
+    if (!isPlaceholderToken && botToken && (!initData || !validateTelegramInitData(initData, botToken))) {
+      return c.json({ error: "Invalid Telegram authentication" }, 401);
+    }
+
+    try {
+      const tgUser = initData ? getTelegramUserFromInitData(initData) : null;
+      if (!tgUser?.id) return c.json({ error: "User not identified" }, 401);
+
+      const { data, error } = await supabase
+        .from("usage_logs")
+        .select("id, endpoint, method, status, created_at")
+        .eq("telegram_id", tgUser.id)
+        .order("created_at", { ascending: false })
+        .limit(20);
+      if (error) throw error;
+
+      const activities = (data || []).map((item: any) => ({
+        id: item.id,
+        endpoint: item.endpoint,
+        method: item.method,
+        status: item.status,
+        created_at: item.created_at,
+      }));
+
+      return c.json(activities);
+    } catch (e: any) {
+      console.error("Activities API error:", e?.message || e);
+      return c.json([], 500);
+    }
+  });
+
+  app.get("/api/user/history", async (c) => {
+    const initData = c.req.header("X-TG-Init-Data");
+    if (!isPlaceholderToken && botToken && (!initData || !validateTelegramInitData(initData, botToken))) {
+      return c.json({ error: "Invalid Telegram authentication" }, 401);
+    }
+
+    try {
+      const tgUser = initData ? getTelegramUserFromInitData(initData) : null;
+      if (!tgUser?.id) return c.json({ error: "User not identified" }, 401);
+
+      const { data: logs, error } = await supabase
+        .from("usage_logs")
+        .select("id, endpoint, method, status, created_at")
+        .eq("telegram_id", tgUser.id)
+        .in("endpoint", ["/api/analyze", "/api/analyze-betslip", "/api/tasks/claim"])
+        .order("created_at", { ascending: false })
+        .limit(100);
+      if (error) throw error;
+
+      return c.json(logs || []);
+    } catch (e: any) {
+      console.error("History API error:", e?.message || e);
+      return c.json([], 500);
+    }
+  });
+
   // Create Stars Invoice Endpoint
   app.post("/api/payments/create-stars-invoice", async (c) => {
     // Validate Telegram Init Data

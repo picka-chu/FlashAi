@@ -3,14 +3,27 @@ import { ContextData, BetSlipAnalysis, MatchData, PredictionResult } from "../ty
 
 import { multiAgentService } from "./multiAgentService";
 
-export async function analyzeMatchWithSearch(matchString: string): Promise<PredictionResult> {
-  const keys = [
-    process.env.GEMINI_API_KEY_1,
-    process.env.GEMINI_API_KEY_2,
-    process.env.GEMINI_API_KEY_3,
-    process.env.GEMINI_API_KEY_4,
-    process.env.GEMINI_API_KEY_5,
+function getPredictionKeys() {
+  const predictionKeys = [
+    process.env.GEMINI_PREDICTION_KEY_1 || process.env.GEMINI_API_KEY_1,
+    process.env.GEMINI_PREDICTION_KEY_2 || process.env.GEMINI_API_KEY_2,
+    process.env.GEMINI_PREDICTION_KEY_3 || process.env.GEMINI_API_KEY_3,
   ].filter(Boolean) as string[];
+
+  if (predictionKeys.length === 0) {
+    return [
+      process.env.GEMINI_API_KEY_1,
+      process.env.GEMINI_API_KEY_2,
+      process.env.GEMINI_API_KEY_3,
+      process.env.GEMINI_API_KEY,
+    ].filter(Boolean) as string[];
+  }
+
+  return predictionKeys;
+}
+
+export async function analyzeMatchWithSearch(matchString: string): Promise<PredictionResult> {
+  const keys = getPredictionKeys();
   const ai = new GoogleGenAI({ apiKey: keys[Math.floor(Math.random() * keys.length)] || process.env.GEMINI_API_KEY || "" });
 
   const prompt = `
@@ -107,13 +120,7 @@ function parseJsonFromText(text: string) {
 }
 
 export async function fetchMatchH2H(home: string, away: string): Promise<any> {
-  const keys = [
-    process.env.GEMINI_API_KEY_1,
-    process.env.GEMINI_API_KEY_2,
-    process.env.GEMINI_API_KEY_3,
-    process.env.GEMINI_API_KEY_4,
-    process.env.GEMINI_API_KEY_5,
-  ].filter(Boolean) as string[];
+  const keys = getPredictionKeys();
   const ai = new GoogleGenAI({ apiKey: keys[Math.floor(Math.random() * keys.length)] || process.env.GEMINI_API_KEY || "" });
 
   const prompt = `
@@ -143,14 +150,7 @@ export async function fetchMatchH2H(home: string, away: string): Promise<any> {
 }
 
 export async function fetchLiveMatchesFallback(): Promise<any[]> {
-  // We can keep this one as is or move it, but for now let's just use the rotated ai instance
-  const keys = [
-    process.env.GEMINI_API_KEY_1,
-    process.env.GEMINI_API_KEY_2,
-    process.env.GEMINI_API_KEY_3,
-    process.env.GEMINI_API_KEY_4,
-    process.env.GEMINI_API_KEY_5,
-  ].filter(Boolean) as string[];
+  const keys = getPredictionKeys();
   const ai = new GoogleGenAI({ apiKey: keys[Math.floor(Math.random() * keys.length)] || process.env.GEMINI_API_KEY || "" });
 
   const prompt = `
