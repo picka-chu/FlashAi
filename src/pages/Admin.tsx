@@ -38,14 +38,12 @@ import {
   Cell
 } from 'recharts';
 import { useTelegram } from '../hooks/useTelegram';
-import { useUserStore } from '../store/useUserStore';
 
 type AdminTab = 'dashboard' | 'analytics' | 'tasks' | 'ads' | 'users';
 
 export const Admin: React.FC = () => {
   const [activeTab, setActiveTab] = useState<AdminTab>('dashboard');
   const { tg, hapticFeedback, showAlert, showConfirm, initData } = useTelegram();
-  const { user } = useUserStore();
   
   const [stats, setStats] = useState<any>(null);
   const [analytics, setAnalytics] = useState<any>(null);

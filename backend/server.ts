@@ -735,6 +735,65 @@ async function startServer() {
   }
 
   // Auth/Signup Request Endpoint
+  app.get("/api/auth/me", async (c) => {
+    const initData = c.req.header("X-TG-Init-Data");
+    if (!isPlaceholderToken && botToken && (!initData || !validateTelegramInitData(initData, botToken))) {
+      return c.json({ error: "Invalid Telegram authentication" }, 401);
+    }
+
+    try {
+      const params = new URLSearchParams(initData || "");
+      const userParam = params.get("user");
+      if (!userParam) return c.json({ error: "Missing Telegram user payload" }, 400);
+
+      const tgUser = JSON.parse(decodeURIComponent(userParam));
+      const isBootstrapAdmin = Boolean(bootstrapAdminId && tgUser?.id === bootstrapAdminId);
+
+      const { data: existing, error: fetchError } = await supabase
+        .from("users")
+        .select("*")
+        .eq("telegram_id", tgUser.id)
+        .maybeSingle();
+      if (fetchError) throw fetchError;
+
+      if (!existing) {
+        const { error: insertError } = await supabase.from("users").insert({
+          telegram_id: tgUser.id,
+          name: `${tgUser.first_name || ""}${tgUser.last_name ? ` ${tgUser.last_name}` : ""}`.trim() || tgUser.username || "User",
+          username: tgUser.username || "",
+          role: isBootstrapAdmin ? "admin" : "user",
+          plan: isBootstrapAdmin ? "admin" : "free",
+          credits: isBootstrapAdmin ? 999 : 0,
+          last_active: new Date().toISOString(),
+        });
+        if (insertError) throw insertError;
+      }
+
+      if (existing && isBootstrapAdmin && existing.role !== "admin") {
+        await supabase.from("users")
+          .update({ role: "admin", plan: "admin", last_active: new Date().toISOString() })
+          .eq("telegram_id", tgUser.id);
+      }
+
+      const { data: user, error: userError } = await supabase
+        .from("users")
+        .select("*")
+        .eq("telegram_id", tgUser.id)
+        .single();
+      if (userError || !user) return c.json({ error: "User profile not found" }, 404);
+
+      return c.json({
+        user: {
+          ...user,
+          role: isBootstrapAdmin ? "admin" : (user.role || "user")
+        }
+      });
+    } catch (e: any) {
+      console.error("Auth profile error:", e?.message || e);
+      return c.json({ error: "Failed to fetch authenticated profile" }, 500);
+    }
+  });
+
   app.post("/api/auth/request-signup", async (c) => {
     // Validate Telegram Init Data
     const initData = c.req.header("X-TG-Init-Data");
