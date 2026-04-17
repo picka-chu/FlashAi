@@ -10,7 +10,19 @@ const ESPN_BASE = 'https://site.api.espn.com/apis/site/v2/sports/soccer';
 const POPULAR_LEAGUES = [
   'eng.1', 'esp.1', 'ita.1', 'ger.1', 'fra.1',
   'uefa.champions', 'uefa.europa', 'uefa.europa.conf',
-  'ned.1', 'por.1', 'usa.1', 'mex.1', 'bra.1', 'arg.1'
+  'ned.1', 'por.1', 'usa.1', 'mex.1', 'bra.1', 'arg.1',
+  'eng.2', 'eng.3', 'eng.4', 'eng.5', 'eng.w.1',
+  'esp.2', 'ita.2', 'ger.2', 'fra.2',
+  'uefa.nations', 'uefa.super_cup',
+  'tur.1', 'bel.1', 'sco.1', 'aut.1', 'sui.1',
+  'den.1', 'swe.1', 'nor.1', 'pol.1', 'cze.1',
+  'gre.1', 'rus.1', 'ukr.1', 'rou.1', 'hun.1', 'srb.1', 'cro.1',
+  'irl.1', 'wal.1',
+  'jpn.1', 'kor.1', 'chn.1', 'aus.1',
+  'ksa.1', 'qat.1', 'uae.1',
+  'arg.2', 'bra.2', 'chi.1', 'col.1', 'uru.1', 'per.1', 'par.1',
+  'usa.2', 'usa.open',
+  'fifa.world', 'fifa.worldq', 'concacaf.champions', 'conmebol.libertadores', 'conmebol.sudamericana'
 ];
 
 const LEAGUE_PRIORITY: Record<string, number> = {
@@ -47,7 +59,7 @@ function getTodayDateString(offset = 0) {
 }
 
 function extractLeague(e: any) {
-  return e?.competitions?.[0]?.league || e?.league || e?.season?.type || null;
+  return e?.competitions?.[0]?.league || e?.competitions?.[0]?.competition || e?.league || e?.season?.type || null;
 }
 
 function getLeaguePriority(e: any): number {
@@ -191,8 +203,7 @@ export async function getLiveMatches() {
 
 export async function getUpcomingMatches(topFixtures: string[] = []) {
   const startDate = getTodayDateString();
-  const endDate = getTodayDateString(14);
-  const dateRange = `${startDate}-${endDate}`;
+  const dateRange = `${startDate}`;
 
   const promises = POPULAR_LEAGUES.map((league) =>
     axios.get(`${ESPN_BASE}/${league}/scoreboard?dates=${dateRange}`).then((res) => (res.data.events || []).map((e: any) => ({ ...e, _leagueSlug: league }))).catch(() => []),

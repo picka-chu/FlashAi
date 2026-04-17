@@ -344,7 +344,7 @@ export const Home: React.FC<HomeProps> = ({ onTabChange }) => {
         }
         
         const mappedUpcoming = upcoming.map((m: any, i: number) => {
-          const leagueName = m.league?.name || m.league?.displayName || 'Leagues';
+          const leagueName = m.league?.name || m.league?.displayName || m.competition?.name || 'Unknown League';
           return {
             ...m,
             id: m.fixture.id,
@@ -393,7 +393,7 @@ export const Home: React.FC<HomeProps> = ({ onTabChange }) => {
           })));
         }
 
-        setUpcomingMatches(mappedUpcoming.slice(0, 20));
+        setUpcomingMatches(mappedUpcoming.slice(0, 200));
       } catch (error) {
         console.error("Failed to fetch matches:", error);
         setUpcomingMatches([]);
@@ -885,5 +885,4 @@ export const Home: React.FC<HomeProps> = ({ onTabChange }) => {
     </div>
   );
 };
-
 
