@@ -1,6 +1,3 @@
--- LEGACY FILE (FROZEN): do not edit for active development.
--- Canonical schema lives in: supabase_production_migration.sql
--- Historical snapshot retained for reference only.
 -- Create profiles table
 CREATE TABLE IF NOT EXISTS public.profiles (
     id BIGINT PRIMARY KEY, -- Telegram User ID

@@ -1,6 +1,3 @@
--- LEGACY FILE (FROZEN): do not edit for active development.
--- Canonical schema lives in: supabase_production_migration.sql
--- Historical snapshot retained for reference only.
 -- Supabase Database Schema Migration
 -- Flash AI Football Prediction App
 

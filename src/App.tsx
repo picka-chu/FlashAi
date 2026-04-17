@@ -6,17 +6,35 @@ import { Matches } from "./pages/Matches";
 import { Analyze } from "./pages/Analyze";
 import { History } from "./pages/History";
 import { Profile } from "./pages/Profile";
+import { Admin } from "./pages/Admin";
 import { useTelegram } from "./hooks/useTelegram";
 import { useUserStore } from "./store/useUserStore";
+import { supabase } from "./lib/supabase";
 import { motion, AnimatePresence } from "motion/react";
 import { useMarketingBot } from "./hooks/useMarketingBot";
 
+import { init, retrieveLaunchParams } from '@telegram-apps/sdk-react';
+
 export default function App() {
   const [activeTab, setActiveTab] = useState<TabType>("home");
-  const { initData, isReady, setHeaderColor, setBackgroundColor } = useTelegram();
+  const { user: tgUser, isReady, setHeaderColor, setBackgroundColor } = useTelegram();
   const { setUser, isLoading, setLoading } = useUserStore();
+  
+  const [lp, setLp] = useState<any>(null);
 
   useMarketingBot();
+
+  useEffect(() => {
+    try {
+      // Initialize Telegram SDK and attempt to retrieve launch params
+      init();
+      const params = retrieveLaunchParams();
+      setLp(params);
+      console.log('Telegram SDK & Analytics Initialized', params);
+    } catch (e) {
+      console.warn('Telegram SDK initialization skipped or failed:', e);
+    }
+  }, []);
 
   useEffect(() => {
     if (isReady) {
@@ -26,36 +44,33 @@ export default function App() {
   }, [isReady, setHeaderColor, setBackgroundColor]);
 
   useEffect(() => {
-    const authenticateTelegramUser = async () => {
-      if (!initData) {
+    const fetchProfile = async () => {
+      if (!tgUser?.id || !supabase) {
         setLoading(false);
         return;
       }
 
       try {
-        const authRes = await fetch("/api/auth/telegram/exchange", {
-          method: "POST",
-          headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({ initData }),
-        });
+        const { data, error } = await supabase
+          .from('users')
+          .select('*')
+          .eq('telegram_id', tgUser.id)
+          .single();
 
-        if (!authRes.ok) {
-          console.error("Telegram auth exchange failed");
+        if (error && error.code === 'PGRST116') {
+          console.warn("User not found in 'users' table.");
           setLoading(false);
-          return;
-        }
-
-        const authData = await authRes.json();
-        if (authData?.accessToken) {
-          localStorage.setItem("flash_ai_access_token", authData.accessToken);
-        }
-        if (authData?.refreshToken) {
-          localStorage.setItem("flash_ai_refresh_token", authData.refreshToken);
-        }
-
-        if (authData?.user) {
-          setUser(authData.user);
-          return;
+        } else if (data) {
+          setUser({
+            id: data.id,
+            telegram_id: data.telegram_id,
+            name: data.name,
+            phone: data.phone,
+            credits: data.credits || 0,
+            plan: data.plan || "free",
+            role: data.role || "user",
+            photo_url: data.photo_url
+          });
         }
       } catch (err) {
         console.error("Error fetching profile:", err);
@@ -63,35 +78,12 @@ export default function App() {
       }
     };
 
-    if (isReady && initData) {
-      authenticateTelegramUser();
-    } else if (isReady && !initData) {
+    if (tgUser?.id) {
+      fetchProfile();
+    } else if (isReady && !tgUser) {
       setLoading(false);
     }
-  }, [initData, isReady, setUser, setLoading]);
-
-  useEffect(() => {
-    const interval = setInterval(async () => {
-      const refreshToken = localStorage.getItem("flash_ai_refresh_token");
-      if (!refreshToken) return;
-      try {
-        const res = await fetch("/api/auth/refresh", {
-          method: "POST",
-          headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({ refreshToken }),
-        });
-        if (!res.ok) return;
-        const data = await res.json();
-        if (data?.accessToken) {
-          localStorage.setItem("flash_ai_access_token", data.accessToken);
-        }
-      } catch {
-        // Silent refresh errors are non-fatal for UI rendering.
-      }
-    }, 10 * 60 * 1000);
-
-    return () => clearInterval(interval);
-  }, []);
+  }, [tgUser, isReady, setUser, setLoading]);
 
   const renderPage = () => {
     switch (activeTab) {
@@ -100,6 +92,7 @@ export default function App() {
       case "analyze": return <Analyze />;
       case "history": return <History />;
       case "profile": return <Profile />;
+      case "admin": return <Admin />;
       default: return <Home onTabChange={setActiveTab} />;
     }
   };

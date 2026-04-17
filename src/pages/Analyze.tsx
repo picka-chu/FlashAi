@@ -19,14 +19,17 @@ import {
   Dices,
   Target,
   Flame,
-  ChevronRight
+  ChevronRight,
+  UserPlus
 } from 'lucide-react';
 import { useUserStore } from '../store/useUserStore';
-import { analyzeBetSlip, analyzeMatchWithSearch } from '../services/geminiService';
 import { searchMatches } from '../services/footballService';
 import { BetSlipAnalysis, PredictionResult } from '../types/prediction';
+import { useTelegram } from '../hooks/useTelegram';
+import { SignUpSheet } from '../components/SignUpSheet';
 
 export const Analyze: React.FC = () => {
+  const [isSignUpOpen, setIsSignUpOpen] = useState(false);
   const [input, setInput] = useState('');
   const [isFocused, setIsFocused] = useState(false);
   const [images, setImages] = useState<string[]>([]);
@@ -53,8 +56,11 @@ export const Analyze: React.FC = () => {
     analysisResult, 
     setIsAnalyzing, 
     setAnalysisResult,
-    setSelectedMatch
+    setSelectedMatch,
+    updateCredits
   } = useUserStore();
+
+  const { hapticFeedback, initData } = useTelegram();
 
   useEffect(() => {
     let interval: NodeJS.Timeout;
@@ -73,9 +79,34 @@ export const Analyze: React.FC = () => {
         setError(null);
         try {
           const matchString = `${selectedMatch.home} vs ${selectedMatch.away}`;
-          const prediction: PredictionResult = await analyzeMatchWithSearch(matchString);
           
-          setAnalysisResult(prediction);
+          const response = await fetch('/api/analyze', {
+            method: 'POST',
+            headers: { 
+              'Content-Type': 'application/json',
+              'X-TG-Init-Data': initData || ''
+            },
+            body: JSON.stringify({ 
+              matchString, 
+              matchId: selectedMatch.id 
+            })
+          });
+
+          const data = await response.json();
+
+          if (!response.ok) {
+            if (response.status === 402) {
+              setError(`Insufficient credits. You need ${data.required} but have ${data.current}.`);
+            } else {
+              setError(data.error || "Analysis failed.");
+            }
+            return;
+          }
+
+          setAnalysisResult(data.result);
+          if (data.newCredits !== undefined) {
+            updateCredits(data.newCredits);
+          }
         } catch (error: any) {
           console.error("Match analysis failed:", error);
           setError("Failed to analyze match. Please try again.");
@@ -86,14 +117,25 @@ export const Analyze: React.FC = () => {
     };
 
     performAnalysis();
-  }, [isAnalyzing, selectedMatch, analysisResult, setAnalysisResult, setIsAnalyzing]);
+  }, [isAnalyzing, selectedMatch, analysisResult, setAnalysisResult, setIsAnalyzing, initData, updateCredits]);
 
-  const handleImageUpload = (e: React.ChangeEvent<HTMLInputElement>) => {
+  const handleImageUpload = async (e: React.ChangeEvent<HTMLInputElement>) => {
     const files = e.target.files;
-    if (files) {
-      const newImages = Array.from(files as FileList).map(file => URL.createObjectURL(file));
-      setImages(prev => [...prev, ...newImages]);
-    }
+    if (!files) return;
+    
+    const newImages = await Promise.all(
+      Array.from(files as FileList).map((file: File) => {
+        return new Promise<string>((resolve) => {
+          const reader = new FileReader();
+          reader.onloadend = () => {
+            resolve(reader.result as string);
+          };
+          reader.readAsDataURL(file);
+        });
+      })
+    );
+    
+    setImages(prev => [...prev, ...newImages]);
   };
 
   const removeImage = (index: number) => {
@@ -102,6 +144,20 @@ export const Analyze: React.FC = () => {
 
   const handleSend = async () => {
     if (!input.trim() && images.length === 0 && !selectedMatch) return;
+
+    if (!user) {
+      hapticFeedback('medium');
+      setIsSignUpOpen(true);
+      return;
+    }
+
+    // Initial check for credits
+    const requiredCredits = images.length > 0 ? 3 : 1;
+    if (user.credits < requiredCredits) {
+      hapticFeedback('error');
+      setError(`Minimum ${requiredCredits} credits required for this analysis. You have ${user.credits}.`);
+      return;
+    }
     
     setError(null);
     setIsAnalyzing(true);
@@ -109,8 +165,30 @@ export const Analyze: React.FC = () => {
     if (images.length > 0) {
       setBetSlipResult(null);
       try {
-        const result = await analyzeBetSlip(images);
-        setBetSlipResult(result);
+        const response = await fetch('/api/analyze-betslip', {
+          method: 'POST',
+          headers: { 
+            'Content-Type': 'application/json',
+            'X-TG-Init-Data': initData || ''
+          },
+          body: JSON.stringify({ images })
+        });
+
+        const data = await response.json();
+
+        if (!response.ok) {
+          if (response.status === 402) {
+            setError(`Insufficient credits. Required: ${data.required}, Current: ${data.current}`);
+          } else {
+            setError(data.error || "Analysis failed.");
+          }
+          return;
+        }
+
+        setBetSlipResult(data.result);
+        if (data.newCredits !== undefined) {
+          updateCredits(data.newCredits);
+        }
       } catch (error) {
         console.error("Analysis failed:", error);
         setError("Failed to analyze bet slip. Please check image quality.");
@@ -174,10 +252,12 @@ export const Analyze: React.FC = () => {
       <div className="flex justify-between items-center px-4 pt-6 pb-2 z-50">
         <h1 className="text-lg font-black text-white">Analyze</h1>
         <div className="flex items-center gap-3">
-          <div className="bg-white/5 backdrop-blur-md border border-white/10 px-3 py-1.5 rounded-full flex items-center gap-1.5 shadow-[0_0_15px_rgba(204,255,0,0.1)]">
-            <Zap className="w-3.5 h-3.5 text-[#ccff00]" />
-            <span className="text-xs font-black text-white">{user?.credits || 240}</span>
-          </div>
+          {user?.phone && (
+            <div className="bg-white/5 backdrop-blur-md border border-white/10 px-3 py-1.5 rounded-full flex items-center gap-1.5 shadow-[0_0_15px_rgba(204,255,0,0.1)]">
+              <Zap className="w-3.5 h-3.5 text-[#ccff00]" />
+              <span className="text-xs font-black text-white">{user?.credits}</span>
+            </div>
+          )}
         </div>
       </div>
 
@@ -227,7 +307,7 @@ export const Analyze: React.FC = () => {
                     ) : (
                       <span className="text-xs font-black text-zinc-700">VS</span>
                     )}
-                    <span className="text-[8px] font-black text-zinc-500 uppercase mt-1">{selectedMatch.minute || selectedMatch.time}</span>
+                    <span className="text-[8px] font-black text-zinc-500 mt-1">{selectedMatch.minute || selectedMatch.time}</span>
                   </div>
                   <div className="flex-1 flex flex-col items-center">
                     <div className="w-10 h-10 rounded-xl bg-gradient-to-br from-zinc-800 to-zinc-900 border border-zinc-700/30 flex items-center justify-center shadow-lg mb-2 overflow-hidden">
@@ -245,14 +325,14 @@ export const Analyze: React.FC = () => {
               {/* Analysis Status */}
               <div className="space-y-4">
                 <div className="flex items-center justify-between px-1">
-                  <h3 className="text-[10px] font-black text-zinc-500 uppercase tracking-widest flex items-center gap-2">
+                  <h3 className="text-[10px] font-black text-zinc-500 tracking-widest flex items-center gap-2">
                     <BrainCircuit className="w-3 h-3" />
-                    AI Insights
+                    AI insights
                   </h3>
                   {isAnalyzing && (
                     <div className="flex items-center gap-2">
                       <Loader2 className="w-3 h-3 text-[#ccff00] animate-spin" />
-                      <span className="text-[10px] font-black text-[#ccff00] uppercase">
+                      <span className="text-[10px] font-black text-[#ccff00]">
                         <AnimatePresence mode="wait">
                           <motion.span
                             key={loadingMessageIndex}
@@ -345,10 +425,10 @@ export const Analyze: React.FC = () => {
                                   <TrendingUp className="w-4 h-4 text-[#ccff00]" />
                                 </div>
                               )}
-                              <span className={`text-[10px] font-black uppercase tracking-widest ${
+                              <span className={`text-[10px] font-black tracking-widest ${
                                 i === 0 ? 'text-green-400' : 'text-[#ccff00]'
                               }`}>
-                                {i === 0 ? 'Top Prediction' : 'Value Pick'}
+                                {i === 0 ? 'Top prediction' : 'Value pick'}
                               </span>
                             </div>
                             <div className="flex items-center gap-2">
@@ -368,7 +448,7 @@ export const Analyze: React.FC = () => {
                           
                           <button className="w-full mt-4 py-3 rounded-xl bg-white/5 hover:bg-white/10 border border-white/10 text-xs font-black text-white transition-colors flex items-center justify-center gap-2">
                             <Flame className="w-3 h-3 text-red-500" />
-                            ADD TO BET SLIP
+                            Add to bet slip
                           </button>
                         </motion.div>
                       ))}
@@ -398,7 +478,7 @@ export const Analyze: React.FC = () => {
                               <h4 className="text-xs font-black text-white mb-2 truncate">{team.name}</h4>
                               <div className="space-y-3">
                                 <div>
-                                  <span className="text-[8px] font-black text-zinc-500 uppercase">Form</span>
+                                  <span className="text-[8px] font-black text-zinc-500">Form</span>
                                   <div className="flex gap-1 mt-1">
                                     {team.form.split('').map((res: string, idx: number) => (
                                       <span key={idx} className={`w-4 h-4 rounded-sm flex items-center justify-center text-[8px] font-black ${
@@ -413,7 +493,7 @@ export const Analyze: React.FC = () => {
                                 </div>
                                 {team.injuries.length > 0 && (
                                   <div>
-                                    <span className="text-[8px] font-black text-zinc-500 uppercase">Missing</span>
+                                    <span className="text-[8px] font-black text-zinc-500">Missing</span>
                                     <p className="text-[10px] text-zinc-400 mt-0.5 leading-tight line-clamp-2">
                                       {team.injuries.join(', ')}
                                     </p>
@@ -435,8 +515,8 @@ export const Analyze: React.FC = () => {
                             <p className="text-sm font-black text-white">Unlock 3+ Premium Predictions</p>
                             <p className="text-xs font-bold text-zinc-400 mt-1.5 leading-relaxed">PRO members get access to deep statistical reasoning, sharp money movements, and high-value bets.</p>
                           </div>
-                          <button className="w-full mt-2 bg-[#ccff00] text-black font-black text-xs uppercase tracking-widest py-4 rounded-xl shadow-xl shadow-[#ccff00]/10 active:scale-[0.98] transition-all relative z-10">
-                            UPGRADE TO PRO
+                          <button className="w-full mt-2 bg-[#ccff00] text-black font-black text-xs tracking-widest py-4 rounded-xl shadow-xl shadow-[#ccff00]/10 active:scale-[0.98] transition-all relative z-10">
+                            Upgrade to pro
                           </button>
                         </div>
                       )}
@@ -457,14 +537,14 @@ export const Analyze: React.FC = () => {
                   <Dices className="w-5 h-5 text-[#ccff00]" />
                 </div>
                 <div>
-                  <h2 className="text-lg font-black text-white">Bet Slip Analysis</h2>
-                  <p className="text-[10px] font-bold text-zinc-500 uppercase tracking-widest">AI Audit Complete</p>
+                  <h2 className="text-lg font-black text-white">Bet slip analysis</h2>
+                  <p className="text-[10px] font-bold text-zinc-500 tracking-widest">AI audit complete</p>
                 </div>
               </div>
 
               <div className="grid grid-cols-2 gap-3">
                 <div className="bg-zinc-900/50 border border-zinc-800/50 p-4 rounded-[24px] text-center">
-                  <p className="text-[10px] font-black text-zinc-500 uppercase mb-1">Total Odds</p>
+                  <p className="text-[10px] font-black text-zinc-500 mb-1">Total odds</p>
                   <p className="text-xl font-black text-white">{betSlipResult.totalOdds.toFixed(2)}</p>
                 </div>
                 <div className={`border p-4 rounded-[24px] text-center ${
@@ -472,7 +552,7 @@ export const Analyze: React.FC = () => {
                   betSlipResult.overallRisk === 'MEDIUM' ? 'bg-[#ccff00]/5 border-[#ccff00]/20' :
                   'bg-red-500/5 border-red-500/20'
                 }`}>
-                  <p className="text-[10px] font-black text-zinc-500 uppercase mb-1">Risk Level</p>
+                  <p className="text-[10px] font-black text-zinc-500 mb-1">Risk level</p>
                   <p className={`text-xl font-black ${
                     betSlipResult.overallRisk === 'LOW' ? 'text-green-400' :
                     betSlipResult.overallRisk === 'MEDIUM' ? 'text-[#ccff00]' :
@@ -492,7 +572,6 @@ export const Analyze: React.FC = () => {
                   >
                     <div className="flex items-center justify-between">
                       <h4 className="text-sm font-black text-white">{item.match}</h4>
-                      <span className="text-[10px] font-black text-zinc-500">@{item.odds}</span>
                     </div>
                     <div className="flex items-center gap-2">
                       <span className="bg-[#ccff00]/10 text-[#ccff00] text-[10px] font-black px-2 py-1 rounded-lg border border-[#ccff00]/20">
@@ -514,7 +593,7 @@ export const Analyze: React.FC = () => {
               <div className="bg-gradient-to-br from-zinc-900 to-zinc-950 border border-zinc-800 p-6 rounded-[32px] space-y-4">
                 <div className="flex items-center gap-2">
                   <Target className="w-4 h-4 text-[#ccff00]" />
-                  <h4 className="text-sm font-black text-white uppercase tracking-widest">Flash Verdict</h4>
+                  <h4 className="text-sm font-black text-white tracking-widest">Flash verdict</h4>
                 </div>
                 <p className="text-sm text-zinc-300 leading-relaxed">{betSlipResult.verdict}</p>
                 <div className="pt-4 border-t border-zinc-800 flex items-center justify-between">
@@ -527,18 +606,15 @@ export const Analyze: React.FC = () => {
                 <div className="space-y-4">
                   <div className="flex items-center gap-2 px-1">
                     <ShieldCheck className="w-4 h-4 text-green-400" />
-                    <h3 className="text-[10px] font-black text-zinc-500 uppercase tracking-widest">Safe Alternatives</h3>
+                    <h3 className="text-[10px] font-black text-zinc-500 tracking-widest">Safe alternatives</h3>
                   </div>
                   <div className="grid grid-cols-1 gap-3">
                     {betSlipResult.safePicks.map((pick, i) => (
                       <div key={i} className="bg-green-500/5 border border-green-500/10 rounded-[24px] p-4 flex items-center justify-between gap-4">
                         <div className="flex-1">
-                          <p className="text-[10px] font-black text-green-400 uppercase mb-1">{pick.match}</p>
+                          <p className="text-[10px] font-black text-green-400 mb-1">{pick.match}</p>
                           <p className="text-sm font-black text-white">{pick.pick}</p>
                           <p className="text-[10px] text-zinc-500 mt-1">{pick.reason}</p>
-                        </div>
-                        <div className="bg-zinc-900/50 px-3 py-2 rounded-xl border border-zinc-800">
-                          <span className="text-xs font-black text-white">@{pick.odds}</span>
                         </div>
                       </div>
                     ))}
@@ -569,8 +645,8 @@ export const Analyze: React.FC = () => {
                   <BrainCircuit className="w-10 h-10 text-[#ccff00]" />
                 </motion.div>
                 <div className="space-y-1">
-                  <h2 className="text-2xl font-black text-white tracking-tight">Flash AI Analysis</h2>
-                  <p className="text-xs font-bold text-zinc-500 uppercase tracking-widest">Deep Match Insights • Real-time Data</p>
+                  <h2 className="text-2xl font-black text-white tracking-tight">Flash AI analysis</h2>
+                  <p className="text-xs font-bold text-zinc-500 tracking-widest">Deep match insights • Real-time data</p>
                 </div>
               </div>
 
@@ -600,11 +676,11 @@ export const Analyze: React.FC = () => {
               {/* Recent Prompts Placeholder */}
               <div className="space-y-4">
                 <div className="flex items-center justify-between px-1">
-                  <h3 className="text-[10px] font-black text-zinc-500 uppercase tracking-widest flex items-center gap-2">
+                  <h3 className="text-[10px] font-black text-zinc-500 tracking-widest flex items-center gap-2">
                     <History className="w-3 h-3" />
-                    Recent Analysis
+                    Recent analysis
                   </h3>
-                  <button className="text-[10px] font-black text-[#ccff00] uppercase tracking-tighter">View All</button>
+                  <button className="text-[10px] font-black text-[#ccff00]">View all</button>
                 </div>
                 <div className="flex gap-3 overflow-x-auto no-scrollbar -mx-1 px-1">
                   {['Real vs City', 'Arsenal Win?', 'Over 2.5 Goals'].map((tag, i) => (
@@ -664,7 +740,7 @@ export const Analyze: React.FC = () => {
                     className="w-20 h-20 rounded-xl border-2 border-dashed border-zinc-800 flex flex-col items-center justify-center gap-1 text-zinc-600 hover:text-zinc-400 hover:border-zinc-700 transition-all"
                   >
                     <Plus className="w-4 h-4" />
-                    <span className="text-[8px] font-black uppercase">Add</span>
+                    <span className="text-[8px] font-black">Add</span>
                   </button>
                 </div>
               </motion.div>
@@ -719,6 +795,11 @@ export const Analyze: React.FC = () => {
           </div>
         </motion.div>
       </div>
+
+      <SignUpSheet 
+        isOpen={isSignUpOpen} 
+        onClose={() => setIsSignUpOpen(false)} 
+      />
     </div>
   );
 };

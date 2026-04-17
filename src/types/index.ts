@@ -1,4 +1,4 @@
-export type UserPlan = 'free' | 'pro' | 'vip';
+export type UserPlan = 'free' | 'weekly' | 'monthly' | 'pro' | 'vip';
 
 export interface UserProfile {
   id: string;
@@ -8,6 +8,7 @@ export interface UserProfile {
   phone?: string;
   credits: number;
   plan: UserPlan;
+  role: 'user' | 'admin';
   photo_url?: string;
 }
 

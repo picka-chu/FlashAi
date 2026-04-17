@@ -2,6 +2,13 @@ import axios from 'axios';
 import { MatchData, TeamStats } from '../types/prediction';
 import { fetchLiveMatchesFallback, getTopFixturesFromSearch } from './geminiService';
 
+const API_KEY = 'cd225a94-3811-4d50-9f5d-0e1d458ddb0a';
+const API_BASE = 'https://v2.football.sportsapipro.com/api';
+
+const HEADERS = {
+  'x-api-key': API_KEY
+};
+
 const ESPN_BASE = 'https://site.api.espn.com/apis/site/v2/sports/soccer';
 
 const POPULAR_LEAGUES = [
@@ -152,7 +159,7 @@ function mapESPNEvent(e: any, leagueSlug: string) {
       away: { name: away.team.displayName, id: away.team.id, logo: away.team.logo }
     },
     league: { 
-      name: leagueObj?.name || leagueObj?.displayName || 'Soccer', 
+      name: leagueObj?.name || leagueObj?.displayName || 'Leagues', 
       id: leagueObj?.id, 
       slug: leagueObj?.slug || leagueSlug 
     },
@@ -184,7 +191,7 @@ function mapSportsApiEvent(e: any) {
       away: { name: e.awayTeam, id: e.awayTeam, logo: null }
     },
     league: { 
-      name: e.tournament || 'Soccer', 
+      name: e.tournament || 'Leagues', 
       id: e.tournament, 
       slug: e.tournament 
     },
@@ -263,6 +270,56 @@ export async function getMatchDetails(fixtureId: number | string, match?: any): 
     }
   }
 
+  // Fallback to sportsapipro if needed
+  let sportsApiId = idStr;
+  if (sportsApiId.startsWith('espn_') && match) {
+    try {
+      const dateStr = new Date(match.fixture?.date || Date.now()).toISOString().split('T')[0];
+      const res = await axios.get(`${API_BASE}/matches`, {
+        headers: HEADERS,
+        params: { date: dateStr }
+      });
+      const events = res.data.events || [];
+      const found = events.find((e: any) => 
+        (e.homeTeam.toLowerCase().includes(match.home.toLowerCase()) || match.home.toLowerCase().includes(e.homeTeam.toLowerCase())) &&
+        (e.awayTeam.toLowerCase().includes(match.away.toLowerCase()) || match.away.toLowerCase().includes(e.awayTeam.toLowerCase()))
+      );
+      if (found) {
+        sportsApiId = found.id.toString();
+      }
+    } catch (e: any) {
+      // Ignore
+    }
+  }
+
+  if (sportsApiId.startsWith('sportsapi_')) {
+    sportsApiId = sportsApiId.replace('sportsapi_', '');
+  }
+
+  if (!sportsApiId.startsWith('espn_')) {
+    try {
+      const statsRes = await axios.get(`${API_BASE}/match/${sportsApiId}/statistics`, { headers: HEADERS }).catch(() => null);
+      const h2hRes = await axios.get(`${API_BASE}/match/${sportsApiId}/h2h`, { headers: HEADERS }).catch(() => null);
+      
+      if (h2hRes?.data?.data?.teamDuel) {
+        const duel = h2hRes.data.data.teamDuel;
+        homeStats.last5.results = Array(duel.homeWins).fill('W').concat(Array(duel.draws).fill('D')).concat(Array(duel.awayWins).fill('L'));
+        awayStats.last5.results = Array(duel.awayWins).fill('W').concat(Array(duel.draws).fill('D')).concat(Array(duel.homeWins).fill('L'));
+      }
+      
+      if (statsRes?.data?.data?.statistics) {
+        const stats = statsRes.data.data.statistics[0]?.groups?.[0]?.statisticsItems || [];
+        const possession = stats.find((s: any) => s.key === 'ballPossession');
+        if (possession) {
+          homeStats.season.played = 10;
+          awayStats.season.played = 10;
+        }
+      }
+    } catch (e: any) {
+      // Ignore
+    }
+  }
+
   return {
     id: idStr,
     home: homeStats,
@@ -310,22 +367,50 @@ export async function getLiveMatches() {
       mapped = liveEvents.map((e: any) => mapESPNEvent(e, e._leagueSlug || 'soccer'));
     }
 
+    // If ESPN is thin, fallback to SportsAPIPro
+    if (mapped.length < 5) {
+      const sportsApiRes = await axios.get(`${API_BASE}/live`, { headers: HEADERS }).catch(() => ({ data: { events: [] } }));
+      const sportsEvents = sportsApiRes.data.events || [];
+      const mappedSports = sportsEvents.map(mapSportsApiEvent);
+      
+      // Merge and remove duplicates by team names
+      const existingTeams = new Set(mapped.map(m => `${m.teams.home.name}-${m.teams.away.name}`));
+      mappedSports.forEach(m => {
+        const key = `${m.teams.home.name}-${m.teams.away.name}`;
+        if (!existingTeams.has(key)) {
+          mapped.push(m);
+        }
+      });
+    }
+
     if (mapped.length > 0) {
       setCache(cacheKey, mapped);
       return mapped;
     }
 
-    // Final fallback to Gemini
-    const fallback = await fetchLiveMatchesFallback();
-    if (fallback && fallback.length > 0) {
-      setCache(cacheKey, fallback);
-      return fallback;
+    // Final fallback: fetch our auto-cached Supabase data instead of hitting Gemini directly from client
+    const customApiRes = await fetch('/api/common/cache?key=live');
+    if (customApiRes.ok) {
+       const { data } = await customApiRes.json();
+       if (data && data.length > 0) {
+         setCache(cacheKey, data);
+         return data;
+       }
     }
+    
     return [];
   } catch (e) {
-    console.warn("Live matches failed, trying Gemini...");
-    const fallback = await fetchLiveMatchesFallback();
-    return fallback || [];
+    console.warn("Live matches failed, trying backend cache...");
+    try {
+      const customApiRes = await fetch('/api/common/cache?key=live');
+      if (customApiRes.ok) {
+         const { data } = await customApiRes.json();
+         if (data) return data;
+      }
+    } catch(err) {
+      // ignore
+    }
+    return [];
   }
 }
 
@@ -359,6 +444,22 @@ export async function getUpcomingMatches() {
     const topFixtures = await getTopFixturesFromSearch();
 
     upcoming.sort((a, b) => {
+      const dateA = new Date(a.date).getTime();
+      const dateB = new Date(b.date).getTime();
+      const today = new Date();
+      today.setHours(0, 0, 0, 0);
+      
+      const startOfToday = today.getTime();
+      const startOfTomorrow = startOfToday + 86400000;
+
+      // Check if matches are on different days
+      const isDateA_Today = dateA >= startOfToday && dateA < startOfTomorrow;
+      const isDateB_Today = dateB >= startOfToday && dateB < startOfTomorrow;
+
+      if (isDateA_Today && !isDateB_Today) return -1;
+      if (!isDateA_Today && isDateB_Today) return 1;
+
+      // If they are on the same day (or both NOT today), use the other criteria
       const nameA = a.name.toLowerCase();
       const nameB = b.name.toLowerCase();
 
@@ -395,7 +496,8 @@ export async function getUpcomingMatches() {
       const prioA = getLeaguePriority(a);
       const prioB = getLeaguePriority(b);
       if (prioA !== prioB) return prioB - prioA;
-      return new Date(a.date).getTime() - new Date(b.date).getTime();
+      
+      return dateA - dateB;
     });
 
     const mapped = upcoming.map((e: any) => {

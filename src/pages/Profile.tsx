@@ -1,5 +1,6 @@
 import React, { useState, useEffect, useRef } from 'react';
 import { motion, AnimatePresence } from 'motion/react';
+import { TonConnectButton, useTonConnectUI } from '@tonconnect/ui-react';
 import { 
   CreditCard, 
   Share2, 
@@ -25,11 +26,18 @@ import {
   Send,
   Info,
   AlertCircle,
-  Loader2
+  Loader2,
+  Wallet,
+  X,
+  CreditCard as StarsIcon,
+  User,
+  UserPlus
 } from 'lucide-react';
 import { useUserStore } from '../store/useUserStore';
 import { useTelegram } from '../hooks/useTelegram';
 import { supportService, FAQ } from '../services/supportService';
+import { SignUpSheet } from '../components/SignUpSheet';
+import { Leaderboard } from './Leaderboard';
 
 const PLANS = [
   {
@@ -40,28 +48,32 @@ const PLANS = [
     icon: Zap,
     color: 'text-zinc-400',
     bgColor: 'bg-zinc-900',
-    features: ['5 Daily Credits', '1 Bet Slip Analysis', 'No AI Chat after analysis']
+    features: ['5 Daily credits', '1 Bet slip analysis', 'No AI chat after analysis']
   },
   {
     id: 'weekly',
     name: 'Weekly',
     price: '$3.99',
+    starsPrice: 150,
+    tonPrice: 0.5,
     period: 'per week',
     icon: ShieldCheck,
     color: 'text-[#ccff00]',
     bgColor: 'bg-[#ccff00]/10',
-    features: ['35 Daily Credits', '3 Bet Slip Analysis', 'Upto 2 bet slip image upload', 'AI Chat after analysis'],
+    features: ['35 Daily credits', '3 Bet slip analysis', 'Upto 2 bet slip image upload', 'AI chat after analysis'],
     popular: true
   },
   {
     id: 'monthly',
     name: 'Monthly',
     price: '$11.99',
+    starsPrice: 400,
+    tonPrice: 1.5,
     period: 'per month',
     icon: Crown,
     color: 'text-amber-400',
     bgColor: 'bg-amber-400/10',
-    features: ['120 Daily Credits', '10 Bet Slip Analysis', '5+ Image upload limit', 'Unlimited AI Chat', 'Deep Analysis & Data gathering']
+    features: ['120 Daily credits', '10 Bet slip analysis', '5+ Image upload limit', 'Unlimited AI chat', 'Deep analysis & Data gathering']
   }
 ];
 
@@ -113,16 +125,33 @@ const EARN_TASKS = [
 ];
 
 export const Profile: React.FC = () => {
+  const [isSignUpOpen, setIsSignUpOpen] = useState(false);
   const { user, setUser } = useUserStore();
-  const { tg, hapticFeedback, showAlert } = useTelegram();
+  const { tg, hapticFeedback, showAlert, showConfirm, initData } = useTelegram();
   const [isEditing, setIsEditing] = useState(false);
   const [isViewingSubscriptions, setIsViewingSubscriptions] = useState(false);
   const [isViewingReferral, setIsViewingReferral] = useState(false);
   const [isViewingSupport, setIsViewingSupport] = useState(false);
+  const [isViewingLeaderboard, setIsViewingLeaderboard] = useState(false);
   const [referralTab, setReferralTab] = useState<'referral' | 'earn'>('referral');
   const [supportTab, setSupportTab] = useState<'chat' | 'faq'>('chat');
   const [editName, setEditName] = useState(user?.name || 'Alex Volkov');
   const [editUsername, setEditUsername] = useState(user?.username || 'alex_v');
+  const [tonConnectUI] = useTonConnectUI();
+  const [dynamicTasks, setDynamicTasks] = useState<any[]>([]);
+
+  useEffect(() => {
+     fetch('/api/common/tasks')
+       .then(r => r.json())
+       .then(data => {
+          if (data && data.length > 0) setDynamicTasks(data);
+       })
+       .catch(err => console.error("Failed to fetch tasks:", err));
+  }, []);
+
+  // Payment State
+  const [isPaymentSheetOpen, setIsPaymentSheetOpen] = useState(false);
+  const [selectedPlanForPayment, setSelectedPlanForPayment] = useState<any>(null);
 
   // Support Chat State
   const [chatMessage, setChatMessage] = useState('');
@@ -143,13 +172,18 @@ export const Profile: React.FC = () => {
 
   useEffect(() => {
     if (tg?.BackButton) {
-      if (isEditing || isViewingSubscriptions || isViewingReferral || isViewingSupport) {
+      if (isEditing || isViewingSubscriptions || isViewingReferral || isViewingSupport || isViewingLeaderboard || isPaymentSheetOpen) {
         tg.BackButton.show();
         const handleBack = () => {
-          setIsEditing(false);
-          setIsViewingSubscriptions(false);
-          setIsViewingReferral(false);
-          setIsViewingSupport(false);
+          if (isPaymentSheetOpen) {
+            setIsPaymentSheetOpen(false);
+          } else {
+            setIsEditing(false);
+            setIsViewingSubscriptions(false);
+            setIsViewingReferral(false);
+            setIsViewingSupport(false);
+            setIsViewingLeaderboard(false);
+          }
         };
         tg.BackButton.onClick(handleBack);
         return () => {
@@ -160,16 +194,32 @@ export const Profile: React.FC = () => {
         tg.BackButton.hide();
       }
     }
-  }, [isEditing, isViewingSubscriptions, isViewingReferral, isViewingSupport, tg]);
+  }, [isEditing, isViewingSubscriptions, isViewingReferral, isViewingSupport, isViewingLeaderboard, isPaymentSheetOpen, tg]);
 
   const handleAction = (name: string) => {
     hapticFeedback('light');
+
+    if (!user && name !== 'Support') {
+       hapticFeedback('medium');
+       setIsSignUpOpen(true);
+       return;
+    }
+
     if (name === 'Subscription') {
       setIsViewingSubscriptions(true);
     } else if (name === 'Referral') {
       setIsViewingReferral(true);
     } else if (name === 'Support') {
       setIsViewingSupport(true);
+    } else if (name === 'Leaderboard') {
+      setIsViewingLeaderboard(true);
+    } else if (name === 'Logout') {
+      showConfirm('Are you sure you want to log out?', (ok) => {
+        if (ok) {
+          setUser(null);
+          showAlert('Logged out successfully');
+        }
+      });
     } else {
       showAlert(`${name} feature coming soon!`);
     }
@@ -188,24 +238,178 @@ export const Profile: React.FC = () => {
     showAlert('Profile updated successfully!');
   };
 
-  const handleUpgrade = (planId: string) => {
+  const handleUpgrade = (plan: any) => {
     hapticFeedback('medium');
-    showAlert(`Upgrading to ${planId.toUpperCase()}... Payment gateway coming soon!`);
+    setSelectedPlanForPayment(plan);
+    setIsPaymentSheetOpen(true);
+  };
+
+  const handleTonPayment = async () => {
+    hapticFeedback('medium');
+    
+    if (!tonConnectUI.connected) {
+      showAlert('Redirecting to connect your TON wallet...');
+      await tonConnectUI.openModal();
+      return;
+    }
+
+    setIsPaymentSheetOpen(false);
+
+    try {
+      const transaction = {
+        validUntil: Math.floor(Date.now() / 1000) + 60, // 60 sec
+        messages: [
+          {
+            address: "UQB1vS8u8a4S6X2m7S7_K3X-QO-V6aX7L-u1tS7K-aX7-a-z", // Your admin wallet address
+            amount: (selectedPlanForPayment.tonPrice * 1e9).toString(), // nanoTON
+            payload: btoa(`plan:${selectedPlanForPayment.id}:user:${user.telegram_id}`) // Memo for tracking
+          },
+        ],
+      };
+
+      const result = await tonConnectUI.sendTransaction(transaction);
+      
+      // Verify with backend
+      showAlert('Verifying transaction on-chain...');
+      const verifyRes = await fetch('/api/payments/verify-ton-payment', {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          'X-TG-Init-Data': initData
+        },
+        body: JSON.stringify({
+          telegramId: user.telegram_id,
+          planId: selectedPlanForPayment.id,
+          boc: result.boc,
+          amount: selectedPlanForPayment.tonPrice
+        })
+      });
+
+      if (verifyRes.ok) {
+        hapticFeedback('success');
+        showAlert(`Congratulations! You have successfully upgraded to ${selectedPlanForPayment.name}. Credits have been added.`);
+        setUser({ ...user, plan: selectedPlanForPayment.id as any });
+      } else {
+        throw new Error('Verification failed');
+      }
+    } catch (e: any) {
+      console.error('TON Payment error:', e);
+      showAlert('TON payment failed or canceled.');
+    }
+  };
+
+  const handleStarsPayment = async () => {
+    hapticFeedback('medium');
+    setIsPaymentSheetOpen(false);
+    
+    if (!tg || !user) {
+      showAlert('Telegram environment or user not detected.');
+      return;
+    }
+
+    try {
+      showAlert(`Genering invoice for ${selectedPlanForPayment.starsPrice} Stars...`);
+      
+      const response = await fetch('/api/payments/create-stars-invoice', {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          'X-TG-Init-Data': initData
+        },
+        body: JSON.stringify({
+          telegramId: user.telegram_id,
+          planId: selectedPlanForPayment.id,
+          amount: selectedPlanForPayment.starsPrice,
+          title: `Elite ${selectedPlanForPayment.name} Plan`,
+          description: `Unlock high-confidence predictions and analysis for 1 ${selectedPlanForPayment.id === 'weekly' ? 'week' : 'month'}.`
+        }),
+      });
+
+      const data = await response.json();
+
+      if (data.invoiceLink) {
+        tg.openInvoice(data.invoiceLink, (status) => {
+          if (status === 'paid') {
+            hapticFeedback('success');
+            showAlert(`Congratulations! You have successfully upgraded to ${selectedPlanForPayment.name}`);
+            // Force refresh user data
+            setUser({ ...user, plan: selectedPlanForPayment.id as any });
+          } else if (status === 'cancelled') {
+            showAlert('Payment cancelled.');
+          } else {
+            showAlert('Payment failed or pending.');
+          }
+        });
+      } else {
+        throw new Error(data.error || 'Failed to create invoice link');
+      }
+    } catch (e: any) {
+      console.error('Stars Payment error:', e);
+      showAlert('Failed to initiate Stars payment: ' + (e.message || 'Unknown error'));
+    }
   };
 
   const copyReferralLink = () => {
     hapticFeedback('success');
-    const link = `https://t.me/flash_ai_bot?start=${user?.id || 'ref123'}`;
+    // Use telegram_id for referral link as it's the identifier used in bot start payload
+    const refId = user?.telegram_id || user?.id || 'ref123';
+    const link = `https://t.me/flash_ai_bot?start=${refId}`;
     navigator.clipboard.writeText(link);
     showAlert('Referral link copied to clipboard!');
   };
 
-  const handleTaskAction = (task: typeof EARN_TASKS[0]) => {
+  const handleTaskAction = async (task: typeof EARN_TASKS[0]) => {
     hapticFeedback('medium');
+    
+    // First, open the URL if it exists
     if (task.url !== '#') {
       tg?.openTelegramLink?.(task.url) || window.open(task.url, '_blank');
+      
+      // Give a small delay before showing claim prompt
+      setTimeout(() => {
+        showConfirm(`Did you complete the task "${task.title}"?`, async (ok) => {
+          if (ok) {
+            await claimTaskReward(task);
+          }
+        });
+      }, 2000);
     } else {
-      showAlert(`Claiming ${task.reward} credits...`);
+      await claimTaskReward(task);
+    }
+  };
+
+  const claimTaskReward = async (task: typeof EARN_TASKS[0]) => {
+    if (!user) return;
+    
+    try {
+      showAlert(`Verifying task: ${task.title}...`);
+      const response = await fetch('/api/tasks/claim', {
+        method: 'POST',
+        headers: { 
+          'Content-Type': 'application/json',
+          'X-TG-Init-Data': initData
+        },
+        body: JSON.stringify({ 
+          telegramId: user.telegram_id,
+          taskId: task.id,
+          reward: task.reward
+        })
+      });
+
+      const data = await response.json();
+
+      if (response.ok) {
+        hapticFeedback('success');
+        showAlert(`Reward claimed! +${task.reward} credits added to your balance.`);
+        if (user) {
+          setUser({ ...user, credits: data.newCredits });
+        }
+      } else {
+        showAlert(data.error || 'Failed to claim reward. Make sure you completed the task!');
+      }
+    } catch (err) {
+      console.error("Task claim error:", err);
+      showAlert('Failed to process reward claim.');
     }
   };
 
@@ -228,6 +432,14 @@ export const Profile: React.FC = () => {
       setIsChatLoading(false);
     }
   };
+
+  if (isViewingLeaderboard) {
+    return (
+      <div className="fixed inset-0 z-[100] bg-black flex flex-col">
+          <Leaderboard onBack={() => setIsViewingLeaderboard(false)} />
+      </div>
+    );
+  }
 
   if (isViewingSupport) {
     return (
@@ -318,10 +530,10 @@ export const Profile: React.FC = () => {
                   </div>
                   <button 
                     onClick={() => showAlert('Report feature coming soon!')}
-                    className="w-full py-3 rounded-xl border border-red-500/20 bg-red-500/5 text-red-500 text-[10px] font-black uppercase tracking-widest flex items-center justify-center gap-2"
+                    className="w-full py-3 rounded-xl border border-red-500/20 bg-red-500/5 text-red-500 text-[10px] font-black tracking-widest flex items-center justify-center gap-2"
                   >
                     <AlertCircle className="w-3 h-3" />
-                    Report a Problem
+                    Report a problem
                   </button>
                 </div>
               </motion.div>
@@ -348,7 +560,7 @@ export const Profile: React.FC = () => {
                   </div>
                 ))}
                 <div className="py-8 text-center">
-                  <p className="text-[10px] font-black text-zinc-600 uppercase tracking-[0.3em]">End of FAQs</p>
+                  <p className="text-[10px] font-black text-zinc-600 tracking-[0.3em]">End of FAQs</p>
                 </div>
               </motion.div>
             )}
@@ -393,23 +605,23 @@ export const Profile: React.FC = () => {
                 <div className="grid grid-cols-2 gap-4">
                   <div className="bg-zinc-900 border border-zinc-800 rounded-[32px] p-6 text-center space-y-2">
                     <p className="text-4xl font-black text-[#ccff00]">12</p>
-                    <p className="text-[10px] font-bold text-zinc-500 uppercase tracking-widest">Total Referred</p>
+                    <p className="text-[10px] font-bold text-zinc-500 tracking-widest">Total referred</p>
                   </div>
                   <div className="bg-zinc-900 border border-zinc-800 rounded-[32px] p-6 text-center space-y-2">
                     <p className="text-4xl font-black text-white">450</p>
-                    <p className="text-[10px] font-bold text-zinc-500 uppercase tracking-widest">Points Earned</p>
+                    <p className="text-[10px] font-bold text-zinc-500 tracking-widest">Points earned</p>
                   </div>
                 </div>
 
                 {/* Referral Link Box */}
                 <div className="space-y-4">
                   <div className="text-center space-y-1">
-                    <h3 className="text-lg font-black text-white">Your Referral Link</h3>
+                    <h3 className="text-lg font-black text-white">Your referral link</h3>
                     <p className="text-xs font-bold text-zinc-500">Every friend gives you 50 credits</p>
                   </div>
                   <div className="bg-zinc-900 border border-zinc-800 rounded-[32px] p-4 flex items-center justify-between">
-                    <code className="text-xs font-mono text-zinc-400 truncate flex-1 block px-2">
-                      https://t.me/flash_ai_bot?start={user?.id || 'ref123'}
+                    <code className="text-[10px] sm:text-xs font-mono text-zinc-400 truncate flex-1 block px-2">
+                      https://t.me/flash_ai_bot?start={user?.telegram_id || user?.id || 'ref123'}
                     </code>
                     <button 
                       onClick={copyReferralLink}
@@ -422,7 +634,7 @@ export const Profile: React.FC = () => {
 
                 {/* How it works */}
                 <div className="bg-[#ccff00]/5 border border-[#ccff00]/10 rounded-[32px] p-6 space-y-6">
-                  <h3 className="text-sm font-black text-white text-center">HOW IT WORKS</h3>
+                  <h3 className="text-sm font-black text-white text-center">How it works</h3>
                   <div className="space-y-4">
                     <div className="flex items-center gap-4">
                       <div className="w-8 h-8 rounded-xl bg-[#ccff00]/20 flex items-center justify-center text-[#ccff00] text-xs font-black">1</div>
@@ -448,34 +660,34 @@ export const Profile: React.FC = () => {
                 className="space-y-6"
               >
                 <div className="text-center space-y-1 mb-2">
-                  <h3 className="text-lg font-black text-white">Complete Tasks</h3>
+                  <h3 className="text-lg font-black text-white">Complete tasks</h3>
                   <p className="text-xs font-bold text-zinc-500">Collect points to unlock Premium features</p>
                 </div>
 
-                {EARN_TASKS.map((task) => {
-                  const Icon = task.icon;
+                {(dynamicTasks.length > 0 ? dynamicTasks : EARN_TASKS).map((task: any) => {
+                  const Icon = task.icon || Trophy;
                   return (
                     <div 
                       key={task.id}
                       className="bg-zinc-900/50 border border-zinc-800 rounded-[32px] p-5 flex items-center justify-between"
                     >
                       <div className="flex items-center gap-4">
-                        <div className={`w-12 h-12 rounded-2xl ${task.bgColor} flex items-center justify-center`}>
-                          <Icon className={`w-6 h-6 ${task.color}`} />
+                        <div className={`w-12 h-12 rounded-2xl ${task.bgColor || 'bg-zinc-800'} flex items-center justify-center`}>
+                          <Icon className={`w-6 h-6 ${task.color || 'text-zinc-400'}`} />
                         </div>
                         <div className="text-left">
                           <p className="text-sm font-black text-white leading-tight">{task.title}</p>
                           <div className="flex items-center gap-1.5 mt-1">
                             <Zap className="w-3 h-3 text-[#ccff00] fill-[#ccff00]" />
-                            <span className="text-[10px] font-black text-[#ccff00]">+{task.reward} PTS</span>
+                            <span className="text-[10px] font-black text-[#ccff00]">+{task.reward} pts</span>
                           </div>
                         </div>
                       </div>
                       <button 
                         onClick={() => handleTaskAction(task)}
-                        className="bg-white text-black px-6 py-2.5 rounded-xl font-black text-[10px] uppercase tracking-widest active:scale-95 transition-all hover:bg-[#ccff00]"
+                        className="bg-white text-black px-6 py-2.5 rounded-xl font-black text-[10px] tracking-widest active:scale-95 transition-all hover:bg-[#ccff00]"
                       >
-                        {task.buttonLabel}
+                        {task.buttonLabel || 'Claim'}
                       </button>
                     </div>
                   );
@@ -483,7 +695,7 @@ export const Profile: React.FC = () => {
 
                 {/* Coming Soon Message */}
                 <div className="py-8 text-center text-zinc-600">
-                  <p className="text-[10px] font-black uppercase tracking-[0.3em]">More tasks coming daily</p>
+                  <p className="text-[10px] font-black tracking-[0.3em]">More tasks coming daily</p>
                 </div>
               </motion.div>
             )}
@@ -513,8 +725,8 @@ export const Profile: React.FC = () => {
                   className={`relative p-6 rounded-[32px] border ${isCurrent ? 'border-[#ccff00] bg-[#ccff00]/5' : 'border-zinc-800/50 bg-zinc-900/30'} transition-all`}
                 >
                   {plan.popular && (
-                    <div className="absolute -top-3 left-1/2 -translate-x-1/2 bg-[#ccff00] text-black text-[10px] font-black px-4 py-1 rounded-full uppercase tracking-widest">
-                      Most Popular
+                    <div className="absolute -top-3 left-1/2 -translate-x-1/2 bg-[#ccff00] text-black text-[10px] font-black px-4 py-1 rounded-full tracking-widest">
+                      Most popular
                     </div>
                   )}
 
@@ -544,20 +756,104 @@ export const Profile: React.FC = () => {
 
                   <button 
                     disabled={isCurrent}
-                    onClick={() => handleUpgrade(plan.id)}
-                    className={`w-full py-4 rounded-2xl font-black text-sm uppercase tracking-widest transition-all ${
+                    onClick={() => handleUpgrade(plan)}
+                    className={`w-full py-4 rounded-2xl font-black text-sm tracking-widest transition-all ${
                       isCurrent 
                         ? 'bg-zinc-800 text-zinc-500 cursor-default' 
                         : 'bg-white text-black active:scale-[0.98] hover:bg-[#ccff00]'
                     }`}
                   >
-                    {isCurrent ? 'Current Plan' : `Upgrade to ${plan.name}`}
+                    {isCurrent ? 'Current plan' : `Upgrade to ${plan.name}`}
                   </button>
                 </div>
               );
             })}
           </div>
         </div>
+
+        {/* Payment Selection Bottom Sheet */}
+        <AnimatePresence>
+          {isPaymentSheetOpen && (
+            <>
+              <motion.div 
+                initial={{ opacity: 0 }}
+                animate={{ opacity: 1 }}
+                exit={{ opacity: 0 }}
+                onClick={() => setIsPaymentSheetOpen(false)}
+                className="fixed inset-0 bg-black/80 backdrop-blur-sm z-[200]"
+              />
+              <motion.div 
+                initial={{ y: '100%' }}
+                animate={{ y: 0 }}
+                exit={{ y: '100%' }}
+                transition={{ type: 'spring', damping: 25, stiffness: 200 }}
+                className="fixed bottom-0 left-0 right-0 bg-zinc-900 border-t border-zinc-800 rounded-t-[40px] z-[201] px-6 pt-8 pb-12 space-y-8"
+              >
+                <div className="flex items-center justify-between mb-2">
+                  <div className="space-y-1">
+                    <h3 className="text-xl font-black text-white">Select payment method</h3>
+                    <p className="text-xs font-bold text-zinc-500 tracking-widest">Upgrade to {selectedPlanForPayment?.name}</p>
+                  </div>
+                  <button 
+                    onClick={() => setIsPaymentSheetOpen(false)}
+                    className="w-10 h-10 bg-zinc-800 rounded-full flex items-center justify-center active:scale-90 transition-all"
+                  >
+                    <X className="w-5 h-5 text-white" />
+                  </button>
+                </div>
+
+                <div className="space-y-4">
+                  {/* Telegram Stars Option */}
+                  <button 
+                    onClick={handleStarsPayment}
+                    className="w-full bg-[#0088cc]/10 border border-[#0088cc]/20 rounded-[28px] p-6 flex items-center justify-between group active:scale-[0.98] transition-all"
+                  >
+                    <div className="flex items-center gap-5">
+                      <div className="w-14 h-14 rounded-2xl bg-[#0088cc] flex items-center justify-center shadow-[0_0_20px_rgba(0,136,204,0.3)]">
+                        <StarsIcon className="w-7 h-7 text-white" />
+                      </div>
+                      <div className="text-left">
+                        <p className="text-lg font-black text-white">Telegram Stars</p>
+                        <p className="text-sm font-bold text-[#0088cc]">{selectedPlanForPayment?.starsPrice} Stars</p>
+                      </div>
+                    </div>
+                    <ChevronRight className="w-5 h-5 text-zinc-700 group-hover:text-white transition-colors" />
+                  </button>
+
+                  {/* TON Blockchain Option */}
+                  <button 
+                    onClick={handleTonPayment}
+                    className="w-full bg-[#ccff00]/5 border border-[#ccff00]/10 rounded-[28px] p-6 flex items-center justify-between group active:scale-[0.98] transition-all"
+                  >
+                    <div className="flex items-center gap-5">
+                      <div className="w-14 h-14 rounded-2xl bg-[#ccff00] flex items-center justify-center shadow-[0_0_20px_rgba(204,255,0,0.3)]">
+                        <Wallet className="w-7 h-7 text-black" />
+                      </div>
+                      <div className="text-left">
+                        <p className="text-lg font-black text-white">TON Blockchain</p>
+                        <p className="text-sm font-bold text-[#ccff00]">{selectedPlanForPayment?.tonPrice} TON</p>
+                      </div>
+                    </div>
+                    <ChevronRight className="w-5 h-5 text-zinc-700 group-hover:text-[#ccff00] transition-colors" />
+                  </button>
+                </div>
+
+                <div className="p-4 bg-zinc-800/30 rounded-2xl">
+                  <p className="text-[10px] font-bold text-zinc-500 text-center leading-relaxed">
+                    By clicking Continue, you agree to our Terms of Service. Payments via TON require a connected wallet.
+                  </p>
+                </div>
+
+                <button 
+                  onClick={() => setIsPaymentSheetOpen(false)}
+                  className="w-full py-4 rounded-2xl bg-zinc-800 text-white font-black text-sm tracking-widest active:scale-[0.98] transition-all"
+                >
+                  Cancel
+                </button>
+              </motion.div>
+            </>
+          )}
+        </AnimatePresence>
       </div>
     );
   }
@@ -592,7 +888,7 @@ export const Profile: React.FC = () => {
           {/* Form Fields */}
           <div className="space-y-4">
             <div className="space-y-2">
-              <label className="text-[10px] font-black text-zinc-500 uppercase tracking-widest pl-2">Full Name</label>
+              <label className="text-[10px] font-black text-zinc-500 tracking-widest pl-2">Full name</label>
               <input 
                 type="text" 
                 value={editName}
@@ -602,7 +898,7 @@ export const Profile: React.FC = () => {
               />
             </div>
             <div className="space-y-2">
-              <label className="text-[10px] font-black text-zinc-500 uppercase tracking-widest pl-2">Username</label>
+              <label className="text-[10px] font-black text-zinc-500 tracking-widest pl-2">Username</label>
               <input 
                 type="text" 
                 value={editUsername}
@@ -618,9 +914,9 @@ export const Profile: React.FC = () => {
         <div className="p-6 bg-black border-t border-zinc-900">
           <button 
             onClick={handleSaveProfile}
-            className="w-full bg-[#ccff00] text-black font-black text-sm uppercase tracking-widest py-4 rounded-2xl shadow-[0_0_20px_rgba(204,255,0,0.2)] active:scale-[0.98] transition-all"
+            className="w-full bg-[#ccff00] text-black font-black text-sm tracking-widest py-4 rounded-2xl shadow-[0_0_20px_rgba(204,255,0,0.2)] active:scale-[0.98] transition-all"
           >
-            Save Changes
+            Save changes
           </button>
         </div>
       </div>
@@ -633,57 +929,79 @@ export const Profile: React.FC = () => {
       <div className="flex flex-col items-center pt-12 pb-8 px-6 space-y-6">
         <div className="relative">
           {/* Avatar with Glow */}
-          <div className="relative w-32 h-32 rounded-full p-1 bg-gradient-to-b from-[#ccff00] to-transparent shadow-[0_0_30px_rgba(204,255,0,0.2)]">
+          <div className={`relative w-32 h-32 rounded-full p-1 ${user ? 'bg-gradient-to-b from-[#ccff00] to-transparent shadow-[0_0_30px_rgba(204,255,0,0.2)]' : 'bg-zinc-800'}`}>
             <div className="w-full h-full rounded-full bg-zinc-900 flex items-center justify-center overflow-hidden border-4 border-black">
               {user?.photo_url ? (
                 <img src={user.photo_url} alt="Profile" className="w-full h-full object-cover" />
               ) : (
-                <img 
-                  src="https://i.pravatar.cc/150?img=11" 
-                  alt="Profile" 
-                  className="w-full h-full object-cover" 
-                />
+                <div className="w-full h-full flex items-center justify-center bg-zinc-800">
+                  <User className="w-12 h-12 text-zinc-600" />
+                </div>
               )}
             </div>
             {/* Edit Icon */}
-            <button 
-              onClick={() => setIsEditing(true)}
-              className="absolute -bottom-1 -right-1 bg-zinc-800 rounded-full p-2 border-4 border-black hover:bg-zinc-700 transition-colors active:scale-95"
-            >
-              <Pencil className="w-3.5 h-3.5 text-white" />
-            </button>
+            {user && (
+              <button 
+                onClick={() => setIsEditing(true)}
+                className="absolute -bottom-1 -right-1 bg-zinc-800 rounded-full p-2 border-4 border-black hover:bg-zinc-700 transition-colors active:scale-95"
+              >
+                <Pencil className="w-3.5 h-3.5 text-white" />
+              </button>
+            )}
           </div>
         </div>
 
         <div className="text-center space-y-3">
-          <h2 className="text-3xl font-black text-white tracking-tight">
-            {user?.name || 'Alex Volkov'}
-          </h2>
-          <p className="text-sm font-bold text-zinc-500">@{user?.username || 'alex_v'}</p>
-          <div className="inline-flex items-center px-4 py-1.5 rounded-full bg-[#ccff00]/10 border border-[#ccff00]/20 mt-2">
-            <span className="text-[10px] font-black text-[#ccff00] uppercase tracking-[0.2em]">
-              {user?.plan && user.plan !== 'free' ? 'PREMIUM MEMBER' : 'FREE MEMBER'}
-            </span>
-          </div>
+          {user?.phone ? (
+            <>
+              <h2 className="text-3xl font-black text-white tracking-tight">
+                {user.name}
+              </h2>
+              <p className="text-sm font-bold text-zinc-500">@{user.username || 'user'}</p>
+              <div className="inline-flex items-center px-4 py-1.5 rounded-full bg-[#ccff00]/10 border border-[#ccff00]/20 mt-2">
+                <span className="text-[10px] font-black text-[#ccff00] tracking-[0.2em]">
+                  {user.plan !== 'free' ? 'Premium member' : 'Free member'}
+                </span>
+              </div>
+            </>
+          ) : (
+            <>
+              <h2 className="text-3xl font-black text-white tracking-tight">Guest User</h2>
+              <p className="text-sm font-bold text-zinc-500">Sign up to unlock all features</p>
+              <button 
+                onClick={() => setIsSignUpOpen(true)}
+                className="inline-flex items-center gap-2 px-6 py-2 rounded-full bg-[#ccff00] text-black text-xs font-black tracking-widest mt-4 active:scale-95 transition-all"
+              >
+                <UserPlus className="w-4 h-4" />
+                Start registration
+              </button>
+            </>
+          )}
+
+          {user?.phone && (
+            <div className="pt-2">
+              <TonConnectButton />
+            </div>
+          )}
         </div>
       </div>
 
       {/* Stats Section */}
       <div className="px-6 mb-8">
-        <div className="flex items-center justify-between py-6 border-y border-zinc-800/50">
+        <div className={`flex items-center justify-between py-6 border-y border-zinc-800/50 ${!user?.phone && 'opacity-30 grayscale'}`}>
           <div className="flex-1 text-center">
-            <p className="text-2xl font-black text-white">84%</p>
-            <p className="text-[10px] font-bold text-zinc-500 uppercase tracking-widest mt-1">Win Rate</p>
+            <p className="text-2xl font-black text-white">{user?.phone ? '84%' : '--'}</p>
+            <p className="text-[10px] font-bold text-zinc-500 tracking-widest mt-1">Win rate</p>
           </div>
           <div className="w-px h-8 bg-zinc-800" />
           <div className="flex-1 text-center">
-            <p className="text-2xl font-black text-white">124</p>
-            <p className="text-[10px] font-bold text-zinc-500 uppercase tracking-widest mt-1">Predictions</p>
+            <p className="text-2xl font-black text-white">{user?.phone ? '124' : '--'}</p>
+            <p className="text-[10px] font-bold text-zinc-500 tracking-widest mt-1">Predictions</p>
           </div>
           <div className="w-px h-8 bg-zinc-800" />
           <div className="flex-1 text-center">
-            <p className="text-2xl font-black text-white">12k</p>
-            <p className="text-[10px] font-bold text-zinc-500 uppercase tracking-widest mt-1">Ranking</p>
+            <p className="text-2xl font-black text-white">{user?.phone ? '12k' : '--'}</p>
+            <p className="text-[10px] font-bold text-zinc-500 tracking-widest mt-1">Ranking</p>
           </div>
         </div>
       </div>
@@ -707,11 +1025,11 @@ export const Profile: React.FC = () => {
           <ChevronRight className="w-5 h-5 text-zinc-700 group-hover:text-[#ccff00] transition-colors" />
         </button>
 
-        {/* Referral & Support Grid */}
+        {/* Referral, Support & Leaderboard Grid */}
         <div className="grid grid-cols-2 gap-4">
           <button 
             onClick={() => handleAction('Referral')}
-            className="bg-zinc-900/50 border border-zinc-800/50 rounded-[32px] p-6 flex flex-col items-start gap-4 active:scale-[0.98] transition-all"
+            className={`bg-zinc-900/50 border border-zinc-800/50 rounded-[32px] p-6 flex flex-col items-start gap-4 active:scale-[0.98] transition-all ${!user && 'opacity-50'}`}
           >
             <div className="w-12 h-12 rounded-2xl bg-zinc-800 flex items-center justify-center">
               <Share2 className="w-6 h-6 text-[#ccff00]" />
@@ -722,8 +1040,20 @@ export const Profile: React.FC = () => {
             </div>
           </button>
           <button 
-            onClick={() => handleAction('Support')}
+            onClick={() => handleAction('Leaderboard')}
             className="bg-zinc-900/50 border border-zinc-800/50 rounded-[32px] p-6 flex flex-col items-start gap-4 active:scale-[0.98] transition-all"
+          >
+            <div className="w-12 h-12 rounded-2xl bg-zinc-800 flex items-center justify-center">
+              <Trophy className="w-6 h-6 text-amber-400" />
+            </div>
+            <div className="text-left">
+              <p className="text-lg font-black text-white">Leaderboard</p>
+              <p className="text-[10px] font-bold text-zinc-500 leading-relaxed">See where you rank globally</p>
+            </div>
+          </button>
+          <button 
+            onClick={() => handleAction('Support')}
+            className="bg-zinc-900/50 border border-zinc-800/50 rounded-[32px] p-6 flex flex-col items-start gap-4 active:scale-[0.98] transition-all col-span-2"
           >
             <div className="w-12 h-12 rounded-2xl bg-zinc-800 flex items-center justify-center">
               <Headset className="w-6 h-6 text-zinc-400" />
@@ -746,17 +1076,24 @@ export const Profile: React.FC = () => {
               <span className="text-sm font-black text-white">Terms of Service</span>
             </div>
           </button>
-          <button 
-            onClick={() => handleAction('Logout')}
-            className="w-full bg-red-500/5 border border-red-500/10 rounded-2xl p-4 flex items-center justify-between group active:bg-red-500/10 transition-colors"
-          >
-            <div className="flex items-center gap-3">
-              <LogOut className="w-4 h-4 text-red-500" />
-              <span className="text-sm font-black text-red-500">Log Out</span>
-            </div>
-          </button>
+          {user && (
+            <button 
+              onClick={() => handleAction('Logout')}
+              className="w-full bg-red-500/5 border border-red-500/10 rounded-2xl p-4 flex items-center justify-between group active:bg-red-500/10 transition-colors"
+            >
+              <div className="flex items-center gap-3">
+                <LogOut className="w-4 h-4 text-red-500" />
+                <span className="text-sm font-black text-red-500">Log Out</span>
+              </div>
+            </button>
+          )}
         </div>
       </div>
+
+      <SignUpSheet 
+        isOpen={isSignUpOpen} 
+        onClose={() => setIsSignUpOpen(false)} 
+      />
     </div>
   );
 };

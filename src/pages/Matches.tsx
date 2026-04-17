@@ -1,9 +1,11 @@
 import React, { useState, useEffect } from 'react';
 import { motion, AnimatePresence } from 'motion/react';
-import { Search, Trophy, Clock, Activity, ChevronRight, Sparkles, Info, Loader2, Flame, TrendingUp, Zap } from 'lucide-react';
+import { Search, Trophy, Clock, Activity, ChevronRight, Sparkles, Info, Loader2, Flame, TrendingUp, Zap, UserPlus } from 'lucide-react';
 import { useUserStore } from '../store/useUserStore';
 import { Skeleton } from '../components/ui/Skeleton';
 import { getUpcomingMatches, recordMatchClick } from '../services/footballService';
+import { useTelegram } from '../hooks/useTelegram';
+import { SignUpSheet } from '../components/SignUpSheet';
 
 type MatchType = 'live' | 'prematch';
 
@@ -17,7 +19,9 @@ export const Matches: React.FC<MatchesProps> = ({ onTabChange }) => {
   const [matches, setMatches] = useState<any[]>([]);
   const [loading, setLoading] = useState(true);
   
+  const [isSignUpOpen, setIsSignUpOpen] = useState(false);
   const { setSelectedMatch, setIsAnalyzing, setAnalysisResult, user } = useUserStore();
+  const { hapticFeedback } = useTelegram();
 
   useEffect(() => {
     const fetchMatches = async () => {
@@ -47,14 +51,29 @@ export const Matches: React.FC<MatchesProps> = ({ onTabChange }) => {
             minute: displayMinute,
             league: m.league.name,
             time: new Date(m.fixture.date).toLocaleTimeString('en-GB', { hour: '2-digit', minute: '2-digit' }),
-            date: new Date(m.fixture.date).toLocaleDateString() === new Date().toLocaleDateString() ? 'Today' : 'Upcoming',
+            date: (() => {
+              const matchDate = new Date(m.fixture.date);
+              const today = new Date();
+              const tomorrow = new Date();
+              tomorrow.setDate(today.getDate() + 1);
+              
+              const matchDateStr = matchDate.toDateString();
+              if (matchDateStr === today.toDateString()) return 'Today';
+              if (matchDateStr === tomorrow.toDateString()) return 'Tomorrow';
+              
+              return matchDate.toLocaleDateString('en-GB', { day: '2-digit', month: 'short' });
+            })(),
             hype: 'High',
             confidence: 85,
             homeProb: 45,
             awayProb: 35,
             drawProb: 20,
             xG: m.xG || { home: 0, away: 0 },
-            odds: { home: '2.10', draw: '3.20', away: '3.40' },
+            odds: { 
+              home: (2.0 + Math.random()).toFixed(2), 
+              draw: (3.0 + Math.random()).toFixed(2), 
+              away: (2.5 + Math.random()).toFixed(2) 
+            },
             status: m.fixture.status.state === 'pre' ? 'Upcoming' : 'Live'
           };
         };
@@ -77,6 +96,12 @@ export const Matches: React.FC<MatchesProps> = ({ onTabChange }) => {
   );
 
   const handleAnalyze = (match: any) => {
+    if (!user) {
+      hapticFeedback('medium');
+      setIsSignUpOpen(true);
+      return;
+    }
+    hapticFeedback('light');
     recordMatchClick(match.id, `${match.home} vs ${match.away}`);
     setSelectedMatch(match);
     setIsAnalyzing(true);
@@ -91,10 +116,12 @@ export const Matches: React.FC<MatchesProps> = ({ onTabChange }) => {
       <div className="flex justify-between items-center px-4 pt-6 pb-2 z-50">
         <h1 className="text-lg font-black text-white">Matches</h1>
         <div className="flex items-center gap-3">
-          <div className="bg-white/5 backdrop-blur-md border border-white/10 px-3 py-1.5 rounded-full flex items-center gap-1.5 shadow-[0_0_15px_rgba(204,255,0,0.1)]">
-            <Zap className="w-3.5 h-3.5 text-[#ccff00]" />
-            <span className="text-xs font-black text-white">{user?.credits || 240}</span>
-          </div>
+          {user?.phone && (
+            <div className="bg-white/5 backdrop-blur-md border border-white/10 px-3 py-1.5 rounded-full flex items-center gap-1.5 shadow-[0_0_15px_rgba(204,255,0,0.1)]">
+              <Zap className="w-3.5 h-3.5 text-[#ccff00]" />
+              <span className="text-xs font-black text-white">{user?.credits}</span>
+            </div>
+          )}
         </div>
       </div>
 
@@ -143,8 +170,8 @@ export const Matches: React.FC<MatchesProps> = ({ onTabChange }) => {
         ) : (
           <>
             <div className="flex items-center justify-between mb-2 px-1">
-              <h3 className="text-[10px] font-black text-zinc-500 uppercase tracking-widest">
-                Upcoming Fixtures ({filteredMatches.length})
+              <h3 className="text-[10px] font-black text-zinc-500 tracking-widest">
+                Upcoming fixtures ({filteredMatches.length})
               </h3>
             </div>
 
@@ -162,18 +189,18 @@ export const Matches: React.FC<MatchesProps> = ({ onTabChange }) => {
                 >
                   <div className="flex justify-between items-start mb-6 relative z-10">
                     <div className="flex flex-col gap-1">
-                      <span className="text-xs font-black text-white uppercase tracking-widest bg-white/10 px-3 py-1 rounded-full w-fit">
+                      <span className="text-xs font-black text-white tracking-widest bg-white/10 px-3 py-1 rounded-full w-fit">
                         {match.league}
                       </span>
                       {i < 3 && (
                         <span className="text-[9px] font-black text-red-500 bg-red-500/10 border border-red-500/20 px-1.5 py-0.5 rounded flex items-center gap-1 animate-pulse w-fit">
-                          <Flame className="w-2.5 h-2.5" /> HOT
+                          <Flame className="w-2.5 h-2.5" /> Hot
                         </span>
                       )}
                     </div>
                     <div className="flex items-center gap-1.5 bg-[#ccff00]/10 px-2 py-1 rounded-full border border-[#ccff00]/20">
                       <Clock className="w-3 h-3 text-[#ccff00]" />
-                      <span className="text-[10px] font-black text-[#ccff00] uppercase tracking-tighter">{match.time}</span>
+                      <span className="text-[10px] font-black text-[#ccff00] tracking-tighter">{match.time}</span>
                     </div>
                   </div>
 
@@ -191,9 +218,9 @@ export const Matches: React.FC<MatchesProps> = ({ onTabChange }) => {
                     </div>
 
                     <div className="flex flex-col items-center justify-center w-1/3">
-                      <span className="text-[10px] font-bold text-zinc-500 uppercase mb-1">VS</span>
+                      <span className="text-[10px] font-bold text-zinc-500 mb-1">vs</span>
                       <span className="text-2xl font-black text-white">VS</span>
-                      <span className="text-[10px] font-bold text-zinc-500 uppercase mt-1">{match.date}</span>
+                      <span className="text-[10px] font-bold text-zinc-500 mt-1">{match.date}</span>
                     </div>
 
                     <div className="flex flex-col items-center gap-2 w-1/3">
@@ -210,35 +237,15 @@ export const Matches: React.FC<MatchesProps> = ({ onTabChange }) => {
 
                   {/* Footer Stats / Odds */}
                   <div className="mt-6 pt-4 border-t border-zinc-800/50 flex flex-col gap-3">
-                    <div className="flex items-center justify-between text-[10px] font-black uppercase tracking-widest">
+                    <div className="flex items-center justify-between text-[10px] font-black tracking-widest">
                       <span className="text-zinc-500 flex items-center gap-1">
                         <TrendingUp className="w-3.5 h-3.5 text-blue-400" />
-                        {Math.floor(Math.random() * 5000) + 1000} Analyzing
+                        {Math.floor(Math.random() * 5000) + 1000} analyzing
                       </span>
                       <span className="text-[#ccff00] flex items-center gap-1">
                         <Sparkles className="w-3 h-3" />
-                        {match.confidence}% Confidence
+                        {match.confidence}% confidence
                       </span>
-                    </div>
-
-                    <div className="flex items-center justify-between">
-                      <div className="flex gap-2">
-                        <div className="bg-zinc-800/50 px-3 py-2 rounded-xl border border-zinc-700/30 text-center min-w-[60px] relative overflow-hidden group-hover:border-[#ccff00]/30 transition-colors">
-                          <p className="text-[8px] font-bold text-zinc-500 uppercase">1</p>
-                          <p className="text-[11px] font-black text-white">{match.odds.home}</p>
-                        </div>
-                        <div className="bg-zinc-800/50 px-3 py-2 rounded-xl border border-zinc-700/30 text-center min-w-[60px]">
-                          <p className="text-[8px] font-bold text-zinc-500 uppercase">X</p>
-                          <p className="text-[11px] font-black text-white">{match.odds.draw}</p>
-                        </div>
-                        <div className="bg-zinc-800/50 px-3 py-2 rounded-xl border border-zinc-700/30 text-center min-w-[60px]">
-                          <p className="text-[8px] font-bold text-zinc-500 uppercase">2</p>
-                          <p className="text-[11px] font-black text-white">{match.odds.away}</p>
-                        </div>
-                      </div>
-                      <div className="flex items-center gap-1 text-[10px] font-black text-[#ccff00] uppercase tracking-tighter bg-[#ccff00]/10 px-3 py-1.5 rounded-xl border border-[#ccff00]/20">
-                        Unlock <ChevronRight className="w-3.5 h-3.5" />
-                      </div>
                     </div>
                   </div>
                 </motion.div>
@@ -260,6 +267,10 @@ export const Matches: React.FC<MatchesProps> = ({ onTabChange }) => {
       </>
     )}
   </div>
+      <SignUpSheet 
+        isOpen={isSignUpOpen} 
+        onClose={() => setIsSignUpOpen(false)} 
+      />
     </div>
   );
 };

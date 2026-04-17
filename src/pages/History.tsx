@@ -1,5 +1,6 @@
 import React, { useState } from 'react';
 import { motion, AnimatePresence } from 'motion/react';
+import { useUserStore } from '../store/useUserStore';
 import { 
   History as HistoryIcon, 
   ChevronRight, 
@@ -87,6 +88,8 @@ export const History: React.FC = () => {
     winRate: Math.round((MOCK_HISTORY.filter(i => i.status === 'WON').length / MOCK_HISTORY.length) * 100)
   };
 
+  const { user } = useUserStore();
+
   return (
     <div className="h-full overflow-y-auto no-scrollbar bg-black">
       {/* Stats Header */}
@@ -94,27 +97,29 @@ export const History: React.FC = () => {
         <div className="flex items-center justify-between">
           <div className="flex flex-col">
             <h2 className="text-xl font-black text-white">History</h2>
-            <p className="text-[10px] font-black text-zinc-500 uppercase tracking-widest">Last 30 Days</p>
+            <p className="text-[10px] font-black text-zinc-500 tracking-widest">Last 30 days</p>
           </div>
           <div className="flex items-center gap-3">
-            <div className="bg-white/5 backdrop-blur-md border border-white/10 px-3 py-1.5 rounded-full flex items-center gap-1.5 shadow-[0_0_15px_rgba(204,255,0,0.1)]">
-              <Zap className="w-3.5 h-3.5 text-[#ccff00]" />
-              <span className="text-xs font-black text-white">240</span>
-            </div>
+            {user?.phone && (
+              <div className="bg-white/5 backdrop-blur-md border border-white/10 px-3 py-1.5 rounded-full flex items-center gap-1.5 shadow-[0_0_15px_rgba(204,255,0,0.1)]">
+                <Zap className="w-3.5 h-3.5 text-[#ccff00]" />
+                <span className="text-xs font-black text-white">{user.credits}</span>
+              </div>
+            )}
           </div>
         </div>
 
         <div className="grid grid-cols-3 gap-3">
           <div className="bg-zinc-900/40 border border-zinc-800/50 p-3 rounded-2xl">
-            <p className="text-[10px] font-black text-zinc-500 uppercase mb-1">Total</p>
+            <p className="text-[10px] font-black text-zinc-500 mb-1">Total</p>
             <p className="text-lg font-black text-white">{stats.total}</p>
           </div>
           <div className="bg-green-500/5 border border-green-500/10 p-3 rounded-2xl">
-            <p className="text-[10px] font-black text-green-500/50 uppercase mb-1">Won</p>
+            <p className="text-[10px] font-black text-green-500/50 mb-1">Won</p>
             <p className="text-lg font-black text-green-400">{stats.won}</p>
           </div>
           <div className="bg-[#ccff00]/5 border border-[#ccff00]/10 p-3 rounded-2xl">
-            <p className="text-[10px] font-black text-[#ccff00]/50 uppercase mb-1">Win Rate</p>
+            <p className="text-[10px] font-black text-[#ccff00]/50 mb-1">Win rate</p>
             <p className="text-lg font-black text-[#ccff00]">{stats.winRate}%</p>
           </div>
         </div>
@@ -138,7 +143,7 @@ export const History: React.FC = () => {
             <button
               key={f}
               onClick={() => setFilter(f)}
-              className={`px-4 py-2 rounded-full text-[10px] font-black uppercase tracking-widest transition-all ${
+              className={`px-4 py-2 rounded-full text-[10px] font-black tracking-widest transition-all ${
                 filter === f 
                   ? 'bg-[#ccff00] text-black shadow-[0_0_15px_rgba(204,255,0,0.3)]' 
                   : 'bg-zinc-900 text-zinc-500 border border-zinc-800'
@@ -175,12 +180,12 @@ export const History: React.FC = () => {
                       )}
                     </div>
                     <div>
-                      <p className="text-[10px] font-black text-zinc-500 uppercase tracking-tighter">{item.league}</p>
+                      <p className="text-[10px] font-black text-zinc-500 tracking-tighter">{item.league}</p>
                       <p className="text-xs font-black text-white">{item.home} vs {item.away}</p>
                     </div>
                   </div>
                   <div className="text-right">
-                    <p className={`text-[10px] font-black uppercase tracking-widest ${
+                    <p className={`text-[10px] font-black tracking-widest ${
                       item.status === 'WON' ? 'text-green-400' : 'text-red-400'
                     }`}>{item.status}</p>
                     <p className="text-xs font-black text-white">{item.result}</p>
@@ -190,18 +195,18 @@ export const History: React.FC = () => {
                 <div className="flex items-center justify-between pt-3 border-t border-zinc-800/50">
                   <div className="flex items-center gap-3">
                     <div className="flex flex-col">
-                      <span className="text-[8px] font-black text-zinc-600 uppercase">Prediction</span>
+                      <span className="text-[8px] font-black text-zinc-600">Prediction</span>
                       <span className="text-[10px] font-black text-white">{item.prediction}</span>
                     </div>
                     <div className="w-px h-6 bg-zinc-800" />
                     <div className="flex flex-col">
-                      <span className="text-[8px] font-black text-zinc-600 uppercase">Odds</span>
+                      <span className="text-[8px] font-black text-zinc-600">Odds</span>
                       <span className="text-[10px] font-black text-[#ccff00]">@{item.odds}</span>
                     </div>
                   </div>
                   <div className="flex items-center gap-2">
                     <div className="text-right">
-                      <span className="text-[8px] font-black text-zinc-600 uppercase block">Confidence</span>
+                      <span className="text-[8px] font-black text-zinc-600 block">Confidence</span>
                       <span className="text-[10px] font-black text-white">{item.confidence}%</span>
                     </div>
                     <div className="w-8 h-8 rounded-full bg-zinc-800 flex items-center justify-center group-hover:bg-[#ccff00] transition-colors">

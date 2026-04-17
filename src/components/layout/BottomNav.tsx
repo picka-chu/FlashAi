@@ -1,23 +1,29 @@
 import React from 'react';
-import { Home, History, User, Goal, Zap } from 'lucide-react';
+import { Home, History, User, Goal, Zap, ShieldAlert } from 'lucide-react';
 import { motion } from 'motion/react';
+import { useUserStore } from '../../store/useUserStore';
 
-export type TabType = 'home' | 'matches' | 'analyze' | 'history' | 'profile';
+export type TabType = 'home' | 'matches' | 'analyze' | 'history' | 'profile' | 'admin';
 
 interface BottomNavProps {
   activeTab: TabType;
   onTabChange: (tab: TabType) => void;
 }
 
-const NAV_ITEMS = [
-  { id: 'home', icon: Home, label: 'Home' },
-  { id: 'matches', icon: Goal, label: 'Matches' },
-  { id: 'analyze', icon: Zap, label: 'Analyze' },
-  { id: 'history', icon: History, label: 'History' },
-  { id: 'profile', icon: User, label: 'Profile' },
-] as const;
-
 export const BottomNav: React.FC<BottomNavProps> = ({ activeTab, onTabChange }) => {
+  const { user } = useUserStore();
+
+  const NAV_ITEMS = [
+    { id: 'home', icon: Home, label: 'Home' },
+    { id: 'matches', icon: Goal, label: 'Matches' },
+    { id: 'analyze', icon: Zap, label: 'Analyze' },
+    ...(user?.phone ? [
+      { id: 'history', icon: History, label: 'History' },
+      { id: 'profile', icon: User, label: 'Profile' }
+    ] : []),
+    ...(user?.role === 'admin' ? [{ id: 'admin', icon: ShieldAlert, label: 'Admin' }] : []),
+  ] as const;
+
   return (
     <nav className="flex-none bg-black/80 backdrop-blur-xl border-t border-zinc-800/50 px-2 pb-8 pt-2 z-50">
       <div className="flex items-center justify-around max-w-md mx-auto">
@@ -28,7 +34,7 @@ export const BottomNav: React.FC<BottomNavProps> = ({ activeTab, onTabChange }) 
           return (
             <button
               key={item.id}
-              onClick={() => onTabChange(item.id)}
+              onClick={() => onTabChange(item.id as TabType)}
               className="relative flex flex-col items-center gap-1 py-2 px-4 transition-all duration-300"
             >
               <Icon 

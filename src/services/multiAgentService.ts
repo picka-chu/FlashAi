@@ -431,25 +431,20 @@ class MultiAgentService {
     `;
 
     try {
-      // Convert blob URLs to base64 parts
-      const imageParts = await Promise.all(images.map(async (url) => {
-        const response = await fetch(url);
-        const blob = await response.blob();
-        return new Promise<{ inlineData: { data: string, mimeType: string } }>((resolve) => {
-          const reader = new FileReader();
-          reader.onloadend = () => {
-            const result = reader.result as string;
-            const base64data = result ? result.split(',')[1] : '';
-            resolve({
-              inlineData: {
-                data: base64data,
-                mimeType: blob.type
-              }
-            });
-          };
-          reader.readAsDataURL(blob);
-        });
-      }));
+      // Convert base64 data URIs to inlineData objects
+      const imageParts = images.map((dataUri) => {
+        // data:image/jpeg;base64,...
+        const matches = dataUri.match(/^data:(image\/[a-zA-Z+]+);base64,(.+)$/);
+        if (!matches || matches.length !== 3) {
+           throw new Error("Invalid image format provided.");
+        }
+        return {
+          inlineData: {
+            mimeType: matches[1],
+            data: matches[2]
+          }
+        };
+      });
 
       const result = await ai.models.generateContent({
         model: "gemini-2.5-flash",
