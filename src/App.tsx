@@ -105,9 +105,8 @@ export default function App() {
     const validTabs: TabType[] = ["home", "matches", "analyze", "history", "profile", "admin"];
     if (!validTabs.includes(requestedTab as TabType)) return;
 
-    if (requestedTab === "admin" && user?.role !== "admin") return;
     setActiveTab(requestedTab as TabType);
-  }, [user?.role]);
+  }, []);
 
   const renderPage = () => {
     switch (activeTab) {

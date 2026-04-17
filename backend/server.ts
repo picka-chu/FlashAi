@@ -556,7 +556,7 @@ async function startServer() {
           .from("users")
           .select("role")
           .eq("telegram_id", telegramId)
-          .single();
+          .maybeSingle();
 
         isAdminUser = Boolean(isBootstrapAdmin || existingUser?.role === "admin");
         
