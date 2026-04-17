@@ -51,15 +51,26 @@ export default function App() {
       }
 
       try {
-        const { data, error } = await supabase
+        const profileQuery = supabase
           .from('users')
           .select('*')
           .eq('telegram_id', tgUser.id)
           .single();
 
+        const timeoutPromise = new Promise((_, reject) =>
+          setTimeout(() => reject(new Error("Profile request timeout")), 12000)
+        );
+
+        const { data, error } = await Promise.race([profileQuery, timeoutPromise]) as any;
+
         if (error && error.code === 'PGRST116') {
           console.warn("User not found in 'users' table.");
-          setLoading(false);
+          return;
+        }
+
+        if (error) {
+          console.error("Profile fetch error:", error);
+          return;
         } else if (data) {
           setUser({
             id: data.id,
@@ -74,6 +85,7 @@ export default function App() {
         }
       } catch (err) {
         console.error("Error fetching profile:", err);
+      } finally {
         setLoading(false);
       }
     };
