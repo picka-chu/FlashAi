@@ -91,9 +91,10 @@ export const Admin: React.FC = () => {
       if (!res.ok) throw new Error(`Dashboard request failed (${res.status})`);
       const data = await res.json();
       setStats(data.stats);
-      setIsLoading(false);
     } catch (e) {
       console.error(e);
+    } finally {
+      setIsLoading(false);
     }
   };
 

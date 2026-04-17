@@ -17,7 +17,10 @@ const __dirname = path.dirname(__filename);
 
 // Initialize Supabase
 const supabaseUrl = process.env.SUPABASE_URL;
-const supabaseServiceKey = process.env.SUPABASE_SERVICE_ROLE_KEY;
+const supabaseServiceKey =
+  process.env.SUPABASE_SERVICE_ROLE_KEY ||
+  process.env.SUPABASE_SERVICE_ROLE ||
+  process.env.SUPABASE_SERVICE_KEY;
 const supabaseAnonKey = process.env.SUPABASE_ANON_KEY;
 const supabaseKey = supabaseServiceKey || supabaseAnonKey;
 const bootstrapAdminId = process.env.ADMIN_TELEGRAM_ID ? Number(process.env.ADMIN_TELEGRAM_ID) : null;
@@ -30,6 +33,8 @@ const supabase = createClient(supabaseUrl, supabaseKey);
 
 if (!supabaseServiceKey) {
   console.warn("⚠️ SUPABASE_SERVICE_ROLE_KEY is not set. Backend will use anon key and may hit RLS errors on write operations.");
+} else {
+  console.log("✅ Supabase service role key detected for backend writes.");
 }
 
 const PLAN_CREDITS: Record<string, number> = {
