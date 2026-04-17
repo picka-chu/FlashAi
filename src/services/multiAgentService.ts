@@ -382,8 +382,11 @@ class MultiAgentService {
       }
       return data || [];
     } catch (error: any) {
-      if (error?.status === 429 || error?.message?.includes('429') || error?.message?.includes('RESOURCE_EXHAUSTED')) {
-        console.warn("Gemini Search Rate Limit Hit - using empty fallback");
+      const message = String(error?.message || "");
+      const isRateLimited = error?.status === 429 || message.includes('429') || message.includes('RESOURCE_EXHAUSTED');
+      const isUnavailable = error?.status === 503 || message.includes('503') || message.includes('UNAVAILABLE');
+      if (isRateLimited || isUnavailable) {
+        console.warn("Gemini Search temporarily unavailable - using empty fallback");
         return [];
       }
       console.error("Error getting top fixtures from search:", error);
