@@ -18,7 +18,7 @@ import { init, retrieveLaunchParams } from '@telegram-apps/sdk-react';
 export default function App() {
   const [activeTab, setActiveTab] = useState<TabType>("home");
   const { user: tgUser, isReady, setHeaderColor, setBackgroundColor } = useTelegram();
-  const { setUser, isLoading, setLoading } = useUserStore();
+  const { user, setUser, isLoading, setLoading } = useUserStore();
   
   const [lp, setLp] = useState<any>(null);
 
