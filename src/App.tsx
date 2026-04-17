@@ -18,7 +18,7 @@ import { init, retrieveLaunchParams } from '@telegram-apps/sdk-react';
 export default function App() {
   const [activeTab, setActiveTab] = useState<TabType>("home");
   const { user: tgUser, isReady, setHeaderColor, setBackgroundColor } = useTelegram();
-  const { setUser, isLoading, setLoading } = useUserStore();
+  const { user, setUser, isLoading, setLoading } = useUserStore();
   
   const [lp, setLp] = useState<any>(null);
 
@@ -96,6 +96,18 @@ export default function App() {
       setLoading(false);
     }
   }, [tgUser, isReady, setUser, setLoading]);
+
+  useEffect(() => {
+    const params = new URLSearchParams(window.location.search);
+    const requestedTab = params.get("tab");
+    if (!requestedTab) return;
+
+    const validTabs: TabType[] = ["home", "matches", "analyze", "history", "profile", "admin"];
+    if (!validTabs.includes(requestedTab as TabType)) return;
+
+    if (requestedTab === "admin" && user?.role !== "admin") return;
+    setActiveTab(requestedTab as TabType);
+  }, [user?.role]);
 
   const renderPage = () => {
     switch (activeTab) {
