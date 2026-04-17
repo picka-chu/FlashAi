@@ -20,11 +20,47 @@ const supabaseUrl = process.env.SUPABASE_URL;
 const supabaseKey = process.env.SUPABASE_ANON_KEY;
 const bootstrapAdminId = process.env.ADMIN_TELEGRAM_ID ? Number(process.env.ADMIN_TELEGRAM_ID) : null;
 
-if (!supabaseUrl || !supabaseKey || supabaseUrl === "YOUR_SUPABASE_URL") {
-  console.warn("⚠️ Supabase configuration is missing or using placeholders.");
+if (!supabaseUrl || !supabaseKey || supabaseUrl === "YOUR_SUPABASE_URL" || supabaseKey === "YOUR_SUPABASE_ANON_KEY") {
+  throw new Error("Missing required Supabase configuration. Set SUPABASE_URL and SUPABASE_ANON_KEY.");
 }
 
-const supabase = createClient(supabaseUrl || "https://placeholder.supabase.co", supabaseKey || "placeholder");
+const supabase = createClient(supabaseUrl, supabaseKey);
+
+const PLAN_CREDITS: Record<string, number> = {
+  free: 0,
+  weekly: 35,
+  monthly: 120,
+  admin: 0,
+};
+
+function getPlanCreditAllocation(planId: string) {
+  return PLAN_CREDITS[planId] ?? 0;
+}
+
+async function applyPlanCredits(telegramId: number, planId: string) {
+  const { data: existingUser, error: fetchError } = await supabase
+    .from("users")
+    .select("credits")
+    .eq("telegram_id", telegramId)
+    .single();
+
+  if (fetchError) throw fetchError;
+
+  const creditsToAdd = getPlanCreditAllocation(planId);
+  const nextCredits = (existingUser?.credits || 0) + creditsToAdd;
+
+  const { error: updateError } = await supabase
+    .from("users")
+    .update({
+      plan: planId,
+      credits: nextCredits,
+      last_active: new Date().toISOString(),
+    })
+    .eq("telegram_id", telegramId);
+
+  if (updateError) throw updateError;
+  return creditsToAdd;
+}
 
 /**
  * Validates the data received from the Telegram Web App.
@@ -354,7 +390,7 @@ async function startServer() {
     const ttl = urlObj.searchParams.get("ttl") || "300";
     
     // Support for team details: endpoint=teams/:id
-    const espnUrl = new URL(`http://site.api.espn.com/apis/site/v2/sports/soccer/${league}/${endpoint}`);
+    const espnUrl = new URL(`https://site.api.espn.com/apis/site/v2/sports/soccer/${league}/${endpoint}`);
     urlObj.searchParams.forEach((value, key) => {
       if (key !== "league" && key !== "endpoint" && key !== "ttl") {
         espnUrl.searchParams.set(key, value);
@@ -1146,7 +1182,7 @@ async function startServer() {
 
     try {
       // 1. Fetch Matches (using existing logic or direct ESPN call)
-      const res = await axios.get(`http://site.api.espn.com/apis/site/v2/sports/soccer/all/scoreboard`);
+      const res = await axios.get(`https://site.api.espn.com/apis/site/v2/sports/soccer/all/scoreboard`);
       const matches = res.data.events?.slice(0, 5) || [];
 
       // 2. Send to Analyst Agent (Simplified for automation)
@@ -1301,6 +1337,13 @@ async function startServer() {
 // TON Payment Verification Polling
 const checkTonPayments = async () => {
   try {
+    const tonReceiverAddress = process.env.TON_RECEIVER_ADDRESS;
+    const toncenterApiKey = process.env.TONCENTER_API_KEY;
+
+    if (!tonReceiverAddress || !toncenterApiKey) {
+      return;
+    }
+
     const { data: pendingTxs } = await supabase
       .from('transactions')
       .select('*')
@@ -1311,15 +1354,23 @@ const checkTonPayments = async () => {
 
     for (const tx of pendingTxs) {
       try {
-        // Query Toncenter API or similar block explorer for transaction confirmation
-        // For simplicity we will use Toncenter to get transactions for the admin wallet
-        // Because we don't have a specific API key for Toncenter, we'll implement a mock polling check
-        // Real implementation: const res = await axios.get(`https://toncenter.com/api/v2/getTransactions?address=${process.env.TON_RECEIVER_ADDRESS}&limit=10`);
-        // If tx.provider_payment_charge_id (boc hash) is found, mark as 'completed'
-        
-        // Simulating the blockchain taking 1-2 minutes to confirm
-        const createdAt = new Date(tx.created_at).getTime();
-        if (Date.now() - createdAt > 60000) { // Assume confirmed after 1 minute for this logic
+        const res = await axios.get("https://toncenter.com/api/v2/getTransactions", {
+          params: {
+            address: tonReceiverAddress,
+            limit: 20,
+          },
+          headers: {
+            "X-API-Key": toncenterApiKey,
+          },
+        });
+
+        const transactions = res.data?.result || [];
+        const isConfirmed = transactions.some((chainTx: any) => {
+          const hash = chainTx?.transaction_id?.hash || "";
+          return typeof tx.provider_payment_charge_id === "string" && hash.includes(tx.provider_payment_charge_id);
+        });
+
+        if (isConfirmed) {
           await supabase.from('transactions').update({ status: 'completed' }).eq('id', tx.id);
           
           if (process.env.TELEGRAM_BOT_TOKEN) {
