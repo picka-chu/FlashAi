@@ -97,6 +97,17 @@ export default function App() {
     }
   }, [tgUser, isReady, setUser, setLoading]);
 
+  useEffect(() => {
+    const params = new URLSearchParams(window.location.search);
+    const requestedTab = params.get("tab");
+    if (!requestedTab) return;
+
+    const validTabs: TabType[] = ["home", "matches", "analyze", "history", "profile", "admin"];
+    if (!validTabs.includes(requestedTab as TabType)) return;
+
+    setActiveTab(requestedTab as TabType);
+  }, []);
+
   const renderPage = () => {
     switch (activeTab) {
       case "home": return <Home onTabChange={setActiveTab} />;
@@ -118,6 +129,10 @@ export default function App() {
         </div>
       </div>
     );
+  }
+
+  if (activeTab === "admin") {
+    return <Admin />;
   }
 
   return (

@@ -17,14 +17,25 @@ const __dirname = path.dirname(__filename);
 
 // Initialize Supabase
 const supabaseUrl = process.env.SUPABASE_URL;
-const supabaseKey = process.env.SUPABASE_ANON_KEY;
+const supabaseServiceKey =
+  process.env.SUPABASE_SERVICE_ROLE_KEY ||
+  process.env.SUPABASE_SERVICE_ROLE ||
+  process.env.SUPABASE_SERVICE_KEY;
+const supabaseAnonKey = process.env.SUPABASE_ANON_KEY;
+const supabaseKey = supabaseServiceKey || supabaseAnonKey;
 const bootstrapAdminId = process.env.ADMIN_TELEGRAM_ID ? Number(process.env.ADMIN_TELEGRAM_ID) : null;
 
 if (!supabaseUrl || !supabaseKey || supabaseUrl === "YOUR_SUPABASE_URL" || supabaseKey === "YOUR_SUPABASE_ANON_KEY") {
-  throw new Error("Missing required Supabase configuration. Set SUPABASE_URL and SUPABASE_ANON_KEY.");
+  throw new Error("Missing required Supabase configuration. Set SUPABASE_URL and SUPABASE_SERVICE_ROLE_KEY.");
 }
 
 const supabase = createClient(supabaseUrl, supabaseKey);
+
+if (!supabaseServiceKey) {
+  console.warn("⚠️ SUPABASE_SERVICE_ROLE_KEY is not set. Backend will use anon key and may hit RLS errors on write operations.");
+} else {
+  console.log("✅ Supabase service role key detected for backend writes.");
+}
 
 const PLAN_CREDITS: Record<string, number> = {
   free: 0,
@@ -546,28 +557,44 @@ async function startServer() {
       const telegramId = ctx.from.id;
       
       const welcomeMsg = `Welcome to *Flash AI* – your own elite football companion in Telegram!\n\n🚀 *High-confidence AI predictions* for every match\n🔥 *Deep analysis* and data-driven insights\n💸 *Earn credits* by completing daily tasks or referrals\n\nJoin the community of winning bettors and get started in just a few taps`;
+      const adminWelcomeMsg = `👋 Welcome back, *Admin*.\n\nOpen your dashboard to manage users, analytics, tasks, and broadcasts.`;
       
       // Upsert basic info and capture referrer if present
+      let isAdminUser = false;
       try {
         const isBootstrapAdmin = bootstrapAdminId && telegramId === bootstrapAdminId;
+        const { data: existingUser } = await supabase
+          .from("users")
+          .select("role")
+          .eq("telegram_id", telegramId)
+          .maybeSingle();
+
+        isAdminUser = Boolean(isBootstrapAdmin || existingUser?.role === "admin");
         
         await supabase.from("users").upsert({
           telegram_id: telegramId,
           name: ctx.from.first_name + (ctx.from.last_name ? ` ${ctx.from.last_name}` : ""),
           username: ctx.from.username || "",
           referrer_id: startPayload && !isNaN(Number(startPayload)) && Number(startPayload) !== telegramId ? Number(startPayload) : null,
-          role: isBootstrapAdmin ? 'admin' : 'user',
+          role: isAdminUser ? 'admin' : 'user',
           last_active: new Date().toISOString()
         }, { onConflict: 'telegram_id' });
         
-        if (isBootstrapAdmin) {
+        if (isAdminUser) {
            console.log(`🚀 Bootstrap Admin Detected: ${telegramId}`);
         }
       } catch (err) {
         console.error("Error saving start user:", err);
       }
 
-      ctx.replyWithMarkdown(welcomeMsg, Markup.inlineKeyboard([
+      if (isAdminUser) {
+        await ctx.replyWithMarkdown(adminWelcomeMsg, Markup.inlineKeyboard([
+          [Markup.button.webApp("🛡️ Open Admin Dashboard", `${appUrl}?tab=admin`)]
+        ]));
+        return;
+      }
+
+      await ctx.replyWithMarkdown(welcomeMsg, Markup.inlineKeyboard([
         [Markup.button.webApp("🚀 Get Started", `${appUrl}`)]
       ]));
     });
