@@ -36,7 +36,13 @@ const INITIAL_FAQS: FAQ[] = [
 ];
 
 function getAiClient() {
-  const key = process.env.GEMINI_API_KEY || process.env.GEMINI_API_KEY_1 || '';
+  const key =
+    process.env.GEMINI_SUPPORT_KEY ||
+    process.env.GEMINI_AGENT_KEY_2 ||
+    process.env.GEMINI_API_KEY_5 ||
+    process.env.GEMINI_API_KEY ||
+    process.env.GEMINI_API_KEY_1 ||
+    '';
   if (!key) {
     throw new Error('Support AI is not configured');
   }

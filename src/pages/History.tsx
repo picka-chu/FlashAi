@@ -1,4 +1,4 @@
-import React, { useState } from 'react';
+import React, { useEffect, useMemo, useState } from 'react';
 import { motion, AnimatePresence } from 'motion/react';
 import { useUserStore } from '../store/useUserStore';
 import { 
@@ -16,79 +16,55 @@ import {
   Zap
 } from 'lucide-react';
 
-const MOCK_HISTORY = [
-  {
-    id: 1,
-    home: 'Man City',
-    away: 'Man Utd',
-    league: 'Premier League',
-    date: '2024-04-14',
-    prediction: 'Home Win',
-    odds: 1.45,
-    confidence: 92,
-    status: 'WON',
-    result: '3-1',
-    type: 'Safe'
-  },
-  {
-    id: 2,
-    home: 'Arsenal',
-    away: 'Aston Villa',
-    league: 'Premier League',
-    date: '2024-04-14',
-    prediction: 'Over 2.5 Goals',
-    odds: 1.65,
-    confidence: 85,
-    status: 'LOST',
-    result: '0-2',
-    type: 'Value'
-  },
-  {
-    id: 3,
-    home: 'Real Madrid',
-    away: 'Mallorca',
-    league: 'La Liga',
-    date: '2024-04-13',
-    prediction: 'Home Win',
-    odds: 1.35,
-    confidence: 95,
-    status: 'WON',
-    result: '1-0',
-    type: 'Safe'
-  },
-  {
-    id: 4,
-    home: 'Bayern',
-    away: 'FC Koln',
-    league: 'Bundesliga',
-    date: '2024-04-13',
-    prediction: 'Home Win',
-    odds: 1.25,
-    confidence: 98,
-    status: 'WON',
-    result: '2-0',
-    type: 'Safe'
-  }
-];
-
 export const History: React.FC = () => {
   const [filter, setFilter] = useState<'all' | 'won' | 'lost'>('all');
   const [searchQuery, setSearchQuery] = useState('');
+  const [historyItems, setHistoryItems] = useState<any[]>([]);
+  const [loading, setLoading] = useState(true);
 
-  const filteredHistory = MOCK_HISTORY.filter(item => {
+  const filteredHistory = historyItems.filter(item => {
     const matchesFilter = filter === 'all' || item.status.toLowerCase() === filter;
-    const matchesSearch = item.home.toLowerCase().includes(searchQuery.toLowerCase()) || 
-                         item.away.toLowerCase().includes(searchQuery.toLowerCase());
+    const haystack = `${item.endpoint || ''} ${item.method || ''}`.toLowerCase();
+    const matchesSearch = haystack.includes(searchQuery.toLowerCase());
     return matchesFilter && matchesSearch;
   });
 
-  const stats = {
-    total: MOCK_HISTORY.length,
-    won: MOCK_HISTORY.filter(i => i.status === 'WON').length,
-    winRate: Math.round((MOCK_HISTORY.filter(i => i.status === 'WON').length / MOCK_HISTORY.length) * 100)
-  };
+  const stats = useMemo(() => {
+    const total = historyItems.length;
+    const won = historyItems.filter(i => i.status === 'won').length;
+    const winRate = total > 0 ? Math.round((won / total) * 100) : 0;
+    return { total, won, winRate };
+  }, [historyItems]);
 
   const { user } = useUserStore();
+
+  useEffect(() => {
+    const loadHistory = async () => {
+      try {
+        const tgInitData = window?.Telegram?.WebApp?.initData || '';
+        const res = await fetch('/api/user/history', { headers: { 'X-TG-Init-Data': tgInitData } });
+        const data = await res.json();
+        const normalized = (Array.isArray(data) ? data : []).map((item: any) => {
+          const isSuccess = Number(item.status) < 400;
+          return {
+            id: item.id,
+            endpoint: item.endpoint || 'Unknown endpoint',
+            method: item.method || 'GET',
+            statusCode: item.status || 0,
+            status: isSuccess ? 'won' : 'lost',
+            created_at: item.created_at
+          };
+        });
+        setHistoryItems(normalized);
+      } catch (e) {
+        console.error('History fetch failed:', e);
+        setHistoryItems([]);
+      } finally {
+        setLoading(false);
+      }
+    };
+    loadHistory();
+  }, []);
 
   return (
     <div className="h-full overflow-y-auto no-scrollbar bg-black">
@@ -158,7 +134,9 @@ export const History: React.FC = () => {
       {/* History List */}
       <div className="px-4 py-4 space-y-3 pb-24">
         <AnimatePresence mode="popLayout">
-          {filteredHistory.length > 0 ? (
+          {loading ? (
+            <div className="text-center text-zinc-500 text-sm py-10">Loading history...</div>
+          ) : filteredHistory.length > 0 ? (
             filteredHistory.map((item, i) => (
               <motion.div
                 key={item.id}
@@ -171,24 +149,24 @@ export const History: React.FC = () => {
                 <div className="flex justify-between items-start mb-4">
                   <div className="flex items-center gap-2">
                     <div className={`p-1.5 rounded-lg ${
-                      item.status === 'WON' ? 'bg-green-500/10' : 'bg-red-500/10'
+                      item.status === 'won' ? 'bg-green-500/10' : 'bg-red-500/10'
                     }`}>
-                      {item.status === 'WON' ? (
+                      {item.status === 'won' ? (
                         <CheckCircle2 className="w-3.5 h-3.5 text-green-400" />
                       ) : (
                         <XCircle className="w-3.5 h-3.5 text-red-400" />
                       )}
                     </div>
                     <div>
-                      <p className="text-[10px] font-black text-zinc-500 tracking-tighter">{item.league}</p>
-                      <p className="text-xs font-black text-white">{item.home} vs {item.away}</p>
+                      <p className="text-[10px] font-black text-zinc-500 tracking-tighter">{item.method}</p>
+                      <p className="text-xs font-black text-white">{item.endpoint}</p>
                     </div>
                   </div>
                   <div className="text-right">
                     <p className={`text-[10px] font-black tracking-widest ${
-                      item.status === 'WON' ? 'text-green-400' : 'text-red-400'
-                    }`}>{item.status}</p>
-                    <p className="text-xs font-black text-white">{item.result}</p>
+                      item.status === 'won' ? 'text-green-400' : 'text-red-400'
+                    }`}>{item.status.toUpperCase()}</p>
+                    <p className="text-xs font-black text-white">{item.statusCode}</p>
                   </div>
                 </div>
 
@@ -196,18 +174,18 @@ export const History: React.FC = () => {
                   <div className="flex items-center gap-3">
                     <div className="flex flex-col">
                       <span className="text-[8px] font-black text-zinc-600">Prediction</span>
-                      <span className="text-[10px] font-black text-white">{item.prediction}</span>
+                      <span className="text-[10px] font-black text-white">{new Date(item.created_at).toLocaleString()}</span>
                     </div>
                     <div className="w-px h-6 bg-zinc-800" />
                     <div className="flex flex-col">
                       <span className="text-[8px] font-black text-zinc-600">Odds</span>
-                      <span className="text-[10px] font-black text-[#ccff00]">@{item.odds}</span>
+                      <span className="text-[10px] font-black text-[#ccff00]">{item.method}</span>
                     </div>
                   </div>
                   <div className="flex items-center gap-2">
                     <div className="text-right">
                       <span className="text-[8px] font-black text-zinc-600 block">Confidence</span>
-                      <span className="text-[10px] font-black text-white">{item.confidence}%</span>
+                      <span className="text-[10px] font-black text-white">{item.statusCode}</span>
                     </div>
                     <div className="w-8 h-8 rounded-full bg-zinc-800 flex items-center justify-center group-hover:bg-[#ccff00] transition-colors">
                       <ChevronRight className="w-4 h-4 text-zinc-600 group-hover:text-black" />

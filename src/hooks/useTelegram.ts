@@ -113,7 +113,7 @@ export const useTelegram = () => {
   return {
     tg,
     user,
-    initData: tg?.initData || "",
+    initData: tg?.initData || window?.Telegram?.WebApp?.initData || "",
     theme,
     hapticFeedback,
     showAlert,
