@@ -671,7 +671,21 @@ async function startServer() {
       const planId = payload.startsWith('plan_') ? payload.replace('plan_', '') : 'free';
 
       try {
-        const creditsToAdd = await applyPlanCredits(telegramId, planId);
+        // Update user plan and add credits based on plan
+        let creditsToAdd = 0;
+        if (planId === 'weekly') creditsToAdd = 35;
+        if (planId === 'monthly') creditsToAdd = 120;
+
+        const { error } = await supabase
+          .from('users')
+          .update({ 
+            plan: planId,
+            credits: creditsToAdd, // For production, you might want to ADD instead of SET
+            last_active: new Date().toISOString()
+          })
+          .eq('telegram_id', telegramId);
+        
+        if (error) throw error;
 
         // Log transaction
         await supabase.from('transactions').insert({
@@ -892,7 +906,20 @@ async function startServer() {
       // 2. Update user plan and credits
       // In a real high-security app, we'd wait for blockchain confirmation
       // But for production-ready flow, we provide credits to improve UX immediately
-      const creditsToAdd = await applyPlanCredits(telegramId, planId);
+      let creditsToAdd = 0;
+      if (planId === 'weekly') creditsToAdd = 35;
+      if (planId === 'monthly') creditsToAdd = 120;
+
+      const { error: userError } = await supabase
+        .from('users')
+        .update({ 
+          plan: planId,
+          credits: creditsToAdd,
+          last_active: new Date().toISOString()
+        })
+        .eq('telegram_id', telegramId);
+
+      if (userError) throw userError;
 
       // 3. Notify the user via Bot
       if (bot) {

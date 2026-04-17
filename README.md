@@ -24,6 +24,6 @@ View your app in AI Studio: https://ai.studio/apps/e25ceaed-b16a-42f2-8a80-ab48a
 - **Root directory:** repository root
 - **Build command:** `npm install && npm run build`
 - **Start command:** `npm run start`
-- **Required environment variables:** see `.env.example` (`SUPABASE_URL`, `SUPABASE_ANON_KEY`, `TELEGRAM_BOT_TOKEN`, `GEMINI_API_KEY`, `TONCENTER_API_KEY`, etc.)
+- **Required environment variables:** see `.env.example` (`SUPABASE_URL`, `SUPABASE_ANON_KEY`, `TELEGRAM_BOT_TOKEN`, `GEMINI_API_KEY`, etc.)
 
 The backend server entrypoint is `backend/server.ts` and `PORT` is read from environment for production hosts.

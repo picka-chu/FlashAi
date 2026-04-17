@@ -1,0 +1,8 @@
+{
+  "rewrites": [
+    {
+      "source": "/api/:path*",
+      "destination": "https://https://flashai-axli.onrender.com/api/:path*"
+    }
+  ]
+}
