@@ -6,6 +6,8 @@ const keys = [
   process.env.GEMINI_AGENT_KEY_2 || process.env.GEMINI_API_KEY_5,
 ].filter(Boolean) as string[];
 
+const AGENT_MODELS = ["gemini-2.5-flash", "gemini-2.0-flash", "gemini-2.0-flash-lite"];
+
 // Fallback to default if no numbered keys are provided
 if (keys.length === 0 && process.env.GEMINI_API_KEY) {
   keys.push(
@@ -38,6 +40,30 @@ class MultiAgentService {
     this.instances = keys.map(key => new GoogleGenAI({ apiKey: key }));
   }
 
+  private async generateWithFallback(prompt: string, opts?: { allowSearch?: boolean; json?: boolean }) {
+    const models = AGENT_MODELS;
+    let lastError: any = null;
+
+    for (let i = 0; i < models.length; i++) {
+      const ai = this.getNextInstance();
+      try {
+        const result = await ai.models.generateContent({
+          model: models[i],
+          contents: [{ role: "user", parts: [{ text: prompt }] }],
+          config: {
+            ...(opts?.allowSearch ? { tools: [{ googleSearch: {} }] as any } : {}),
+            ...(opts?.json ? { responseMimeType: "application/json" } : {}),
+          },
+        });
+        return result;
+      } catch (error: any) {
+        lastError = error;
+      }
+    }
+
+    throw lastError || new Error("All agent models failed");
+  }
+
   /**
    * Rotates through all available keys to spread the load
    */
@@ -49,6 +75,7 @@ class MultiAgentService {
   }
 
   private getCache(key: string) {
+    if (typeof localStorage === 'undefined') return null;
     try {
       const cached = localStorage.getItem(`flash_ai_${key}`);
       if (cached) {
@@ -64,6 +91,7 @@ class MultiAgentService {
   }
 
   private setCache(key: string, data: any) {
+    if (typeof localStorage === 'undefined') return;
     try {
       localStorage.setItem(`flash_ai_${key}`, JSON.stringify({
         data,
@@ -75,7 +103,6 @@ class MultiAgentService {
   }
 
   async generateMarketingMessage(topPicks: any[]) {
-    const ai = this.getNextInstance();
     const prompt = `
       You are a high-end Football Marketing Agent for "Flash AI".
       Your goal is to create an engaging Telegram message for our users about today's top picks.
@@ -94,16 +121,12 @@ class MultiAgentService {
       Return ONLY the message text.
     `;
 
-    const result = await ai.models.generateContent({
-      model: "gemini-2.5-flash",
-      contents: [{ role: "user", parts: [{ text: prompt }] }],
-    });
+    const result = await this.generateWithFallback(prompt);
 
     return result.text;
   }
 
   async generateRetentionMessage(userData: { name: string, lastActive: string, favoriteLeagues: string[] }) {
-    const ai = this.getNextInstance();
     const prompt = `
       You are a Retention Specialist for a Football Prediction App.
       Your job is to get an inactive user back to the app.
@@ -122,10 +145,7 @@ class MultiAgentService {
       Return ONLY the message text.
     `;
 
-    const result = await ai.models.generateContent({
-      model: "gemini-2.5-flash",
-      contents: [{ role: "user", parts: [{ text: prompt }] }],
-    });
+    const result = await this.generateWithFallback(prompt);
 
     return result.text;
   }
@@ -135,7 +155,6 @@ class MultiAgentService {
     const cached = this.getCache(cacheKey);
     if (cached) return cached;
 
-    const ai = this.getNextInstance();
     const prompt = `
       You are a world-class football data analyst and betting expert. 
       Extract the following information for the match: ${matchName}.
@@ -158,13 +177,7 @@ class MultiAgentService {
     `;
 
     try {
-      const result = await ai.models.generateContent({
-        model: "gemini-2.5-flash",
-        contents: [{ role: "user", parts: [{ text: prompt }] }],
-        config: { 
-          tools: [{ googleSearch: {} }] as any
-        }
-      });
+      const result = await this.generateWithFallback(prompt, { allowSearch: true });
 
       const text = result.text;
       if (!text) throw new Error("Empty response");
@@ -199,9 +212,6 @@ class MultiAgentService {
     const cached = this.getCache(cacheKey);
     if (cached) return cached;
 
-    const ai = this.getNextInstance();
-    // Use 2.0 Pro for deep analysis if available, otherwise fallback to 2.0 Flash
-    const model = keys.length >= 2 ? "gemini-2.0-pro-exp-02-05" : "gemini-2.0-flash";
     
     const prompt = `
       You are a professional betting syndicate analyst. 
@@ -225,11 +235,7 @@ class MultiAgentService {
     `;
 
     try {
-      const result = await ai.models.generateContent({
-        model: model,
-        contents: [{ role: "user", parts: [{ text: prompt }] }],
-        config: { responseMimeType: "application/json" }
-      });
+      const result = await this.generateWithFallback(prompt, { json: true });
 
       const text = result.text;
       if (!text) throw new Error("Empty response from Gemini");
@@ -256,7 +262,6 @@ class MultiAgentService {
     const cached = this.getCache(cacheKey);
     if (cached) return cached;
 
-    const ai = this.getNextInstance();
     const prompt = `
       You are a professional football data scout. 
       Fetch the latest data and odds for the match: ${matchName}.
@@ -311,13 +316,7 @@ class MultiAgentService {
     `;
 
     try {
-      const result = await ai.models.generateContent({
-        model: "gemini-2.5-flash",
-        contents: [{ role: "user", parts: [{ text: prompt }] }],
-        config: { 
-          tools: [{ googleSearch: {} }] as any
-        }
-      });
+      const result = await this.generateWithFallback(prompt, { allowSearch: true });
 
       const text = result.text;
       if (!text) throw new Error("Empty response");

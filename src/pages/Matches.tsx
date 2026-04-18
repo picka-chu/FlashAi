@@ -96,7 +96,7 @@ export const Matches: React.FC<MatchesProps> = ({ onTabChange }) => {
   );
 
   const handleAnalyze = (match: any) => {
-    if (!user) {
+    if (!user?.phone) {
       hapticFeedback('medium');
       setIsSignUpOpen(true);
       return;
@@ -274,4 +274,3 @@ export const Matches: React.FC<MatchesProps> = ({ onTabChange }) => {
     </div>
   );
 };
-
