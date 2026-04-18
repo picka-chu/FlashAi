@@ -101,6 +101,9 @@ export const Analyze: React.FC = () => {
               setCreditMeta({ required: Number(data.required || 1), current: Number(data.current || 0) });
               if (user?.plan === 'free') setShowInsufficientSheet(true);
               setError(`Insufficient credits. You need ${data.required} but have ${data.current}.`);
+            } else if (response.status === 403) {
+              setError(data.error || 'Please complete signup first.');
+              setIsSignUpOpen(true);
             } else {
               setError(data.error || "Analysis failed.");
             }
@@ -149,8 +152,9 @@ export const Analyze: React.FC = () => {
   const handleSend = async () => {
     if (!input.trim() && images.length === 0 && !selectedMatch) return;
 
-    if (!user) {
+    if (!user?.phone) {
       hapticFeedback('medium');
+      setError('Please sign up first by sharing your contact to start analysis.');
       setIsSignUpOpen(true);
       return;
     }
@@ -187,6 +191,9 @@ export const Analyze: React.FC = () => {
             setCreditMeta({ required: Number(data.required || 1), current: Number(data.current || 0) });
             if (user?.plan === 'free') setShowInsufficientSheet(true);
             setError(`Insufficient credits. Required: ${data.required}, Current: ${data.current}`);
+          } else if (response.status === 403) {
+            setError(data.error || 'Please complete signup first.');
+            setIsSignUpOpen(true);
           } else {
             setError(data.error || "Analysis failed.");
           }

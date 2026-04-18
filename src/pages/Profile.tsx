@@ -175,7 +175,7 @@ export const Profile: React.FC = () => {
   const handleAction = (name: string) => {
     hapticFeedback('light');
 
-    if (!user && name !== 'Support') {
+    if (!user?.phone && name !== 'Support') {
        hapticFeedback('medium');
        setIsSignUpOpen(true);
        return;
@@ -1022,7 +1022,7 @@ export const Profile: React.FC = () => {
         <div className="grid grid-cols-2 gap-4">
           <button 
             onClick={() => handleAction('Referral')}
-            className={`bg-zinc-900/50 border border-zinc-800/50 rounded-[32px] p-6 flex flex-col items-start gap-4 active:scale-[0.98] transition-all ${!user && 'opacity-50'}`}
+            className={`bg-zinc-900/50 border border-zinc-800/50 rounded-[32px] p-6 flex flex-col items-start gap-4 active:scale-[0.98] transition-all ${!user?.phone && 'opacity-50'}`}
           >
             <div className="w-12 h-12 rounded-2xl bg-zinc-800 flex items-center justify-center">
               <Share2 className="w-6 h-6 text-[#ccff00]" />

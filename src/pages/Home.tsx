@@ -251,7 +251,7 @@ export const Home: React.FC<HomeProps> = ({ onTabChange }) => {
   };
 
   const handleAnalyze = (match: any) => {
-    if (!user) {
+    if (!user?.phone) {
       hapticFeedback('medium');
       setIsSignUpOpen(true);
       return;

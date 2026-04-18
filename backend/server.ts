@@ -465,6 +465,9 @@ async function startServer() {
         .single();
 
       if (userError || !user) return c.json({ error: "User profile not found" }, 404);
+      if (!user.phone) {
+        return c.json({ error: "Complete signup first by sharing your contact." }, 403);
+      }
 
       // Professionally ensure daily credits are refilled if it's a new day
       const credits = await syncUserCredits(user);
@@ -564,6 +567,9 @@ async function startServer() {
         .single();
 
       if (userError || !user) return c.json({ error: "User not found" }, 404);
+      if (!user.phone) {
+        return c.json({ error: "Complete signup first by sharing your contact." }, 403);
+      }
 
       const credits = await syncUserCredits(user);
 
