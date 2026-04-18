@@ -43,6 +43,8 @@ const PLAN_CREDITS: Record<string, number> = {
   monthly: 120,
   admin: 0,
 };
+const signupCreditsRaw = Number(process.env.SIGNUP_CREDITS ?? 3);
+const signupCredits = Number.isFinite(signupCreditsRaw) && signupCreditsRaw >= 0 ? Math.floor(signupCreditsRaw) : 3;
 
 function getPlanCreditAllocation(planId: string) {
   return PLAN_CREDITS[planId] ?? 0;
