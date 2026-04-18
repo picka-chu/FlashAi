@@ -59,8 +59,13 @@ export default function App() {
 
         if (error && error.code === 'PGRST116') {
           console.warn("User not found in 'users' table.");
+          // User is not registered - clear user state to show signup UI
+          setUser(null);
           setLoading(false);
         } else if (data) {
+          // User exists - check if they have completed registration (phone number)
+          const isRegistered = !!data.phone;
+          
           setUser({
             id: data.id,
             telegram_id: data.telegram_id,
@@ -71,9 +76,22 @@ export default function App() {
             role: data.role || "user",
             photo_url: data.photo_url
           });
+          
+          // Log registration status for debugging
+          console.log(`User ${tgUser.id} registration status:`, { 
+            isRegistered, 
+            hasPhone: !!data.phone,
+            credits: data.credits 
+          });
+          
+          setLoading(false);
+        } else {
+          setUser(null);
+          setLoading(false);
         }
       } catch (err) {
         console.error("Error fetching profile:", err);
+        setUser(null);
         setLoading(false);
       }
     };
@@ -81,6 +99,7 @@ export default function App() {
     if (tgUser?.id) {
       fetchProfile();
     } else if (isReady && !tgUser) {
+      setUser(null);
       setLoading(false);
     }
   }, [tgUser, isReady, setUser, setLoading]);

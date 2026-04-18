@@ -571,12 +571,12 @@ async function startServer() {
           }
         });
 
-        // Small delay then send the open app button
-        setTimeout(() => {
-          ctx.reply("Ready to analyze? Click the button below:", Markup.inlineKeyboard([
-            [Markup.button.webApp("Open Flash AI", appUrl)]
-          ]));
-        }, 1000);
+        // Send inline keyboard with Start Analysis button immediately
+        ctx.reply("Ready to analyze? Click below:", Markup.inlineKeyboard([
+          [Markup.button.webApp("⚡ Start Analysis", appUrl)],
+          [Markup.button.callback("📊 View Matches", "matches_tab")],
+          [Markup.button.callback("👤 My Profile", "profile_tab")]
+        ]));
 
       } catch (err) {
         console.error("Unexpected error in registration:", err);
