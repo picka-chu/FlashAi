@@ -133,6 +133,11 @@ export const Profile: React.FC = () => {
   const chatEndRef = useRef<HTMLDivElement>(null);
 
   useEffect(() => {
+    setEditName(user?.name || '');
+    setEditUsername(user?.username || '');
+  }, [user?.name, user?.username]);
+
+  useEffect(() => {
     if (isViewingSupport) {
       supportService.getFAQs().then(setFaqs);
     }
@@ -194,17 +199,36 @@ export const Profile: React.FC = () => {
     }
   };
 
-  const handleSaveProfile = () => {
+  const handleSaveProfile = async () => {
     hapticFeedback('success');
-    if (user) {
+    if (!user) return;
+
+    try {
+      const response = await fetch('/api/user/profile', {
+        method: 'PUT',
+        headers: {
+          'Content-Type': 'application/json',
+          'X-TG-Init-Data': initData || ''
+        },
+        body: JSON.stringify({ name: editName, username: editUsername })
+      });
+
+      const data = await response.json();
+      if (!response.ok) {
+        showAlert(data.error || 'Failed to save profile.');
+        return;
+      }
+
       setUser({
         ...user,
-        name: editName,
-        username: editUsername
+        name: data?.user?.name || editName,
+        username: data?.user?.username || editUsername
       });
+      setIsEditing(false);
+      showAlert('Profile updated successfully!');
+    } catch (e) {
+      showAlert('Failed to save profile. Please try again.');
     }
-    setIsEditing(false);
-    showAlert('Profile updated successfully!');
   };
 
   const handleUpgrade = (plan: any) => {
@@ -320,15 +344,36 @@ export const Profile: React.FC = () => {
 
   const copyReferralLink = () => {
     const fallbackRefId = user?.telegram_id || user?.id;
-    const link = referralStats.referralLink || (fallbackRefId ? `https://t.me/flash_ai_bot?start=${fallbackRefId}` : '');
+    const link = referralStats.referralLink || (fallbackRefId ? `https://t.me/Deepflashaibot?start=${fallbackRefId}` : '');
     if (!link) {
       showAlert('Referral link is not ready yet.');
       return;
     }
     hapticFeedback('success');
-    navigator.clipboard.writeText(link)
-      .then(() => showAlert('Referral link copied to clipboard!'))
-      .catch(() => showAlert('Copy failed. Please copy manually.'));
+    const copyWithFallback = async () => {
+      try {
+        if (navigator.clipboard?.writeText) {
+          await navigator.clipboard.writeText(link);
+          showAlert('Referral link copied to clipboard!');
+          return;
+        }
+
+        const textArea = document.createElement('textarea');
+        textArea.value = link;
+        textArea.style.position = 'fixed';
+        textArea.style.opacity = '0';
+        document.body.appendChild(textArea);
+        textArea.focus();
+        textArea.select();
+        document.execCommand('copy');
+        document.body.removeChild(textArea);
+        showAlert('Referral link copied to clipboard!');
+      } catch {
+        showAlert('Copy failed. Please copy manually.');
+      }
+    };
+
+    copyWithFallback();
   };
 
   const handleTaskAction = async (task: any) => {
@@ -586,7 +631,7 @@ export const Profile: React.FC = () => {
                   </div>
                   <div className="bg-zinc-900 border border-zinc-800 rounded-[32px] p-4 flex items-center justify-between">
                     <code className="text-[10px] sm:text-xs font-mono text-zinc-400 truncate flex-1 block px-2">
-                      {referralStats.referralLink || `https://t.me/flash_ai_bot?start=${user?.telegram_id || ''}`}
+                      {referralStats.referralLink || `https://t.me/Deepflashaibot?start=${user?.telegram_id || ''}`}
                     </code>
                     <button 
                       onClick={copyReferralLink}

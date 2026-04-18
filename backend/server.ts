@@ -280,17 +280,25 @@ async function startServer() {
   const ADMIN_ADS_KEY = "admin_ads_v1";
 
   const getCachedCollection = async <T = any>(key: string): Promise<T[]> => {
-    const { data } = await supabase.from("api_cache").select("data").eq("endpoint", key).maybeSingle();
-    const raw = data?.data;
-    return Array.isArray(raw) ? raw : [];
+    try {
+      const { data } = await supabase.from("api_cache").select("data").eq("endpoint", key).maybeSingle();
+      const raw = data?.data;
+      return Array.isArray(raw) ? raw : [];
+    } catch {
+      return [];
+    }
   };
 
   const setCachedCollection = async (key: string, list: any[]) => {
-    await supabase.from("api_cache").upsert({
-      endpoint: key,
-      data: list,
-      updated_at: new Date().toISOString(),
-    }, { onConflict: "endpoint" });
+    try {
+      await supabase.from("api_cache").upsert({
+        endpoint: key,
+        data: list,
+        updated_at: new Date().toISOString(),
+      }, { onConflict: "endpoint" });
+    } catch (e) {
+      console.error(`Failed to cache collection ${key}:`, e);
+    }
   };
 
   const normalizeAudience = (value: string) => {
@@ -703,7 +711,7 @@ async function startServer() {
   });
 
   const botToken = process.env.TELEGRAM_BOT_TOKEN;
-  const botUsername = process.env.TELEGRAM_BOT_USERNAME || "flash_ai_bot";
+  const botUsername = process.env.TELEGRAM_BOT_USERNAME || "Deepflashaibot";
   const appUrl = process.env.APP_URL || `http://localhost:${PORT}`;
   const isPlaceholderToken = !botToken || botToken === "YOUR_TELEGRAM_BOT_TOKEN" || botToken.trim() === "";
 
@@ -1075,6 +1083,36 @@ async function startServer() {
     }
   });
 
+  app.put("/api/user/profile", async (c) => {
+    const initData = c.req.header("X-TG-Init-Data");
+    if (!isPlaceholderToken && botToken && (!initData || !validateTelegramInitData(initData, botToken))) {
+      return c.json({ error: "Invalid Telegram authentication" }, 401);
+    }
+
+    try {
+      const tgUser = initData ? getTelegramUserFromInitData(initData) : null;
+      if (!tgUser?.id) return c.json({ error: "User not identified" }, 401);
+
+      const body = await c.req.json().catch(() => ({} as any));
+      const name = String(body?.name || "").trim();
+      const username = String(body?.username || "").trim();
+      if (!name) return c.json({ error: "Name is required" }, 400);
+
+      const { data, error } = await supabase
+        .from("users")
+        .update({ name, username })
+        .eq("telegram_id", tgUser.id)
+        .select("id,telegram_id,name,username,phone,credits,plan,role,photo_url")
+        .single();
+
+      if (error) throw error;
+      return c.json({ user: data });
+    } catch (e: any) {
+      console.error("Profile update error:", e?.message || e);
+      return c.json({ error: "Failed to update profile" }, 500);
+    }
+  });
+
   // Create Stars Invoice Endpoint
   app.post("/api/payments/create-stars-invoice", async (c) => {
     // Validate Telegram Init Data
@@ -1363,7 +1401,11 @@ async function startServer() {
 
   // Task Management
   app.get("/api/admin/tasks", adminOnly, async (c) => {
-    const tasks = await getCachedCollection<any>(ADMIN_TASKS_KEY);
+    let tasks = await getCachedCollection<any>(ADMIN_TASKS_KEY);
+    if (!tasks.length) {
+      const { data } = await supabase.from("tasks").select("*").order("created_at", { ascending: false }).limit(200);
+      tasks = data || [];
+    }
     tasks.sort((a, b) => new Date(b.created_at || 0).getTime() - new Date(a.created_at || 0).getTime());
     return c.json(tasks);
   });
@@ -1387,6 +1429,15 @@ async function startServer() {
     if (!task.title || !task.description) return c.json({ error: "Title and description are required" }, 400);
 
     await setCachedCollection(ADMIN_TASKS_KEY, [task, ...tasks]);
+    try {
+      await supabase.from("tasks").insert({
+        title: task.title,
+        description: task.description,
+        reward: task.reward,
+        url: task.url,
+        active: task.active,
+      });
+    } catch {}
     return c.json(task);
   });
 
@@ -1394,12 +1445,19 @@ async function startServer() {
     const id = c.req.param("id");
     const tasks = await getCachedCollection<any>(ADMIN_TASKS_KEY);
     await setCachedCollection(ADMIN_TASKS_KEY, tasks.filter((t) => t.id !== id));
+    try {
+      await supabase.from("tasks").delete().eq("id", id);
+    } catch {}
     return c.json({ success: true });
   });
 
   // Ad Management
   app.get("/api/admin/ads", adminOnly, async (c) => {
-    const ads = await getCachedCollection<any>(ADMIN_ADS_KEY);
+    let ads = await getCachedCollection<any>(ADMIN_ADS_KEY);
+    if (!ads.length) {
+      const { data } = await supabase.from("ads").select("*").order("created_at", { ascending: false }).limit(200);
+      ads = data || [];
+    }
     ads.sort((a, b) => new Date(b.created_at || 0).getTime() - new Date(a.created_at || 0).getTime());
     return c.json(ads);
   });
@@ -1426,6 +1484,19 @@ async function startServer() {
 
     if (!ad.title || !ad.subtitle) return c.json({ error: "Ad title and subtitle are required" }, 400);
     await setCachedCollection(ADMIN_ADS_KEY, [ad, ...ads]);
+    try {
+      await supabase.from("ads").insert({
+        title: ad.title,
+        subtitle: ad.subtitle,
+        image_url: ad.image_url || "",
+        link: ad.link,
+        active: ad.active,
+        cta: ad.cta,
+        expires_at: ad.expires_at,
+        primary_color: ad.primary_color,
+        target_group: ad.target_group,
+      });
+    } catch {}
     return c.json(ad);
   });
 
@@ -1474,6 +1545,9 @@ ${ad.subtitle}`;
     const id = c.req.param("id");
     const ads = await getCachedCollection<any>(ADMIN_ADS_KEY);
     await setCachedCollection(ADMIN_ADS_KEY, ads.filter((a) => a.id !== id));
+    try {
+      await supabase.from("ads").delete().eq("id", id);
+    } catch {}
     return c.json({ success: true });
   });
 
@@ -1565,13 +1639,21 @@ ${ad.subtitle}`;
 
   // Public Overrides
   app.get("/api/common/tasks", async (c) => {
-    const tasks = await getCachedCollection<any>(ADMIN_TASKS_KEY);
+    let tasks = await getCachedCollection<any>(ADMIN_TASKS_KEY);
+    if (!tasks.length) {
+      const { data } = await supabase.from("tasks").select("*").eq("active", true);
+      tasks = data || [];
+    }
     return c.json(tasks.filter((t) => t.active !== false));
   });
 
   app.get("/api/common/ads", async (c) => {
     const now = Date.now();
-    const ads = await getCachedCollection<any>(ADMIN_ADS_KEY);
+    let ads = await getCachedCollection<any>(ADMIN_ADS_KEY);
+    if (!ads.length) {
+      const { data } = await supabase.from("ads").select("*").eq("active", true).order("created_at", { ascending: false }).limit(50);
+      ads = data || [];
+    }
 
     const initData = c.req.header("X-TG-Init-Data") || "";
     const tgUser = initData ? getTelegramUserFromInitData(initData) : null;
