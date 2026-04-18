@@ -1,1 +1,41 @@
-Nothing should be ignored in this case, as the changes only include source/config files (.md, .sql, .ts) without any build artifacts, dependencies, or temporary files.
+```
+# Environment variables
+.env.local
+
+# Dependencies
+node_modules/
+
+# Build artifacts
+dist/
+
+# IDE files
+.vscode/
+
+# Python cache
+__pycache__/
+*.pyc
+*.pyo
+*.pyd
+
+# Logs
+*.log
+
+# Temporary files
+*.tmp
+*.swp
+*.swo
+
+# OS generated files
+.DS_Store
+Thumbs.db
+
+# Coverage reports
+coverage/
+htmlcov/
+.coverage
+
+# Local configuration
+.env
+.env.*
+!.env.example
+```

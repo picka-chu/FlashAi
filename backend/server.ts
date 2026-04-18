@@ -440,11 +440,7 @@ async function startServer() {
         })
         .eq("telegram_id", userData.telegram_id);
 
-      await supabase.from("api_cache").upsert({
-        endpoint: refreshKey,
-        data: { lastRefillAt: now.toISOString(), plan, dailyCredits: config.dailyCredits },
-        updated_at: now.toISOString(),
-      }, { onConflict: "endpoint" });
+      await supabase.from("users").update({ credits: currentCredits }).eq("telegram_id", userData.telegram_id);
     }
     
     return currentCredits;
@@ -1674,8 +1670,10 @@ ${ad.subtitle}`;
     const body = await c.req.json().catch(() => ({} as any));
     const message = String(body.message || "").trim();
     const image_url = String(body.image_url || "").trim();
-    const with_button = Boolean(body.with_button);
-    const button_text = String(body.button_text || "").trim();
+    const with_app_button = Boolean(body.with_app_button);
+    const app_button_text = String(body.app_button_text || "Open Flash AI").trim();
+    const with_url_button = Boolean(body.with_url_button);
+    const url_button_text = String(body.url_button_text || "Learn More").trim();
     const button_url = String(body.button_url || appUrl).trim();
     const target_group = normalizeAudience(body.target_group || "all");
 
@@ -1691,7 +1689,15 @@ ${ad.subtitle}`;
     const { data: users } = await query;
     if (!users?.length) return c.json({ success: true, sentCount: 0 });
 
-    const keyboard = with_button ? Markup.inlineKeyboard([[Markup.button.url(button_text || "Open", button_url)]]) : undefined;
+    // Build keyboard based on button type
+    let keyboard: any = undefined;
+    if (with_app_button && app_button_text) {
+      // App button - opens the web app
+      keyboard = Markup.inlineKeyboard([[Markup.button.webApp(app_button_text, appUrl)]]);
+    } else if (with_url_button && url_button_text && button_url) {
+      // External URL button
+      keyboard = Markup.inlineKeyboard([[Markup.button.url(url_button_text, button_url)]]);
+    }
 
     let sentCount = 0;
     for (const user of users) {
