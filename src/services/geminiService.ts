@@ -3,15 +3,49 @@ import { ContextData, BetSlipAnalysis, MatchData, PredictionResult } from "../ty
 
 import { multiAgentService } from "./multiAgentService";
 
-export async function analyzeMatchWithSearch(matchString: string): Promise<PredictionResult> {
-  const keys = [
-    process.env.GEMINI_API_KEY_1,
-    process.env.GEMINI_API_KEY_2,
-    process.env.GEMINI_API_KEY_3,
-    process.env.GEMINI_API_KEY_4,
-    process.env.GEMINI_API_KEY_5,
+function getPredictionKeys() {
+  const predictionKeys = [
+    process.env.GEMINI_PREDICTION_KEY_1 || process.env.GEMINI_API_KEY_1,
+    process.env.GEMINI_PREDICTION_KEY_2 || process.env.GEMINI_API_KEY_2,
+    process.env.GEMINI_PREDICTION_KEY_3 || process.env.GEMINI_API_KEY_3,
   ].filter(Boolean) as string[];
-  const ai = new GoogleGenAI({ apiKey: keys[Math.floor(Math.random() * keys.length)] || process.env.GEMINI_API_KEY || "" });
+
+  if (predictionKeys.length === 0) {
+    return [
+      process.env.GEMINI_API_KEY_1,
+      process.env.GEMINI_API_KEY_2,
+      process.env.GEMINI_API_KEY_3,
+      process.env.GEMINI_API_KEY,
+    ].filter(Boolean) as string[];
+  }
+
+  return predictionKeys;
+}
+
+const PREDICTION_MODELS = [
+  "gemini-2.5-pro",
+  "gemini-2.5-flash",
+  "gemini-2.0-flash",
+  "gemini-2.0-flash-lite",
+];
+
+function isRetryableGeminiError(error: any) {
+  const msg = String(error?.message || "").toLowerCase();
+  return Boolean(
+    error?.status === 429 ||
+    error?.status === 500 ||
+    error?.status === 503 ||
+    msg.includes("resource_exhausted") ||
+    msg.includes("quota") ||
+    msg.includes("rate") ||
+    msg.includes("unavailable") ||
+    msg.includes("overloaded")
+  );
+}
+
+export async function analyzeMatchWithSearch(matchString: string): Promise<PredictionResult> {
+  const keys = getPredictionKeys();
+  const candidateKeys = keys.length > 0 ? keys : [process.env.GEMINI_API_KEY || ""];
 
   const prompt = `
     You are an expert sports betting analyst.
@@ -42,36 +76,50 @@ export async function analyzeMatchWithSearch(matchString: string): Promise<Predi
     }
   `;
 
-  try {
-    const result = await ai.models.generateContent({
-      model: "gemini-2.5-pro",
-      contents: [{ role: "user", parts: [{ text: prompt }] }],
-      config: { 
-        tools: [{ googleSearch: {} }] as any
+  const models = PREDICTION_MODELS;
+  const errors: string[] = [];
+
+  for (const model of models) {
+    for (const key of candidateKeys) {
+      try {
+        const ai = new GoogleGenAI({ apiKey: key });
+        const result = await ai.models.generateContent({
+          model,
+          contents: [{ role: "user", parts: [{ text: prompt }] }],
+          config: { 
+            tools: [{ googleSearch: {} }] as any
+          }
+        });
+
+        const parsed = parseJsonFromText(result.text || "");
+        if (!parsed || !parsed.predictions) throw new Error("Failed to parse prediction data");
+
+        const topPredictions = parsed.predictions
+          .sort((a: any, b: any) => b.confidence - a.confidence)
+          .slice(0, 2);
+
+        return {
+          matchId: matchString,
+          predictions: topPredictions,
+          overallReasoning: parsed.overallReasoning || "No reasoning provided.",
+          teamData: parsed.teamData || {
+            home: { name: matchString.split('vs')[0]?.trim() || 'Home', form: 'N/A', injuries: [], keyStats: [] },
+            away: { name: matchString.split('vs')[1]?.trim() || 'Away', form: 'N/A', injuries: [], keyStats: [] }
+          }
+        };
+      } catch (error: any) {
+        const msg = String(error?.message || "");
+        if (isRetryableGeminiError(error)) {
+          errors.push(`${model}: ${msg || `status ${error?.status || 'unknown'}`}`);
+          continue;
+        }
+        console.error(`analyzeMatchWithSearch fatal error (${model}):`, error);
+        throw error;
       }
-    });
-
-    const parsed = parseJsonFromText(result.text || "");
-    if (!parsed || !parsed.predictions) throw new Error("Failed to parse prediction data");
-
-    // Sort by confidence descending and take top 2
-    const topPredictions = parsed.predictions
-      .sort((a: any, b: any) => b.confidence - a.confidence)
-      .slice(0, 2);
-
-    return {
-      matchId: matchString, // Using matchString as a fallback ID
-      predictions: topPredictions,
-      overallReasoning: parsed.overallReasoning || "No reasoning provided.",
-      teamData: parsed.teamData || {
-        home: { name: matchString.split('vs')[0]?.trim() || 'Home', form: 'N/A', injuries: [], keyStats: [] },
-        away: { name: matchString.split('vs')[1]?.trim() || 'Away', form: 'N/A', injuries: [], keyStats: [] }
-      }
-    };
-  } catch (error) {
-    console.error("analyzeMatchWithSearch error:", error);
-    throw error;
+    }
   }
+
+  throw new Error(`All prediction keys/models failed. ${errors.slice(0, 3).join(" | ") || "Retry shortly."}`);
 }
 
 export async function fetchContextData(matchName: string): Promise<ContextData> {
@@ -107,13 +155,7 @@ function parseJsonFromText(text: string) {
 }
 
 export async function fetchMatchH2H(home: string, away: string): Promise<any> {
-  const keys = [
-    process.env.GEMINI_API_KEY_1,
-    process.env.GEMINI_API_KEY_2,
-    process.env.GEMINI_API_KEY_3,
-    process.env.GEMINI_API_KEY_4,
-    process.env.GEMINI_API_KEY_5,
-  ].filter(Boolean) as string[];
+  const keys = getPredictionKeys();
   const ai = new GoogleGenAI({ apiKey: keys[Math.floor(Math.random() * keys.length)] || process.env.GEMINI_API_KEY || "" });
 
   const prompt = `
@@ -143,14 +185,7 @@ export async function fetchMatchH2H(home: string, away: string): Promise<any> {
 }
 
 export async function fetchLiveMatchesFallback(): Promise<any[]> {
-  // We can keep this one as is or move it, but for now let's just use the rotated ai instance
-  const keys = [
-    process.env.GEMINI_API_KEY_1,
-    process.env.GEMINI_API_KEY_2,
-    process.env.GEMINI_API_KEY_3,
-    process.env.GEMINI_API_KEY_4,
-    process.env.GEMINI_API_KEY_5,
-  ].filter(Boolean) as string[];
+  const keys = getPredictionKeys();
   const ai = new GoogleGenAI({ apiKey: keys[Math.floor(Math.random() * keys.length)] || process.env.GEMINI_API_KEY || "" });
 
   const prompt = `

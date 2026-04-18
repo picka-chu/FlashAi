@@ -12,26 +12,52 @@ export const useTelegram = () => {
   const [user, setUser] = useState<any>(null);
   const [theme, setTheme] = useState<any>(null);
   const [isReady, setIsReady] = useState(false);
-
-  const tg = typeof window !== 'undefined' ? window.Telegram?.WebApp : null;
+  const [tg, setTg] = useState<any>(null);
 
   useEffect(() => {
-    if (tg) {
-      tg.ready();
-      tg.expand();
-      setUser(tg.initDataUnsafe?.user);
-      setTheme(tg.themeParams);
+    if (typeof window === "undefined") return;
+
+    let disposed = false;
+    let attempts = 0;
+    const maxAttempts = 30; // ~6 seconds
+
+    const syncTelegram = () => {
+      const webApp = window.Telegram?.WebApp;
+      if (!webApp) {
+        attempts += 1;
+        if (attempts >= maxAttempts && !disposed) {
+          setIsReady(true); // graceful fallback so app never hangs
+        }
+        return;
+      }
+
+      setTg(webApp);
+      webApp.ready();
+      webApp.expand();
+      setUser(webApp.initDataUnsafe?.user);
+      setTheme(webApp.themeParams);
       setIsReady(true);
+    };
 
-      const handleThemeChange = () => {
-        setTheme(tg.themeParams);
-      };
+    syncTelegram();
+    const poll = setInterval(syncTelegram, 200);
 
-      tg.onEvent("themeChanged", handleThemeChange);
-      return () => {
-        tg.offEvent("themeChanged", handleThemeChange);
-      };
-    }
+    return () => {
+      disposed = true;
+      clearInterval(poll);
+    };
+  }, []);
+
+  useEffect(() => {
+    if (!tg) return;
+    const handleThemeChange = () => {
+      setTheme(tg.themeParams);
+    };
+
+    tg.onEvent("themeChanged", handleThemeChange);
+    return () => {
+      tg.offEvent("themeChanged", handleThemeChange);
+    };
   }, [tg]);
 
   const hapticFeedback = useCallback((type: "light" | "medium" | "heavy" | "rigid" | "soft" = "medium") => {
@@ -87,7 +113,7 @@ export const useTelegram = () => {
   return {
     tg,
     user,
-    initData: tg?.initData || "",
+    initData: tg?.initData || window?.Telegram?.WebApp?.initData || "",
     theme,
     hapticFeedback,
     showAlert,

@@ -25,8 +25,8 @@ export const BottomNav: React.FC<BottomNavProps> = ({ activeTab, onTabChange }) 
   ] as const;
 
   return (
-    <nav className="flex-none bg-black/80 backdrop-blur-xl border-t border-zinc-800/50 px-2 pb-8 pt-2 z-50">
-      <div className="flex items-center justify-around max-w-md mx-auto">
+    <nav className="flex-none bg-black/80 backdrop-blur-xl border-t border-zinc-800/50 px-2 pt-2 pb-[max(env(safe-area-inset-bottom),1rem)] z-50">
+      <div className="flex items-stretch justify-between max-w-md mx-auto w-full gap-1">
         {NAV_ITEMS.map((item) => {
           const isActive = activeTab === item.id;
           const Icon = item.icon;
@@ -35,7 +35,7 @@ export const BottomNav: React.FC<BottomNavProps> = ({ activeTab, onTabChange }) 
             <button
               key={item.id}
               onClick={() => onTabChange(item.id as TabType)}
-              className="relative flex flex-col items-center gap-1 py-2 px-4 transition-all duration-300"
+              className="relative flex-1 min-w-0 flex flex-col items-center justify-center gap-1 py-2 px-1 transition-all duration-300"
             >
               <Icon 
                 className={`w-5 h-5 transition-all duration-300 ${isActive ? 'text-[#ccff00] scale-110 drop-shadow-[0_0_8px_rgba(204,255,0,0.5)]' : 'text-zinc-500'}`} 

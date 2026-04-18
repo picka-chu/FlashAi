@@ -37,7 +37,6 @@ import { useUserStore } from '../store/useUserStore';
 import { useTelegram } from '../hooks/useTelegram';
 import { supportService, FAQ } from '../services/supportService';
 import { SignUpSheet } from '../components/SignUpSheet';
-import { Leaderboard } from './Leaderboard';
 
 const PLANS = [
   {
@@ -77,52 +76,6 @@ const PLANS = [
   }
 ];
 
-const EARN_TASKS = [
-  {
-    id: 'tg_channel',
-    title: 'Join Telegram Channel',
-    description: 'Get latest updates and signals',
-    reward: 50,
-    buttonLabel: 'Join',
-    icon: MessageSquare,
-    color: 'text-[#ccff00]',
-    bgColor: 'bg-[#ccff00]/10',
-    url: 'https://t.me/flash_ai_signals'
-  },
-  {
-    id: '1xbet_reg',
-    title: 'Register on 1xBet',
-    description: 'Use promo code FLASHAI',
-    reward: 500,
-    buttonLabel: 'Register',
-    icon: Trophy,
-    color: 'text-blue-400',
-    bgColor: 'bg-blue-400/10',
-    url: 'https://1xbet.com'
-  },
-  {
-    id: 'follow_twitter',
-    title: 'Follow on X',
-    description: 'Stay updated on Twitter',
-    reward: 30,
-    buttonLabel: 'Follow',
-    icon: Share2,
-    color: 'text-zinc-400',
-    bgColor: 'bg-zinc-800',
-    url: 'https://x.com/flashai'
-  },
-  {
-    id: 'daily_reward',
-    title: 'Daily Bonus',
-    description: 'Claim your daily free credits',
-    reward: 10,
-    buttonLabel: 'Claim',
-    icon: Gift,
-    color: 'text-amber-400',
-    bgColor: 'bg-amber-400/10',
-    url: '#'
-  }
-];
 
 export const Profile: React.FC = () => {
   const [isSignUpOpen, setIsSignUpOpen] = useState(false);
@@ -132,13 +85,17 @@ export const Profile: React.FC = () => {
   const [isViewingSubscriptions, setIsViewingSubscriptions] = useState(false);
   const [isViewingReferral, setIsViewingReferral] = useState(false);
   const [isViewingSupport, setIsViewingSupport] = useState(false);
-  const [isViewingLeaderboard, setIsViewingLeaderboard] = useState(false);
   const [referralTab, setReferralTab] = useState<'referral' | 'earn'>('referral');
   const [supportTab, setSupportTab] = useState<'chat' | 'faq'>('chat');
   const [editName, setEditName] = useState(user?.name || 'Alex Volkov');
   const [editUsername, setEditUsername] = useState(user?.username || 'alex_v');
   const [tonConnectUI] = useTonConnectUI();
   const [dynamicTasks, setDynamicTasks] = useState<any[]>([]);
+  const [referralStats, setReferralStats] = useState<{ totalReferred: number; earnedCredits: number; referralLink: string }>({
+    totalReferred: 0,
+    earnedCredits: 0,
+    referralLink: '',
+  });
 
   useEffect(() => {
      fetch('/api/common/tasks')
@@ -148,6 +105,21 @@ export const Profile: React.FC = () => {
        })
        .catch(err => console.error("Failed to fetch tasks:", err));
   }, []);
+
+  useEffect(() => {
+    if (!isViewingReferral) return;
+    fetch('/api/user/referral', { headers: { 'X-TG-Init-Data': initData || '' } })
+      .then(r => r.ok ? r.json() : null)
+      .then((data) => {
+        if (!data) return;
+        setReferralStats({
+          totalReferred: Number(data.totalReferred || 0),
+          earnedCredits: Number(data.earnedCredits || 0),
+          referralLink: data.referralLink || '',
+        });
+      })
+      .catch((err) => console.error("Failed to fetch referral stats:", err));
+  }, [isViewingReferral, initData]);
 
   // Payment State
   const [isPaymentSheetOpen, setIsPaymentSheetOpen] = useState(false);
@@ -161,6 +133,11 @@ export const Profile: React.FC = () => {
   const chatEndRef = useRef<HTMLDivElement>(null);
 
   useEffect(() => {
+    setEditName(user?.name || '');
+    setEditUsername(user?.username || '');
+  }, [user?.name, user?.username]);
+
+  useEffect(() => {
     if (isViewingSupport) {
       supportService.getFAQs().then(setFaqs);
     }
@@ -172,7 +149,7 @@ export const Profile: React.FC = () => {
 
   useEffect(() => {
     if (tg?.BackButton) {
-      if (isEditing || isViewingSubscriptions || isViewingReferral || isViewingSupport || isViewingLeaderboard || isPaymentSheetOpen) {
+      if (isEditing || isViewingSubscriptions || isViewingReferral || isViewingSupport || isPaymentSheetOpen) {
         tg.BackButton.show();
         const handleBack = () => {
           if (isPaymentSheetOpen) {
@@ -182,7 +159,6 @@ export const Profile: React.FC = () => {
             setIsViewingSubscriptions(false);
             setIsViewingReferral(false);
             setIsViewingSupport(false);
-            setIsViewingLeaderboard(false);
           }
         };
         tg.BackButton.onClick(handleBack);
@@ -194,12 +170,12 @@ export const Profile: React.FC = () => {
         tg.BackButton.hide();
       }
     }
-  }, [isEditing, isViewingSubscriptions, isViewingReferral, isViewingSupport, isViewingLeaderboard, isPaymentSheetOpen, tg]);
+  }, [isEditing, isViewingSubscriptions, isViewingReferral, isViewingSupport, isPaymentSheetOpen, tg]);
 
   const handleAction = (name: string) => {
     hapticFeedback('light');
 
-    if (!user && name !== 'Support') {
+    if (!user?.phone && name !== 'Support') {
        hapticFeedback('medium');
        setIsSignUpOpen(true);
        return;
@@ -211,8 +187,6 @@ export const Profile: React.FC = () => {
       setIsViewingReferral(true);
     } else if (name === 'Support') {
       setIsViewingSupport(true);
-    } else if (name === 'Leaderboard') {
-      setIsViewingLeaderboard(true);
     } else if (name === 'Logout') {
       showConfirm('Are you sure you want to log out?', (ok) => {
         if (ok) {
@@ -225,17 +199,36 @@ export const Profile: React.FC = () => {
     }
   };
 
-  const handleSaveProfile = () => {
+  const handleSaveProfile = async () => {
     hapticFeedback('success');
-    if (user) {
+    if (!user) return;
+
+    try {
+      const response = await fetch('/api/user/profile', {
+        method: 'PUT',
+        headers: {
+          'Content-Type': 'application/json',
+          'X-TG-Init-Data': initData || ''
+        },
+        body: JSON.stringify({ name: editName, username: editUsername })
+      });
+
+      const data = await response.json();
+      if (!response.ok) {
+        showAlert(data.error || 'Failed to save profile.');
+        return;
+      }
+
       setUser({
         ...user,
-        name: editName,
-        username: editUsername
+        name: data?.user?.name || editName,
+        username: data?.user?.username || editUsername
       });
+      setIsEditing(false);
+      showAlert('Profile updated successfully!');
+    } catch (e) {
+      showAlert('Failed to save profile. Please try again.');
     }
-    setIsEditing(false);
-    showAlert('Profile updated successfully!');
   };
 
   const handleUpgrade = (plan: any) => {
@@ -350,15 +343,40 @@ export const Profile: React.FC = () => {
   };
 
   const copyReferralLink = () => {
+    const fallbackRefId = user?.telegram_id || user?.id;
+    const link = referralStats.referralLink || (fallbackRefId ? `https://t.me/Deepflashaibot?start=${fallbackRefId}` : '');
+    if (!link) {
+      showAlert('Referral link is not ready yet.');
+      return;
+    }
     hapticFeedback('success');
-    // Use telegram_id for referral link as it's the identifier used in bot start payload
-    const refId = user?.telegram_id || user?.id || 'ref123';
-    const link = `https://t.me/flash_ai_bot?start=${refId}`;
-    navigator.clipboard.writeText(link);
-    showAlert('Referral link copied to clipboard!');
+    const copyWithFallback = async () => {
+      try {
+        if (navigator.clipboard?.writeText) {
+          await navigator.clipboard.writeText(link);
+          showAlert('Referral link copied to clipboard!');
+          return;
+        }
+
+        const textArea = document.createElement('textarea');
+        textArea.value = link;
+        textArea.style.position = 'fixed';
+        textArea.style.opacity = '0';
+        document.body.appendChild(textArea);
+        textArea.focus();
+        textArea.select();
+        document.execCommand('copy');
+        document.body.removeChild(textArea);
+        showAlert('Referral link copied to clipboard!');
+      } catch {
+        showAlert('Copy failed. Please copy manually.');
+      }
+    };
+
+    copyWithFallback();
   };
 
-  const handleTaskAction = async (task: typeof EARN_TASKS[0]) => {
+  const handleTaskAction = async (task: any) => {
     hapticFeedback('medium');
     
     // First, open the URL if it exists
@@ -378,7 +396,7 @@ export const Profile: React.FC = () => {
     }
   };
 
-  const claimTaskReward = async (task: typeof EARN_TASKS[0]) => {
+  const claimTaskReward = async (task: any) => {
     if (!user) return;
     
     try {
@@ -432,14 +450,6 @@ export const Profile: React.FC = () => {
       setIsChatLoading(false);
     }
   };
-
-  if (isViewingLeaderboard) {
-    return (
-      <div className="fixed inset-0 z-[100] bg-black flex flex-col">
-          <Leaderboard onBack={() => setIsViewingLeaderboard(false)} />
-      </div>
-    );
-  }
 
   if (isViewingSupport) {
     return (
@@ -604,12 +614,12 @@ export const Profile: React.FC = () => {
                 {/* Stats Grid */}
                 <div className="grid grid-cols-2 gap-4">
                   <div className="bg-zinc-900 border border-zinc-800 rounded-[32px] p-6 text-center space-y-2">
-                    <p className="text-4xl font-black text-[#ccff00]">12</p>
+                    <p className="text-4xl font-black text-[#ccff00]">{referralStats.totalReferred}</p>
                     <p className="text-[10px] font-bold text-zinc-500 tracking-widest">Total referred</p>
                   </div>
                   <div className="bg-zinc-900 border border-zinc-800 rounded-[32px] p-6 text-center space-y-2">
-                    <p className="text-4xl font-black text-white">450</p>
-                    <p className="text-[10px] font-bold text-zinc-500 tracking-widest">Points earned</p>
+                    <p className="text-4xl font-black text-white">{referralStats.earnedCredits}</p>
+                    <p className="text-[10px] font-bold text-zinc-500 tracking-widest">Credits earned</p>
                   </div>
                 </div>
 
@@ -617,11 +627,11 @@ export const Profile: React.FC = () => {
                 <div className="space-y-4">
                   <div className="text-center space-y-1">
                     <h3 className="text-lg font-black text-white">Your referral link</h3>
-                    <p className="text-xs font-bold text-zinc-500">Every friend gives you 50 credits</p>
+                    <p className="text-xs font-bold text-zinc-500">Every friend gives you 2 credits</p>
                   </div>
                   <div className="bg-zinc-900 border border-zinc-800 rounded-[32px] p-4 flex items-center justify-between">
                     <code className="text-[10px] sm:text-xs font-mono text-zinc-400 truncate flex-1 block px-2">
-                      https://t.me/flash_ai_bot?start={user?.telegram_id || user?.id || 'ref123'}
+                      {referralStats.referralLink || `https://t.me/Deepflashaibot?start=${user?.telegram_id || ''}`}
                     </code>
                     <button 
                       onClick={copyReferralLink}
@@ -646,7 +656,7 @@ export const Profile: React.FC = () => {
                     </div>
                     <div className="flex items-center gap-4">
                       <div className="w-8 h-8 rounded-xl bg-[#ccff00]/20 flex items-center justify-center text-[#ccff00] text-xs font-black">3</div>
-                      <p className="text-xs font-bold text-zinc-400">You instantly receive 50 bonus credits</p>
+                      <p className="text-xs font-bold text-zinc-400">You instantly receive 2 bonus credits</p>
                     </div>
                   </div>
                 </div>
@@ -664,7 +674,7 @@ export const Profile: React.FC = () => {
                   <p className="text-xs font-bold text-zinc-500">Collect points to unlock Premium features</p>
                 </div>
 
-                {(dynamicTasks.length > 0 ? dynamicTasks : EARN_TASKS).map((task: any) => {
+                {dynamicTasks.map((task: any) => {
                   const Icon = task.icon || Trophy;
                   return (
                     <div 
@@ -672,8 +682,12 @@ export const Profile: React.FC = () => {
                       className="bg-zinc-900/50 border border-zinc-800 rounded-[32px] p-5 flex items-center justify-between"
                     >
                       <div className="flex items-center gap-4">
-                        <div className={`w-12 h-12 rounded-2xl ${task.bgColor || 'bg-zinc-800'} flex items-center justify-center`}>
-                          <Icon className={`w-6 h-6 ${task.color || 'text-zinc-400'}`} />
+                        <div className={`w-12 h-12 rounded-2xl ${task.bgColor || 'bg-zinc-800'} flex items-center justify-center overflow-hidden`}>
+                          {task.image_url ? (
+                            <img src={task.image_url} alt={task.title} className="w-full h-full object-cover" referrerPolicy="no-referrer" />
+                          ) : (
+                            <Icon className={`w-6 h-6 ${task.color || 'text-zinc-400'}`} />
+                          )}
                         </div>
                         <div className="text-left">
                           <p className="text-sm font-black text-white leading-tight">{task.title}</p>
@@ -693,10 +707,11 @@ export const Profile: React.FC = () => {
                   );
                 })}
 
-                {/* Coming Soon Message */}
-                <div className="py-8 text-center text-zinc-600">
-                  <p className="text-[10px] font-black tracking-[0.3em]">More tasks coming daily</p>
-                </div>
+                {dynamicTasks.length === 0 ? (
+                  <div className="py-8 text-center text-zinc-600">
+                    <p className="text-sm font-black">No admin tasks available right now.</p>
+                  </div>
+                ) : null}
               </motion.div>
             )}
           </AnimatePresence>
@@ -869,11 +884,9 @@ export const Profile: React.FC = () => {
                 {user?.photo_url ? (
                   <img src={user.photo_url} alt="Profile" className="w-full h-full object-cover opacity-50" />
                 ) : (
-                  <img 
-                    src="https://i.pravatar.cc/150?img=11" 
-                    alt="Profile" 
-                    className="w-full h-full object-cover opacity-50" 
-                  />
+                  <div className="w-full h-full bg-zinc-800 flex items-center justify-center">
+                    <User className="w-10 h-10 text-zinc-600" />
+                  </div>
                 )}
                 <div className="absolute inset-0 flex items-center justify-center">
                   <Camera className="w-8 h-8 text-white" />
@@ -986,26 +999,6 @@ export const Profile: React.FC = () => {
         </div>
       </div>
 
-      {/* Stats Section */}
-      <div className="px-6 mb-8">
-        <div className={`flex items-center justify-between py-6 border-y border-zinc-800/50 ${!user?.phone && 'opacity-30 grayscale'}`}>
-          <div className="flex-1 text-center">
-            <p className="text-2xl font-black text-white">{user?.phone ? '84%' : '--'}</p>
-            <p className="text-[10px] font-bold text-zinc-500 tracking-widest mt-1">Win rate</p>
-          </div>
-          <div className="w-px h-8 bg-zinc-800" />
-          <div className="flex-1 text-center">
-            <p className="text-2xl font-black text-white">{user?.phone ? '124' : '--'}</p>
-            <p className="text-[10px] font-bold text-zinc-500 tracking-widest mt-1">Predictions</p>
-          </div>
-          <div className="w-px h-8 bg-zinc-800" />
-          <div className="flex-1 text-center">
-            <p className="text-2xl font-black text-white">{user?.phone ? '12k' : '--'}</p>
-            <p className="text-[10px] font-bold text-zinc-500 tracking-widest mt-1">Ranking</p>
-          </div>
-        </div>
-      </div>
-
       {/* Action Cards */}
       <div className="px-6 space-y-6 pb-32">
         {/* Subscription Plan Card */}
@@ -1025,11 +1018,11 @@ export const Profile: React.FC = () => {
           <ChevronRight className="w-5 h-5 text-zinc-700 group-hover:text-[#ccff00] transition-colors" />
         </button>
 
-        {/* Referral, Support & Leaderboard Grid */}
+        {/* Referral & Support Grid */}
         <div className="grid grid-cols-2 gap-4">
           <button 
             onClick={() => handleAction('Referral')}
-            className={`bg-zinc-900/50 border border-zinc-800/50 rounded-[32px] p-6 flex flex-col items-start gap-4 active:scale-[0.98] transition-all ${!user && 'opacity-50'}`}
+            className={`bg-zinc-900/50 border border-zinc-800/50 rounded-[32px] p-6 flex flex-col items-start gap-4 active:scale-[0.98] transition-all ${!user?.phone && 'opacity-50'}`}
           >
             <div className="w-12 h-12 rounded-2xl bg-zinc-800 flex items-center justify-center">
               <Share2 className="w-6 h-6 text-[#ccff00]" />
@@ -1040,20 +1033,8 @@ export const Profile: React.FC = () => {
             </div>
           </button>
           <button 
-            onClick={() => handleAction('Leaderboard')}
-            className="bg-zinc-900/50 border border-zinc-800/50 rounded-[32px] p-6 flex flex-col items-start gap-4 active:scale-[0.98] transition-all"
-          >
-            <div className="w-12 h-12 rounded-2xl bg-zinc-800 flex items-center justify-center">
-              <Trophy className="w-6 h-6 text-amber-400" />
-            </div>
-            <div className="text-left">
-              <p className="text-lg font-black text-white">Leaderboard</p>
-              <p className="text-[10px] font-bold text-zinc-500 leading-relaxed">See where you rank globally</p>
-            </div>
-          </button>
-          <button 
             onClick={() => handleAction('Support')}
-            className="bg-zinc-900/50 border border-zinc-800/50 rounded-[32px] p-6 flex flex-col items-start gap-4 active:scale-[0.98] transition-all col-span-2"
+            className="bg-zinc-900/50 border border-zinc-800/50 rounded-[32px] p-6 flex flex-col items-start gap-4 active:scale-[0.98] transition-all"
           >
             <div className="w-12 h-12 rounded-2xl bg-zinc-800 flex items-center justify-center">
               <Headset className="w-6 h-6 text-zinc-400" />
