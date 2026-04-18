@@ -415,6 +415,28 @@ class MultiAgentService {
       return data;
     }, {
       maxRetries: 2
+    }).catch((error) => {
+      console.error("Bet slip analysis failed:", error);
+      throw error;
+    });
+  }
+
+  async getMatchAnalysis(matchId: string) {
+    return executeWithRetry(async (apiKey, keyIndex) => {
+      const ai = new GoogleGenAI({ apiKey });
+      const prompt = `Analyze match ${matchId} and provide prediction`;
+      
+      const result = await ai.models.generateContent({
+        model: "gemini-2.5-flash",
+        contents: [{ role: "user", parts: [{ text: prompt }] }]
+      });
+
+      return result.text;
+    }, {
+      maxRetries: 2
+    }).catch((error) => {
+      console.error("Match analysis failed:", error);
+      throw error;
     });
   }
 }
