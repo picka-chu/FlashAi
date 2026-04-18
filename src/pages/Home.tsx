@@ -140,7 +140,7 @@ export const Home: React.FC<HomeProps> = ({ onTabChange }) => {
         const [upcoming, trending, adsRes, activitiesRes] = await Promise.all([
           getUpcomingMatches(),
           getTrendingPicks(),
-          fetch('/api/common/ads').then(r => r.json()),
+          fetch('/api/common/ads', { headers: { 'X-TG-Init-Data': tg?.initData || '' } }).then(r => r.json()),
           fetch('/api/user/activities', { headers: { 'X-TG-Init-Data': tg?.initData || '' } }).then(r => r.ok ? r.json() : [])
         ]);
         

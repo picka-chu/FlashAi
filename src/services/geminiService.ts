@@ -22,6 +22,27 @@ function getPredictionKeys() {
   return predictionKeys;
 }
 
+const PREDICTION_MODELS = [
+  "gemini-2.5-pro",
+  "gemini-2.5-flash",
+  "gemini-2.0-flash",
+  "gemini-2.0-flash-lite",
+];
+
+function isRetryableGeminiError(error: any) {
+  const msg = String(error?.message || "").toLowerCase();
+  return Boolean(
+    error?.status === 429 ||
+    error?.status === 500 ||
+    error?.status === 503 ||
+    msg.includes("resource_exhausted") ||
+    msg.includes("quota") ||
+    msg.includes("rate") ||
+    msg.includes("unavailable") ||
+    msg.includes("overloaded")
+  );
+}
+
 export async function analyzeMatchWithSearch(matchString: string): Promise<PredictionResult> {
   const keys = getPredictionKeys();
   const candidateKeys = keys.length > 0 ? keys : [process.env.GEMINI_API_KEY || ""];
@@ -55,7 +76,8 @@ export async function analyzeMatchWithSearch(matchString: string): Promise<Predi
     }
   `;
 
-  const models = ["gemini-2.5-pro", "gemini-2.5-flash", "gemini-2.0-flash"];
+  const models = PREDICTION_MODELS;
+  const errors: string[] = [];
 
   for (const model of models) {
     for (const key of candidateKeys) {
@@ -87,16 +109,17 @@ export async function analyzeMatchWithSearch(matchString: string): Promise<Predi
         };
       } catch (error: any) {
         const msg = String(error?.message || "");
-        const isQuota = error?.status === 429 || msg.includes("RESOURCE_EXHAUSTED") || msg.includes("quota");
-        if (!isQuota) {
-          console.error(`analyzeMatchWithSearch error (${model}):`, error);
-          throw error;
+        if (isRetryableGeminiError(error)) {
+          errors.push(`${model}: ${msg || `status ${error?.status || 'unknown'}`}`);
+          continue;
         }
+        console.error(`analyzeMatchWithSearch fatal error (${model}):`, error);
+        throw error;
       }
     }
   }
 
-  throw new Error("All Gemini prediction keys/models are temporarily rate-limited. Please retry shortly.");
+  throw new Error(`All prediction keys/models failed. ${errors.slice(0, 3).join(" | ") || "Retry shortly."}`);
 }
 
 export async function fetchContextData(matchName: string): Promise<ContextData> {

@@ -35,19 +35,11 @@ const INITIAL_FAQS: FAQ[] = [
   },
 ];
 
-function getAiClient() {
-  const key =
-    process.env.GEMINI_SUPPORT_KEY ||
-    process.env.GEMINI_AGENT_KEY_2 ||
-    process.env.GEMINI_API_KEY_5 ||
-    process.env.GEMINI_API_KEY ||
-    process.env.GEMINI_API_KEY_1 ||
-    '';
-  if (!key) {
-    throw new Error('Support AI is not configured');
-  }
-
-  return new GoogleGenAI({ apiKey: key });
+function getSupportKeys() {
+  return [
+    process.env.GEMINI_SUPPORT_KEY_1 || process.env.GEMINI_SUPPORT_KEY || process.env.GEMINI_AGENT_KEY_1 || process.env.GEMINI_API_KEY_4,
+    process.env.GEMINI_SUPPORT_KEY_2 || process.env.GEMINI_AGENT_KEY_2 || process.env.GEMINI_API_KEY_5,
+  ].filter(Boolean) as string[];
 }
 
 export async function generateSupportReply(
@@ -56,7 +48,8 @@ export async function generateSupportReply(
   faqs: FAQ[] = INITIAL_FAQS,
 ) {
   const faqContext = faqs.map((f) => `Q: ${f.question}\nA: ${f.answer}`).join('\n\n');
-  const ai = getAiClient();
+  const keys = getSupportKeys();
+  if (keys.length === 0) throw new Error('Support AI is not configured');
 
   const systemInstruction = `
 You are the Flash AI Support Agent for a Telegram mini app.
@@ -67,19 +60,33 @@ FAQ:
 ${faqContext}
 `;
 
-  const response = await ai.models.generateContent({
-    model: 'gemini-2.5-flash',
-    contents: [
-      ...history.map((h) => ({ role: h.role, parts: [{ text: h.parts }] })),
-      { role: 'user', parts: [{ text: message }] },
-    ],
-    config: {
-      systemInstruction,
-      temperature: 0.5,
-    },
-  });
+  const models = ['gemini-2.5-flash', 'gemini-2.0-flash', 'gemini-2.0-flash-lite'];
+  let lastError: any = null;
 
-  return response.text || 'Sorry, I could not generate a response right now.';
+  for (const model of models) {
+    for (const key of keys) {
+      try {
+        const ai = new GoogleGenAI({ apiKey: key });
+        const response = await ai.models.generateContent({
+          model,
+          contents: [
+            ...history.map((h) => ({ role: h.role, parts: [{ text: h.parts }] })),
+            { role: 'user', parts: [{ text: message }] },
+          ],
+          config: {
+            systemInstruction,
+            temperature: 0.5,
+          },
+        });
+        if (response.text) return response.text;
+      } catch (error: any) {
+        lastError = error;
+      }
+    }
+  }
+
+  console.error('Support AI fallback exhausted:', lastError?.message || lastError);
+  return 'Sorry, I could not generate a response right now.';
 }
 
 export function getDefaultFaqs() {
