@@ -7,6 +7,8 @@ const keys = [
 ].filter(Boolean) as string[];
 
 const AGENT_MODELS = ["gemini-2.5-flash", "gemini-2.0-flash", "gemini-2.0-flash-lite"];
+const SEARCH_MODELS = ["gemini-2.5-flash", "gemini-2.0-flash", "gemini-2.0-flash-lite"];
+const VISION_MODELS = ["gemini-2.5-flash", "gemini-2.0-flash"];
 
 // Fallback to default if no numbered keys are provided
 if (keys.length === 0 && process.env.GEMINI_API_KEY) {
@@ -44,24 +46,46 @@ class MultiAgentService {
     const models = AGENT_MODELS;
     let lastError: any = null;
 
-    for (let i = 0; i < models.length; i++) {
-      const ai = this.getNextInstance();
-      try {
-        const result = await ai.models.generateContent({
-          model: models[i],
-          contents: [{ role: "user", parts: [{ text: prompt }] }],
-          config: {
-            ...(opts?.allowSearch ? { tools: [{ googleSearch: {} }] as any } : {}),
-            ...(opts?.json ? { responseMimeType: "application/json" } : {}),
-          },
-        });
-        return result;
-      } catch (error: any) {
-        lastError = error;
+    for (const model of models) {
+      const attempts = this.instances.length;
+      for (let attempt = 0; attempt < attempts; attempt++) {
+        const ai = this.getNextInstance();
+        try {
+          const result = await ai.models.generateContent({
+            model,
+            contents: [{ role: "user", parts: [{ text: prompt }] }],
+            config: {
+              ...(opts?.allowSearch ? { tools: [{ googleSearch: {} }] as any } : {}),
+              ...(opts?.json ? { responseMimeType: "application/json" } : {}),
+            },
+          });
+          return result;
+        } catch (error: any) {
+          lastError = error;
+          if (this.isQuotaOrTransientError(error)) {
+            console.warn(`[Gemini fallback] ${model} failed (attempt ${attempt + 1}/${attempts}), trying next key/model.`);
+            continue;
+          }
+          // Non-retryable error for this attempt, still continue to other models/keys.
+          console.warn(`[Gemini fallback] non-retryable error on ${model}, trying remaining fallbacks.`);
+        }
       }
     }
 
     throw lastError || new Error("All agent models failed");
+  }
+
+  private isQuotaOrTransientError(error: any) {
+    const message = String(error?.message || "");
+    const status = Number(error?.status || 0);
+    return (
+      status === 429 ||
+      status === 503 ||
+      message.includes("RESOURCE_EXHAUSTED") ||
+      message.includes("quota") ||
+      message.includes("rate limit") ||
+      message.includes("UNAVAILABLE")
+    );
   }
 
   /**
@@ -368,7 +392,6 @@ class MultiAgentService {
     const cached = this.getCache(cacheKey);
     if (cached) return cached;
 
-    const ai = this.getNextInstance();
     const prompt = `
       Find today's (${today}) most featured and top football matches/fixtures globally.
       Focus on major leagues like Champions League, Premier League, La Liga, etc.
@@ -377,13 +400,32 @@ class MultiAgentService {
     `;
 
     try {
-      const result = await ai.models.generateContent({
-        model: "gemini-2.5-flash",
-        contents: [{ role: "user", parts: [{ text: prompt }] }],
-        config: { 
-          tools: [{ googleSearch: {} }] as any
+      let result: any = null;
+      let lastError: any = null;
+      for (const model of SEARCH_MODELS) {
+        const attempts = this.instances.length;
+        for (let attempt = 0; attempt < attempts; attempt++) {
+          const ai = this.getNextInstance();
+          try {
+            result = await ai.models.generateContent({
+              model,
+              contents: [{ role: "user", parts: [{ text: prompt }] }],
+              config: {
+                tools: [{ googleSearch: {} }] as any
+              }
+            });
+            break;
+          } catch (error: any) {
+            lastError = error;
+            if (this.isQuotaOrTransientError(error)) {
+              console.warn(`[Gemini fixtures fallback] ${model} failed (attempt ${attempt + 1}/${attempts}), trying next key/model.`);
+              continue;
+            }
+          }
         }
-      });
+        if (result) break;
+      }
+      if (!result) throw lastError || new Error("All search fallback models failed");
 
       const text = result.text;
       if (!text) return [];
@@ -424,7 +466,6 @@ class MultiAgentService {
   }
 
   async analyzeBetSlip(images: string[]) {
-    const ai = this.getNextInstance();
     const prompt = `
       You are an expert sports betting analyst. 
       Analyze the provided bet slip image(s). 
@@ -478,19 +519,38 @@ class MultiAgentService {
         };
       });
 
-      const result = await ai.models.generateContent({
-        model: "gemini-2.5-flash",
-        contents: [{ 
-          role: "user", 
-          parts: [
-            { text: prompt },
-            ...imageParts as any
-          ] 
-        }],
-        config: { 
-          responseMimeType: "application/json"
+      let result: any = null;
+      let lastError: any = null;
+      for (const model of VISION_MODELS) {
+        const attempts = this.instances.length;
+        for (let attempt = 0; attempt < attempts; attempt++) {
+          const ai = this.getNextInstance();
+          try {
+            result = await ai.models.generateContent({
+              model,
+              contents: [{
+                role: "user",
+                parts: [
+                  { text: prompt },
+                  ...imageParts as any
+                ]
+              }],
+              config: {
+                responseMimeType: "application/json"
+              }
+            });
+            break;
+          } catch (error: any) {
+            lastError = error;
+            if (this.isQuotaOrTransientError(error)) {
+              console.warn(`[Gemini betslip fallback] ${model} failed (attempt ${attempt + 1}/${attempts}), trying next key/model.`);
+              continue;
+            }
+          }
         }
-      });
+        if (result) break;
+      }
+      if (!result) throw lastError || new Error("All betslip fallback models failed");
 
       const text = result.text;
       if (!text) throw new Error("Empty response");
