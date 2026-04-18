@@ -196,6 +196,19 @@ async function setUserHistory(telegramId: number, history: UserHistoryItem[]) {
   }, { onConflict: "endpoint" });
 }
 
+async function getCachedRegistration(telegramId: number): Promise<{ phone?: string; name?: string } | null> {
+  try {
+    const { data } = await supabase
+      .from("api_cache")
+      .select("data")
+      .eq("endpoint", `registration_${telegramId}`)
+      .maybeSingle();
+    return data?.data || null;
+  } catch {
+    return null;
+  }
+}
+
 function normalizeMarket(market: string) {
   return (market || "").toLowerCase().trim();
 }
@@ -465,7 +478,8 @@ async function startServer() {
         .single();
 
       if (userError || !user) return c.json({ error: "User profile not found" }, 404);
-      if (!user.phone) {
+      const registration = user.phone ? null : await getCachedRegistration(telegramId);
+      if (!user.phone && !registration?.phone) {
         return c.json({ error: "Complete signup first by sharing your contact." }, 403);
       }
 
@@ -567,7 +581,8 @@ async function startServer() {
         .single();
 
       if (userError || !user) return c.json({ error: "User not found" }, 404);
-      if (!user.phone) {
+      const registration = user.phone ? null : await getCachedRegistration(telegramId);
+      if (!user.phone && !registration?.phone) {
         return c.json({ error: "Complete signup first by sharing your contact." }, 403);
       }
 
@@ -812,6 +827,22 @@ async function startServer() {
 
         if (error) {
           console.error("Registration error:", error);
+          if (error.code === "42703" && String(error.message || "").includes("updated_at")) {
+            await supabase.from("api_cache").upsert({
+              endpoint: `registration_${telegramId}`,
+              data: {
+                telegram_id: telegramId,
+                name: fullName,
+                username: ctx.from.username || "",
+                phone,
+                registered_at: new Date().toISOString(),
+              },
+              updated_at: new Date().toISOString(),
+            }, { onConflict: "endpoint" });
+
+            await ctx.reply("✅ Registration received. Your account is now active.");
+            return;
+          }
           return ctx.reply("❌ Registration failed. Please try again later.");
         }
 
@@ -962,9 +993,12 @@ async function startServer() {
         .single();
       if (userError || !user) return c.json({ error: "User profile not found" }, 404);
 
+      const registration = !user.phone ? await getCachedRegistration(tgUser.id) : null;
+
       return c.json({
         user: {
           ...user,
+          phone: user.phone || registration?.phone || null,
           role: isBootstrapAdmin ? "admin" : (user.role || "user")
         }
       });
@@ -1436,13 +1470,16 @@ async function startServer() {
 
     await setCachedCollection(ADMIN_TASKS_KEY, [task, ...tasks]);
     try {
-      await supabase.from("tasks").insert({
+      const { error: dbError } = await supabase.from("tasks").insert({
         title: task.title,
         description: task.description,
         reward: task.reward,
         url: task.url,
         active: task.active,
       });
+      if (dbError) {
+        console.error("DB insert failed for tasks:", dbError);
+      }
     } catch {}
     return c.json(task);
   });
@@ -1491,18 +1528,19 @@ async function startServer() {
     if (!ad.title || !ad.subtitle) return c.json({ error: "Ad title and subtitle are required" }, 400);
     await setCachedCollection(ADMIN_ADS_KEY, [ad, ...ads]);
     try {
-      await supabase.from("ads").insert({
+      const { error: dbError } = await supabase.from("ads").insert({
         title: ad.title,
         subtitle: ad.subtitle,
-        image_url: ad.image_url || "",
+        image_url: ad.image_url || "https://placehold.co/1200x630/png",
         link: ad.link,
         active: ad.active,
-        cta: ad.cta,
-        expires_at: ad.expires_at,
-        primary_color: ad.primary_color,
-        target_group: ad.target_group,
       });
-    } catch {}
+      if (dbError) {
+        console.error("DB insert failed for ads:", dbError);
+      }
+    } catch (e) {
+      console.error("DB insert failed for ads:", e);
+    }
     return c.json(ad);
   });
 

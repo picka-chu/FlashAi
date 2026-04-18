@@ -75,6 +75,7 @@ class MultiAgentService {
   }
 
   private getCache(key: string) {
+    if (typeof localStorage === 'undefined') return null;
     try {
       const cached = localStorage.getItem(`flash_ai_${key}`);
       if (cached) {
@@ -90,6 +91,7 @@ class MultiAgentService {
   }
 
   private setCache(key: string, data: any) {
+    if (typeof localStorage === 'undefined') return;
     try {
       localStorage.setItem(`flash_ai_${key}`, JSON.stringify({
         data,
