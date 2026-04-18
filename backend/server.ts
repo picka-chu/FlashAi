@@ -159,6 +159,97 @@ function getTelegramUserFromInitData(initData: string): any {
   }
 }
 
+type HistoryStatus = "pending" | "won" | "lost";
+
+type UserHistoryItem = {
+  id: string;
+  fixtureId: string | null;
+  match: string;
+  home: string;
+  away: string;
+  predictionMarket: string;
+  confidence: number;
+  reasoning: string;
+  status: HistoryStatus;
+  created_at: string;
+  resolved_at?: string | null;
+};
+
+async function getUserHistory(telegramId: number): Promise<UserHistoryItem[]> {
+  const cacheKey = `user_history_${telegramId}`;
+  const { data } = await supabase
+    .from("api_cache")
+    .select("data")
+    .eq("endpoint", cacheKey)
+    .single();
+
+  const raw = data?.data;
+  return Array.isArray(raw) ? raw : [];
+}
+
+async function setUserHistory(telegramId: number, history: UserHistoryItem[]) {
+  const cacheKey = `user_history_${telegramId}`;
+  await supabase.from("api_cache").upsert({
+    endpoint: cacheKey,
+    data: history.slice(0, 100),
+    updated_at: new Date().toISOString(),
+  }, { onConflict: "endpoint" });
+}
+
+function normalizeMarket(market: string) {
+  return (market || "").toLowerCase().trim();
+}
+
+function evaluatePredictionMarket(market: string, homeGoals: number, awayGoals: number): HistoryStatus {
+  const mk = normalizeMarket(market);
+  const total = homeGoals + awayGoals;
+
+  if (!mk) return "pending";
+  if (mk.includes("home") && mk.includes("win")) return homeGoals > awayGoals ? "won" : "lost";
+  if (mk.includes("away") && mk.includes("win")) return awayGoals > homeGoals ? "won" : "lost";
+  if (mk.includes("draw")) return homeGoals === awayGoals ? "won" : "lost";
+  if (mk.includes("over 2.5") || mk.includes("over2.5")) return total > 2.5 ? "won" : "lost";
+  if (mk.includes("under 2.5") || mk.includes("under2.5")) return total < 2.5 ? "won" : "lost";
+  if (mk.includes("btts") && (mk.includes("yes") || mk.includes("- yes"))) return homeGoals > 0 && awayGoals > 0 ? "won" : "lost";
+  if (mk.includes("btts") && (mk.includes("no") || mk.includes("- no"))) return homeGoals === 0 || awayGoals === 0 ? "won" : "lost";
+  if (mk.includes("1x")) return homeGoals >= awayGoals ? "won" : "lost";
+  if (mk.includes("x2")) return awayGoals >= homeGoals ? "won" : "lost";
+  if (mk.includes("12")) return homeGoals !== awayGoals ? "won" : "lost";
+
+  return "pending";
+}
+
+async function resolveHistoryItemResult(item: UserHistoryItem): Promise<UserHistoryItem> {
+  if (!item.fixtureId || item.status !== "pending" || !item.fixtureId.startsWith("espn_")) {
+    return item;
+  }
+
+  try {
+    const parts = item.fixtureId.split("_");
+    const eventId = parts[1];
+    const leagueSlug = parts[2] || "eng.1";
+    const summaryUrl = `https://site.api.espn.com/apis/site/v2/sports/soccer/${leagueSlug}/summary?event=${eventId}`;
+    const summary = await axios.get(summaryUrl);
+
+    const competition = summary.data?.header?.competitions?.[0];
+    const state = competition?.status?.type?.state;
+    const isFinished = state === "post";
+    if (!isFinished) return item;
+
+    const competitors = competition?.competitors || [];
+    const home = competitors.find((c: any) => c.homeAway === "home");
+    const away = competitors.find((c: any) => c.homeAway === "away");
+    const homeGoals = Number(home?.score ?? 0);
+    const awayGoals = Number(away?.score ?? 0);
+    const result = evaluatePredictionMarket(item.predictionMarket, homeGoals, awayGoals);
+
+    if (result === "pending") return item;
+    return { ...item, status: result, resolved_at: new Date().toISOString() };
+  } catch {
+    return item;
+  }
+}
+
 async function startServer() {
   const app = new Hono();
   const PORT = Number(process.env.PORT || 3000);
@@ -183,6 +274,37 @@ async function startServer() {
     current.count += 1;
     requestBuckets.set(identifier, current);
     return current.count > RATE_LIMIT_MAX;
+  };
+
+  const ADMIN_TASKS_KEY = "admin_tasks_v1";
+  const ADMIN_ADS_KEY = "admin_ads_v1";
+
+  const getCachedCollection = async <T = any>(key: string): Promise<T[]> => {
+    try {
+      const { data } = await supabase.from("api_cache").select("data").eq("endpoint", key).maybeSingle();
+      const raw = data?.data;
+      return Array.isArray(raw) ? raw : [];
+    } catch {
+      return [];
+    }
+  };
+
+  const setCachedCollection = async (key: string, list: any[]) => {
+    try {
+      await supabase.from("api_cache").upsert({
+        endpoint: key,
+        data: list,
+        updated_at: new Date().toISOString(),
+      }, { onConflict: "endpoint" });
+    } catch (e) {
+      console.error(`Failed to cache collection ${key}:`, e);
+    }
+  };
+
+  const normalizeAudience = (value: string) => {
+    const v = String(value || "all").toLowerCase();
+    if (["all", "subscribed", "unsubscribed", "weekly", "monthly", "admin"].includes(v)) return v;
+    return "all";
   };
 
   // Usage Logging Middleware
@@ -278,20 +400,24 @@ async function startServer() {
    */
   async function syncUserCredits(userData: any) {
     const now = new Date();
-    const lastActive = userData.last_active ? new Date(userData.last_active) : null;
-    const isNewDay = !lastActive || lastActive.toDateString() !== now.toDateString();
+    const refreshKey = `credit_refresh_${userData.telegram_id}`;
+    const { data: refreshCache } = await supabase
+      .from("api_cache")
+      .select("data")
+      .eq("endpoint", refreshKey)
+      .maybeSingle();
 
-    let currentCredits = userData.credits || 0;
+    const lastRefreshIso = refreshCache?.data?.lastRefillAt || null;
+    const lastRefreshTs = lastRefreshIso ? new Date(lastRefreshIso).getTime() : 0;
+    const shouldRefill = !lastRefreshTs || (Date.now() - lastRefreshTs) >= 24 * 60 * 60 * 1000;
+
+    let currentCredits = Number(userData.credits || 0);
     const plan = userData.plan || "free";
     const config = PLAN_CONFIG[plan] || PLAN_CONFIG.free;
 
-    if (isNewDay) {
-      // Professional refill: If user has less than daily quota, refill to quota. 
-      // If they have more (e.g. from bonus), we don't downgrade them, just keep current.
-      if (currentCredits < config.dailyCredits) {
-        currentCredits = config.dailyCredits;
-      }
-      
+    if (shouldRefill) {
+      currentCredits = Math.max(currentCredits, config.dailyCredits);
+
       await supabase
         .from("users")
         .update({ 
@@ -299,6 +425,12 @@ async function startServer() {
           last_active: now.toISOString() 
         })
         .eq("telegram_id", userData.telegram_id);
+
+      await supabase.from("api_cache").upsert({
+        endpoint: refreshKey,
+        data: { lastRefillAt: now.toISOString(), plan, dailyCredits: config.dailyCredits },
+        updated_at: now.toISOString(),
+      }, { onConflict: "endpoint" });
     }
     
     return currentCredits;
@@ -333,6 +465,9 @@ async function startServer() {
         .single();
 
       if (userError || !user) return c.json({ error: "User profile not found" }, 404);
+      if (!user.phone) {
+        return c.json({ error: "Complete signup first by sharing your contact." }, 403);
+      }
 
       // Professionally ensure daily credits are refilled if it's a new day
       const credits = await syncUserCredits(user);
@@ -351,6 +486,28 @@ async function startServer() {
       // 2. Perform Analysis
       const { analyzeMatchWithSearch } = await import("../src/services/geminiService.js");
       const result = await analyzeMatchWithSearch(matchString);
+
+      const topPrediction = result?.predictions?.[0];
+      const [home = "Home", away = "Away"] = String(matchString).split("vs").map((p: string) => p.trim());
+      const newHistoryItem: UserHistoryItem = {
+        id: crypto.randomUUID(),
+        fixtureId: String(matchId || "").startsWith("espn_") ? String(matchId) : null,
+        match: matchString,
+        home,
+        away,
+        predictionMarket: topPrediction?.market || "Unknown Market",
+        confidence: Number(topPrediction?.confidence || 0),
+        reasoning: topPrediction?.reasoning || result?.overallReasoning || "",
+        status: "pending",
+        created_at: new Date().toISOString(),
+      };
+
+      try {
+        const history = await getUserHistory(telegramId);
+        await setUserHistory(telegramId, [newHistoryItem, ...history]);
+      } catch (historyError) {
+        console.error("Failed to persist analysis history:", historyError);
+      }
 
       // 3. Deduct Credits
       const { error: updateError } = await supabase
@@ -410,6 +567,9 @@ async function startServer() {
         .single();
 
       if (userError || !user) return c.json({ error: "User not found" }, 404);
+      if (!user.phone) {
+        return c.json({ error: "Complete signup first by sharing your contact." }, 403);
+      }
 
       const credits = await syncUserCredits(user);
 
@@ -557,7 +717,7 @@ async function startServer() {
   });
 
   const botToken = process.env.TELEGRAM_BOT_TOKEN;
-  const botUsername = process.env.TELEGRAM_BOT_USERNAME || "flash_ai_bot";
+  const botUsername = process.env.TELEGRAM_BOT_USERNAME || "Deepflashaibot";
   const appUrl = process.env.APP_URL || `http://localhost:${PORT}`;
   const isPlaceholderToken = !botToken || botToken === "YOUR_TELEGRAM_BOT_TOKEN" || botToken.trim() === "";
 
@@ -632,7 +792,7 @@ async function startServer() {
 
         const isNewRegistration = !existingUser?.phone;
         const signupCredits = isNewRegistration
-          ? (existingUser?.referrer_id ? 7 : 5)
+          ? (existingUser?.referrer_id ? 5 : 3)
           : (existingUser?.credits || 0);
 
         // 2. Perform registration/update
@@ -680,8 +840,8 @@ async function startServer() {
         }
 
         const rewardText = isNewRegistration && existingUser?.referrer_id
-          ? "7 credits (5 signup + 2 referral bonus)"
-          : "5 free credits";
+          ? "5 credits (3 signup + 2 referral bonus)"
+          : "3 free credits";
         ctx.reply(`✅ Registration successful, ${firstName}!\n\nYou've been rewarded with ${rewardText}. Welcome to the elite squad! ⚽🔥`, {
           reply_markup: {
             remove_keyboard: true
@@ -783,7 +943,7 @@ async function startServer() {
           username: tgUser.username || "",
           role: isBootstrapAdmin ? "admin" : "user",
           plan: isBootstrapAdmin ? "admin" : "free",
-          credits: isBootstrapAdmin ? 999 : 0,
+          credits: isBootstrapAdmin ? 999 : 3,
           last_active: new Date().toISOString(),
         });
         if (insertError) throw insertError;
@@ -883,16 +1043,15 @@ async function startServer() {
       const tgUser = initData ? getTelegramUserFromInitData(initData) : null;
       if (!tgUser?.id) return c.json({ error: "User not identified" }, 401);
 
-      const { data: logs, error } = await supabase
-        .from("usage_logs")
-        .select("id, endpoint, method, status, created_at")
-        .eq("telegram_id", tgUser.id)
-        .in("endpoint", ["/api/analyze", "/api/analyze-betslip", "/api/tasks/claim"])
-        .order("created_at", { ascending: false })
-        .limit(100);
-      if (error) throw error;
+      const history = await getUserHistory(tgUser.id);
+      const resolved = await Promise.all(history.map((item) => resolveHistoryItemResult(item)));
 
-      return c.json(logs || []);
+      const hasChanges = resolved.some((item, index) => item.status !== history[index]?.status || item.resolved_at !== history[index]?.resolved_at);
+      if (hasChanges) {
+        await setUserHistory(tgUser.id, resolved);
+      }
+
+      return c.json(resolved);
     } catch (e: any) {
       console.error("History API error:", e?.message || e);
       return c.json([], 500);
@@ -927,6 +1086,36 @@ async function startServer() {
     } catch (e: any) {
       console.error("Referral API error:", e?.message || e);
       return c.json({ totalReferred: 0, earnedCredits: 0, referralLink: `https://t.me/${botUsername}` }, 500);
+    }
+  });
+
+  app.put("/api/user/profile", async (c) => {
+    const initData = c.req.header("X-TG-Init-Data");
+    if (!isPlaceholderToken && botToken && (!initData || !validateTelegramInitData(initData, botToken))) {
+      return c.json({ error: "Invalid Telegram authentication" }, 401);
+    }
+
+    try {
+      const tgUser = initData ? getTelegramUserFromInitData(initData) : null;
+      if (!tgUser?.id) return c.json({ error: "User not identified" }, 401);
+
+      const body = await c.req.json().catch(() => ({} as any));
+      const name = String(body?.name || "").trim();
+      const username = String(body?.username || "").trim();
+      if (!name) return c.json({ error: "Name is required" }, 400);
+
+      const { data, error } = await supabase
+        .from("users")
+        .update({ name, username })
+        .eq("telegram_id", tgUser.id)
+        .select("id,telegram_id,name,username,phone,credits,plan,role,photo_url")
+        .single();
+
+      if (error) throw error;
+      return c.json({ user: data });
+    } catch (e: any) {
+      console.error("Profile update error:", e?.message || e);
+      return c.json({ error: "Failed to update profile" }, 500);
     }
   });
 
@@ -1218,34 +1407,101 @@ async function startServer() {
 
   // Task Management
   app.get("/api/admin/tasks", adminOnly, async (c) => {
-    const { data: tasks } = await supabase.from("tasks").select("*").order("created_at", { ascending: false });
-    return c.json(tasks || []);
+    let tasks = await getCachedCollection<any>(ADMIN_TASKS_KEY);
+    if (!tasks.length) {
+      const { data } = await supabase.from("tasks").select("*").order("created_at", { ascending: false }).limit(200);
+      tasks = data || [];
+    }
+    tasks.sort((a, b) => new Date(b.created_at || 0).getTime() - new Date(a.created_at || 0).getTime());
+    return c.json(tasks);
   });
 
   app.post("/api/admin/tasks", adminOnly, async (c) => {
     const body = await c.req.json();
-    const { data, error } = await supabase.from("tasks").insert([body]).select().single();
-    if (error) return c.json({ error: error.message }, 400);
-    return c.json(data);
+    const tasks = await getCachedCollection<any>(ADMIN_TASKS_KEY);
+
+    const task = {
+      id: crypto.randomUUID(),
+      title: String(body.title || "").trim(),
+      description: String(body.description || "").trim(),
+      reward: Number(body.reward || 10),
+      url: String(body.url || "").trim(),
+      buttonLabel: String(body.buttonLabel || "Claim").trim(),
+      image_url: String(body.image_url || "").trim(),
+      active: body.active !== false,
+      created_at: new Date().toISOString(),
+    };
+
+    if (!task.title || !task.description) return c.json({ error: "Title and description are required" }, 400);
+
+    await setCachedCollection(ADMIN_TASKS_KEY, [task, ...tasks]);
+    try {
+      await supabase.from("tasks").insert({
+        title: task.title,
+        description: task.description,
+        reward: task.reward,
+        url: task.url,
+        active: task.active,
+      });
+    } catch {}
+    return c.json(task);
   });
 
   app.delete("/api/admin/tasks/:id", adminOnly, async (c) => {
     const id = c.req.param("id");
-    await supabase.from("tasks").delete().eq("id", id);
+    const tasks = await getCachedCollection<any>(ADMIN_TASKS_KEY);
+    await setCachedCollection(ADMIN_TASKS_KEY, tasks.filter((t) => t.id !== id));
+    try {
+      await supabase.from("tasks").delete().eq("id", id);
+    } catch {}
     return c.json({ success: true });
   });
 
   // Ad Management
   app.get("/api/admin/ads", adminOnly, async (c) => {
-    const { data: ads } = await supabase.from("ads").select("*").order("created_at", { ascending: false });
-    return c.json(ads || []);
+    let ads = await getCachedCollection<any>(ADMIN_ADS_KEY);
+    if (!ads.length) {
+      const { data } = await supabase.from("ads").select("*").order("created_at", { ascending: false }).limit(200);
+      ads = data || [];
+    }
+    ads.sort((a, b) => new Date(b.created_at || 0).getTime() - new Date(a.created_at || 0).getTime());
+    return c.json(ads);
   });
 
   app.post("/api/admin/ads", adminOnly, async (c) => {
     const body = await c.req.json();
-    const { data, error } = await supabase.from("ads").insert([body]).select().single();
-    if (error) return c.json({ error: error.message }, 400);
-    return c.json(data);
+    const ads = await getCachedCollection<any>(ADMIN_ADS_KEY);
+
+    const ad = {
+      id: crypto.randomUUID(),
+      title: String(body.title || "").trim(),
+      subtitle: String(body.subtitle || "").trim(),
+      image_url: String(body.image_url || "").trim(),
+      link: String(body.link || "").trim(),
+      cta: String(body.cta || "Check Out").trim(),
+      active: body.active !== false,
+      target_group: normalizeAudience(body.target_group || body.target_plan || "all"),
+      expires_at: body.expires_at ? new Date(body.expires_at).toISOString() : null,
+      primary_color: String(body.primary_color || "#3b82f6"),
+      created_at: new Date().toISOString(),
+      views: 0,
+      clicks: 0,
+    };
+
+    if (!ad.title || !ad.subtitle) return c.json({ error: "Ad title and subtitle are required" }, 400);
+    await setCachedCollection(ADMIN_ADS_KEY, [ad, ...ads]);
+    try {
+      await supabase.from("ads").insert({
+        title: ad.title,
+        subtitle: ad.subtitle,
+        image_url: ad.image_url || "https://placehold.co/1200x630/png",
+        link: ad.link,
+        active: ad.active,
+      });
+    } catch (e) {
+      console.error("DB insert failed for ads:", e);
+    }
+    return c.json(ad);
   });
 
   app.post("/api/admin/ads/broadcast", adminOnly, async (c) => {
@@ -1253,46 +1509,34 @@ async function startServer() {
     if (!adId || !targetGroup) return c.json({ error: "Missing parameters" }, 400);
 
     try {
-      const { data: ad } = await supabase.from("ads").select("*").eq("id", adId).single();
+      const ads = await getCachedCollection<any>(ADMIN_ADS_KEY);
+      const ad = ads.find((a) => a.id === adId);
       if (!ad) return c.json({ error: "Ad not found" }, 404);
 
       let query = supabase.from("users").select("telegram_id");
-      
       if (targetGroup === 'subscribed') query = query.neq('plan', 'free');
       if (targetGroup === 'unsubscribed') query = query.eq('plan', 'free');
       if (targetGroup === 'weekly') query = query.eq('plan', 'weekly');
       if (targetGroup === 'monthly') query = query.eq('plan', 'monthly');
 
-      const { data: users } = await query;
-      
+      const { data: users } = await query.not("telegram_id", "is", null);
       if (!users || !bot) return c.json({ success: true, sentCount: 0 });
 
       let count = 0;
       for (const user of users) {
         try {
-          const message = `*${ad.title}*\n\n${ad.subtitle}`;
-          const keyboard = ad.link ? Markup.inlineKeyboard([
-            [Markup.button.url(ad.cta || "Check it Out", ad.link)]
-          ]) : undefined;
-          
+          const message = `*${ad.title}*
+
+${ad.subtitle}`;
+          const keyboard = ad.link ? Markup.inlineKeyboard([[Markup.button.url(ad.cta || "Check it Out", ad.link)]]) : undefined;
           if (ad.image_url) {
-            await bot.telegram.sendPhoto(user.telegram_id, ad.image_url, {
-              caption: message,
-              parse_mode: 'Markdown',
-              ...keyboard
-            });
+            await bot.telegram.sendPhoto(user.telegram_id, ad.image_url, { caption: message, parse_mode: 'Markdown', ...keyboard });
           } else {
-            await bot.telegram.sendMessage(user.telegram_id, message, {
-              parse_mode: 'Markdown',
-              ...keyboard
-            });
+            await bot.telegram.sendMessage(user.telegram_id, message, { parse_mode: 'Markdown', ...keyboard });
           }
           count++;
-          // Rate limiting protection
           if (count % 20 === 0) await new Promise(r => setTimeout(r, 1000));
-        } catch (err) {
-          // Skip users who blocked the bot
-        }
+        } catch {}
       }
 
       return c.json({ success: true, sentCount: count });
@@ -1303,7 +1547,11 @@ async function startServer() {
 
   app.delete("/api/admin/ads/:id", adminOnly, async (c) => {
     const id = c.req.param("id");
-    await supabase.from("ads").delete().eq("id", id);
+    const ads = await getCachedCollection<any>(ADMIN_ADS_KEY);
+    await setCachedCollection(ADMIN_ADS_KEY, ads.filter((a) => a.id !== id));
+    try {
+      await supabase.from("ads").delete().eq("id", id);
+    } catch {}
     return c.json({ success: true });
   });
 
@@ -1319,40 +1567,202 @@ async function startServer() {
     return c.json({ success: true });
   });
 
-  // Public Overrides
-  app.get("/api/common/tasks", async (c) => {
-    const { data } = await supabase.from("tasks").select("*").eq("active", true);
+  app.get("/api/admin/users", adminOnly, async (c) => {
+    const query = (c.req.query("q") || "").trim();
+    let dbQuery = supabase
+      .from("users")
+      .select("telegram_id,name,username,role,plan,credits,last_active,created_at")
+      .order("created_at", { ascending: false })
+      .limit(150);
+
+    if (query) {
+      dbQuery = dbQuery.or(`name.ilike.%${query}%,username.ilike.%${query}%,telegram_id.eq.${Number(query) || 0}`);
+    }
+
+    const { data, error } = await dbQuery;
+    if (error) return c.json({ error: error.message }, 500);
     return c.json(data || []);
   });
 
-  app.get("/api/common/ads", async (c) => {
-    const now = new Date().toISOString();
-    const { data } = await supabase
-      .from("ads")
-      .select("*")
-      .eq("active", true)
-      .or(`expires_at.gt.${now},expires_at.is.null`)
-      .order("created_at", { ascending: false })
-      .limit(5);
+  app.post("/api/admin/users/notify", adminOnly, async (c) => {
+    if (!bot) return c.json({ error: "Bot not configured" }, 500);
 
-    return c.json(data || []);
+    const { telegramId, message } = await c.req.json().catch(() => ({} as any));
+    if (!telegramId || !message) return c.json({ error: "telegramId and message are required" }, 400);
+
+    try {
+      await bot.telegram.sendMessage(Number(telegramId), String(message), {
+        ...Markup.inlineKeyboard([[Markup.button.webApp("Open Flash AI", appUrl)]]),
+      });
+      return c.json({ success: true });
+    } catch (e: any) {
+      return c.json({ error: e?.message || "Failed to notify user" }, 500);
+    }
+  });
+  app.post("/api/admin/notifications/send", adminOnly, async (c) => {
+    if (!bot) return c.json({ error: "Bot not configured" }, 500);
+
+    const body = await c.req.json().catch(() => ({} as any));
+    const message = String(body.message || "").trim();
+    const image_url = String(body.image_url || "").trim();
+    const with_button = Boolean(body.with_button);
+    const button_text = String(body.button_text || "").trim();
+    const button_url = String(body.button_url || appUrl).trim();
+    const target_group = normalizeAudience(body.target_group || "all");
+
+    if (!message) return c.json({ error: "Message is required" }, 400);
+
+    let query = supabase.from("users").select("telegram_id,plan").not("telegram_id", "is", null);
+    if (target_group === 'subscribed') query = query.neq('plan', 'free');
+    if (target_group === 'unsubscribed') query = query.eq('plan', 'free');
+    if (target_group === 'weekly') query = query.eq('plan', 'weekly');
+    if (target_group === 'monthly') query = query.eq('plan', 'monthly');
+    if (target_group === 'admin') query = query.eq('plan', 'admin');
+
+    const { data: users } = await query;
+    if (!users?.length) return c.json({ success: true, sentCount: 0 });
+
+    const keyboard = with_button ? Markup.inlineKeyboard([[Markup.button.url(button_text || "Open", button_url)]]) : undefined;
+
+    let sentCount = 0;
+    for (const user of users) {
+      try {
+        if (image_url) {
+          await bot.telegram.sendPhoto(user.telegram_id, image_url, { caption: message, ...keyboard });
+        } else {
+          await bot.telegram.sendMessage(user.telegram_id, message, keyboard ? { ...keyboard } : undefined);
+        }
+        sentCount += 1;
+        if (sentCount % 20 === 0) await new Promise((r) => setTimeout(r, 900));
+      } catch {}
+    }
+
+    return c.json({ success: true, sentCount });
+  });
+
+
+  // Public Overrides
+  app.get("/api/common/tasks", async (c) => {
+    let tasks = await getCachedCollection<any>(ADMIN_TASKS_KEY);
+    if (!tasks.length) {
+      const { data } = await supabase.from("tasks").select("*").eq("active", true);
+      tasks = data || [];
+    }
+    return c.json(tasks.filter((t) => t.active !== false));
+  });
+
+  app.get("/api/common/ads", async (c) => {
+    const now = Date.now();
+    let ads = await getCachedCollection<any>(ADMIN_ADS_KEY);
+    if (!ads.length) {
+      const { data } = await supabase.from("ads").select("*").eq("active", true).order("created_at", { ascending: false }).limit(50);
+      ads = data || [];
+    }
+
+    const initData = c.req.header("X-TG-Init-Data") || "";
+    const tgUser = initData ? getTelegramUserFromInitData(initData) : null;
+    let userPlan = "free";
+    if (tgUser?.id) {
+      const { data: user } = await supabase.from("users").select("plan").eq("telegram_id", tgUser.id).maybeSingle();
+      userPlan = user?.plan || "free";
+    }
+
+    const filtered = ads.filter((ad) => {
+      if (ad.active === false) return false;
+      if (ad.expires_at && new Date(ad.expires_at).getTime() < now) return false;
+
+      const group = normalizeAudience(ad.target_group || "all");
+      if (group === "all") return true;
+      if (group === "subscribed") return userPlan !== "free";
+      if (group === "unsubscribed") return userPlan === "free";
+      if (group === "admin") return userPlan === "admin";
+      return userPlan === group;
+    });
+
+    filtered.sort((a, b) => new Date(b.created_at || 0).getTime() - new Date(a.created_at || 0).getTime());
+    return c.json(filtered.slice(0, 10));
   });
 
   app.post("/api/common/ads/:id/track", async (c) => {
     const id = c.req.param("id");
-    const { type } = await c.req.json(); // 'view' or 'click'
-    
-    if (type === 'view') {
-      await supabase.rpc('increment_ad_views', { ad_id: id });
-    } else if (type === 'click') {
-      await supabase.rpc('increment_ad_clicks', { ad_id: id });
-    }
-    
+    const { type } = await c.req.json().catch(() => ({ type: "view" }));
+
+    const ads = await getCachedCollection<any>(ADMIN_ADS_KEY);
+    const next = ads.map((ad) => {
+      if (ad.id !== id) return ad;
+      if (type === 'click') return { ...ad, clicks: Number(ad.clicks || 0) + 1 };
+      return { ...ad, views: Number(ad.views || 0) + 1 };
+    });
+    await setCachedCollection(ADMIN_ADS_KEY, next);
+
     return c.json({ success: true });
   });
 
   app.post("/api/bot/notify", async (c) => {
-    // Basic notify for specific events
+    const body = await c.req.json().catch(() => ({} as any));
+    const telegramId = Number(body?.telegram_id);
+    const type = String(body?.type || "").trim().toLowerCase();
+
+    if (!bot) return c.json({ error: "Bot not configured" }, 500);
+    if (!telegramId || !type) return c.json({ error: "telegram_id and type are required" }, 400);
+
+    const templates: Record<string, { text: string; cta: string }> = {
+      fomo: {
+        text: "⚡ Big fixtures are moving fast right now. Your edge is one analysis away.",
+        cta: "Analyze now",
+      },
+      addiction: {
+        text: "🔥 You're on a streak. Keep your momentum with today's top AI picks.",
+        cta: "Keep streak",
+      },
+      comeback: {
+        text: "👋 We saved your seat. New high-confidence football insights are ready.",
+        cta: "I'm back",
+      },
+      inactive: {
+        text: "⏳ We miss you. Fresh matches are live and your credits are waiting.",
+        cta: "Return now",
+      },
+    };
+
+    const template = templates[type] || templates.comeback;
+    await bot.telegram.sendMessage(telegramId, template.text, {
+      ...Markup.inlineKeyboard([[Markup.button.webApp(template.cta, appUrl)]]),
+    });
+
+    return c.json({ success: true });
+  });
+
+  app.post("/api/admin/automation/retention", adminOnly, async (c) => {
+    const { type } = await c.req.json().catch(() => ({ type: "inactive" }));
+    if (!bot) return c.json({ error: "Bot not configured" }, 500);
+
+    try {
+      let users: any[] = [];
+      if (type === "registration") {
+        const { data } = await supabase.from("users").select("telegram_id").is("phone", null).not("telegram_id", "is", null);
+        users = data || [];
+      } else {
+        const daysAgo = new Date();
+        daysAgo.setDate(daysAgo.getDate() - 5);
+        const { data } = await supabase.from("users").select("telegram_id").lt("last_active", daysAgo.toISOString()).not("telegram_id", "is", null);
+        users = data || [];
+      }
+
+      let sent = 0;
+      for (const u of users) {
+        try {
+          await bot.telegram.sendMessage(u.telegram_id, "📣 Flash AI update: fresh opportunities are available now.", {
+            ...Markup.inlineKeyboard([[Markup.button.webApp("Open Flash AI", appUrl)]]),
+          });
+          sent += 1;
+        } catch {}
+      }
+
+      return c.json({ success: true, sentCount: sent });
+    } catch (e: any) {
+      return c.json({ error: e?.message || "Automation failed" }, 500);
+    }
   });
 
   // Retention & Engagement Automation
@@ -1373,7 +1783,7 @@ async function startServer() {
       if (type === 'registration') {
         const { data } = await supabase.from("users").select("telegram_id").is("phone", null);
         users = data || [];
-        message = "⏳ *Time is running out!* Finish your registration now to claim your *5 free credits* and start winning. Most users win their first bet within 24 hours! ⚽🔥";
+        message = "⏳ *Time is running out!* Finish your registration now to claim your *3 free credits* and start winning. Most users win their first bet within 24 hours! ⚽🔥";
         ctaLabel = "🚀 Finish Registration";
       } else if (type === 'subscription') {
         const { data } = await supabase.from("users").select("telegram_id").eq("plan", "free");
@@ -1446,7 +1856,7 @@ async function startServer() {
   });
 
   // n8n Automation: Retention Flow
-  app.post("/api/automation/retention", async (c) => {
+  app.post("/api/automation/retention/personalized", async (c) => {
     const authHeader = c.req.header("Authorization");
     if (authHeader !== `Bearer ${process.env.AUTOMATION_SECRET}`) {
       return c.json({ error: "Unauthorized" }, 401);
@@ -1557,10 +1967,75 @@ async function startServer() {
     }
   };
 
+  const runDailyFeaturedMatchFomo = async () => {
+    try {
+      if (!bot) return;
+
+      const todayKey = new Date().toISOString().slice(0, 10);
+      const checkpointKey = `automation_featured_fomo_${todayKey}`;
+      const { data: checkpoint } = await supabase.from("api_cache").select("data").eq("endpoint", checkpointKey).maybeSingle();
+      if (checkpoint?.data?.sent) return;
+
+      const matches = await getUpcomingMatches();
+      const featured = matches?.[0];
+      if (!featured) return;
+
+      const featuredLabel = `${featured.teams?.home?.name || "Home"} vs ${featured.teams?.away?.name || "Away"}`;
+      const kickoff = featured?.fixture?.date ? new Date(featured.fixture.date).toLocaleString() : "today";
+      const creativeAngles = [
+        "urgent and elite",
+        "sharp and data-first",
+        "bold and hype-driven",
+        "exclusive and premium",
+      ];
+      const angle = creativeAngles[Math.floor(Math.random() * creativeAngles.length)];
+
+      const { multiAgentService } = await import("../src/services/multiAgentService.js");
+      const messageForFree = await multiAgentService.generateMarketingMessage([
+        { match: featuredLabel, kickoff, audience: "free", angle, cta: "Unlock your edge" },
+      ]);
+      const messageForSubs = await multiAgentService.generateMarketingMessage([
+        { match: featuredLabel, kickoff, audience: "subscribed", angle, cta: "Open today’s top picks" },
+      ]);
+
+      const [{ data: freeUsers }, { data: subUsers }] = await Promise.all([
+        supabase.from("users").select("telegram_id").eq("plan", "free").not("telegram_id", "is", null),
+        supabase.from("users").select("telegram_id").neq("plan", "free").not("telegram_id", "is", null),
+      ]);
+
+      let sentCount = 0;
+      for (const user of freeUsers || []) {
+        try {
+          await bot.telegram.sendMessage(user.telegram_id, messageForFree || `⚽ Featured match today: ${featuredLabel}`,
+            { ...Markup.inlineKeyboard([[Markup.button.webApp("Upgrade & Analyze", appUrl)]]) });
+          sentCount += 1;
+        } catch {}
+      }
+
+      for (const user of subUsers || []) {
+        try {
+          await bot.telegram.sendMessage(user.telegram_id, messageForSubs || `⚽ Featured match today: ${featuredLabel}`,
+            { ...Markup.inlineKeyboard([[Markup.button.webApp("View Featured Match", appUrl)]]) });
+          sentCount += 1;
+        } catch {}
+      }
+
+      await supabase.from("api_cache").upsert({
+        endpoint: checkpointKey,
+        data: { sent: true, sentCount, featuredLabel, at: new Date().toISOString() },
+        updated_at: new Date().toISOString(),
+      }, { onConflict: "endpoint" });
+    } catch (error) {
+      console.error("Featured FOMO automation failed:", error);
+    }
+  };
+
   // Run once on startup, then on interval
   await ensureBootstrapAdminRole();
   refreshLiveCache();
+  runDailyFeaturedMatchFomo();
   setInterval(refreshLiveCache, CACHE_INTERVAL);
+  setInterval(runDailyFeaturedMatchFomo, 60 * 60 * 1000);
 
   console.log(`Server running on http://localhost:${PORT}`);
   serve({
