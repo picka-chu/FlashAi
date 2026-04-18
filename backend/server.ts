@@ -1003,17 +1003,15 @@ async function startServer() {
     // Basic notify for specific events
   });
 
-  // Retention & Engagement Automation
+  // Retention & Engagement Automation (Single Definition)
   app.post("/api/automation/retention", async (c) => {
     const authHeader = c.req.header("Authorization");
     if (authHeader !== `Bearer ${process.env.AUTOMATION_SECRET}`) {
       return c.json({ error: "Unauthorized" }, 401);
     }
 
-    const { type } = await c.req.json();
-    if (!bot) return c.json({ error: "Bot not active" }, 500);
-
     try {
+      const { type, targetDays } = await c.req.json();
       let users: any[] = [];
       let message = "";
       let ctaLabel = "Open App";
@@ -1029,9 +1027,10 @@ async function startServer() {
         message = "💎 *You're missing out* on the Elite AI insights! Weekly subscribers are reporting *92% accuracy* today. Unlock your Pro edge now before the big games start! 🚀";
         ctaLabel = "💎 Upgrade Now";
       } else if (type === 'inactive') {
-        const fiveDaysAgo = new Date();
-        fiveDaysAgo.setDate(fiveDaysAgo.getDate() - 5);
-        const { data } = await supabase.from("users").select("telegram_id").lt("last_active", fiveDaysAgo.toISOString());
+        const daysAgo = targetDays || 5;
+        const inactiveDate = new Date();
+        inactiveDate.setDate(inactiveDate.getDate() - daysAgo);
+        const { data } = await supabase.from("users").select("telegram_id").lt("last_active", inactiveDate.toISOString());
         users = data || [];
         message = "🏟️ *The stadium is full, where are you?* Big matches are starting soon and our AI just identified *3 High-Confidence locks*. Don't let these profits slip away! 💸🔥";
         ctaLabel = "🎫 Get My Picks";
@@ -1046,11 +1045,14 @@ async function startServer() {
           });
           count++;
           if (count % 25 === 0) await new Promise(r => setTimeout(r, 1000));
-        } catch (err) {}
+        } catch (err) {
+          console.error(`Failed to send message to user ${u.telegram_id}:`, err);
+        }
       }
 
       return c.json({ success: true, processed: count });
     } catch (e: any) {
+      console.error("Retention automation error:", e.message);
       return c.json({ error: e.message }, 500);
     }
   });
@@ -1093,50 +1095,7 @@ async function startServer() {
     }
   });
 
-  // n8n Automation: Retention Flow
-  app.post("/api/automation/retention", async (c) => {
-    const authHeader = c.req.header("Authorization");
-    if (authHeader !== `Bearer ${process.env.AUTOMATION_SECRET}`) {
-      return c.json({ error: "Unauthorized" }, 401);
-    }
-
-    try {
-      // 1. Check inactive users (last active > 3 days)
-      const threeDaysAgo = new Date();
-      threeDaysAgo.setDate(threeDaysAgo.getDate() - 3);
-      
-      const { data: inactiveUsers } = await supabase
-        .from("users")
-        .select("*")
-        .lt("last_active", threeDaysAgo.toISOString())
-        .not("telegram_id", "is", null);
-
-      if (!inactiveUsers || inactiveUsers.length === 0) return c.json({ success: true, message: "No inactive users" });
-
-      const { multiAgentService } = await import("../src/services/multiAgentService.js");
-
-      if (bot) {
-        for (const user of inactiveUsers) {
-          // 2. Send to Retention Agent
-          const message = await multiAgentService.generateRetentionMessage({
-            name: user.name,
-            lastActive: user.last_active,
-            favoriteLeagues: ["Premier League", "Champions League"] // Mock or fetch from user prefs
-          });
-
-          // 3. Send message via Telegram bot
-          await bot.telegram.sendMessage(user.telegram_id, message || "We miss you! New matches are live.", {
-            ...Markup.inlineKeyboard([[Markup.button.webApp("⚽ Back to Action", `${appUrl}`)]])
-          });
-        }
-      }
-
-      return c.json({ success: true, processed: inactiveUsers.length });
-    } catch (e: any) {
-      console.error("Retention automation failed:", e.message);
-      return c.json({ error: e.message }, 500);
-    }
-  });
+  // Note: Duplicate /api/automation/retention endpoint removed - see line ~1007 for the single definition
 
   app.get("/api/common/cache", async (c) => {
     try {

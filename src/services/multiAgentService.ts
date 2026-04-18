@@ -174,7 +174,15 @@ class MultiAgentService {
       } else {
         const start = text.indexOf('{');
         const end = text.lastIndexOf('}');
-        data = JSON.parse(text.substring(start, end + 1));
+        if (start === -1 || end === -1 || end <= start) {
+          throw new Error("Invalid JSON response from AI");
+        }
+        try {
+          data = JSON.parse(text.substring(start, end + 1));
+        } catch (parseError) {
+          console.error("JSON parse error:", parseError);
+          throw new Error("Failed to parse AI response");
+        }
       }
 
       this.setCache(cacheKey, data);
@@ -239,7 +247,15 @@ class MultiAgentService {
       } else {
         const start = text.indexOf('{');
         const end = text.lastIndexOf('}');
-        data = JSON.parse(text.substring(start, end + 1));
+        if (start === -1 || end === -1 || end <= start) {
+          throw new Error("Invalid JSON response from AI");
+        }
+        try {
+          data = JSON.parse(text.substring(start, end + 1));
+        } catch (parseError) {
+          console.error("JSON parse error:", parseError);
+          throw new Error("Failed to parse AI response");
+        }
       }
 
       this.setCache(cacheKey, data);
@@ -327,7 +343,15 @@ class MultiAgentService {
       } else {
         const start = text.indexOf('{');
         const end = text.lastIndexOf('}');
-        data = JSON.parse(text.substring(start, end + 1));
+        if (start === -1 || end === -1 || end <= start) {
+          throw new Error("Invalid JSON response from AI");
+        }
+        try {
+          data = JSON.parse(text.substring(start, end + 1));
+        } catch (parseError) {
+          console.error("JSON parse error:", parseError);
+          throw new Error("Failed to parse AI response");
+        }
       }
 
       this.setCache(cacheKey, data);
@@ -370,8 +394,13 @@ class MultiAgentService {
       } else {
         const start = text.indexOf('[');
         const end = text.lastIndexOf(']');
-        if (start !== -1 && end !== -1) {
-          data = JSON.parse(text.substring(start, end + 1));
+        if (start !== -1 && end !== -1 && end > start) {
+          try {
+            data = JSON.parse(text.substring(start, end + 1));
+          } catch (parseError) {
+            console.error("JSON parse error in top fixtures:", parseError);
+            data = [];
+          }
         } else {
           data = [];
         }
@@ -469,7 +498,15 @@ class MultiAgentService {
       } else {
         const start = text.indexOf('{');
         const end = text.lastIndexOf('}');
-        data = JSON.parse(text.substring(start, end + 1));
+        if (start === -1 || end === -1 || end <= start) {
+          throw new Error("Invalid JSON response from AI");
+        }
+        try {
+          data = JSON.parse(text.substring(start, end + 1));
+        } catch (parseError) {
+          console.error("JSON parse error in betslip analysis:", parseError);
+          throw new Error("Failed to parse AI response");
+        }
       }
 
       return data;
