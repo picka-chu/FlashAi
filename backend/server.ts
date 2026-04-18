@@ -43,6 +43,8 @@ const PLAN_CREDITS: Record<string, number> = {
   monthly: 120,
   admin: 0,
 };
+const signupCreditsRaw = Number(process.env.SIGNUP_CREDITS ?? 3);
+const signupCredits = Number.isFinite(signupCreditsRaw) && signupCreditsRaw >= 0 ? Math.floor(signupCreditsRaw) : 3;
 
 function getPlanCreditAllocation(planId: string) {
   return PLAN_CREDITS[planId] ?? 0;
@@ -793,18 +795,25 @@ async function startServer() {
     bot.on('contact', async (ctx) => {
       const contact = ctx.message.contact;
       const telegramId = ctx.from.id;
+      const contactOwnerId = contact.user_id;
       const firstName = ctx.from.first_name;
       const lastName = ctx.from.last_name || "";
       const fullName = `${firstName} ${lastName}`.trim();
       const phone = contact.phone_number;
 
       try {
+        // Only accept the current user's own contact card
+        if (contactOwnerId && contactOwnerId !== telegramId) {
+          await ctx.reply("❌ Please share your own contact using the signup button.");
+          return;
+        }
+
         // 1. Get user to check if they were referred and prevent duplicate rewards
         const { data: existingUser } = await supabase
           .from("users")
           .select("*")
           .eq("telegram_id", telegramId)
-          .single();
+          .maybeSingle();
 
         const isNewRegistration = !existingUser?.phone;
         
@@ -812,23 +821,46 @@ async function startServer() {
         const referralAlreadyRewarded = existingUser?.referral_rewarded === true;
 
         // 2. Perform registration/update with atomic credit handling
-        const { data: user, error } = await supabase
+        const registrationPayload = {
+          telegram_id: telegramId,
+          name: fullName,
+          username: ctx.from.username || "",
+          phone,
+          credits: signupCredits,
+          plan: existingUser?.plan || 'free',
+          last_active: new Date().toISOString()
+        };
+
+        let { data: user, error } = await supabase
           .from("users")
-          .upsert({
-            telegram_id: telegramId,
-            name: fullName,
-            username: ctx.from.username || "",
-            phone: phone,
-            credits: signupCredits,
-            plan: existingUser?.plan || 'free',
-            last_active: new Date().toISOString()
-          }, { onConflict: 'telegram_id' })
+          .upsert(registrationPayload, { onConflict: 'telegram_id' })
           .select()
           .single();
 
         if (error) {
           console.error("Registration error:", error);
-          if (error.code === "42703" && String(error.message || "").includes("updated_at")) {
+
+          // Fallback for legacy schema where users.phone does not exist yet.
+          // Keep user reachable by caching the registration contact so app can verify signup.
+          if (error.code === "42703" && String(error.message || "").toLowerCase().includes("phone")) {
+            const { data: fallbackUser, error: fallbackError } = await supabase
+              .from("users")
+              .upsert({
+                telegram_id: telegramId,
+                name: fullName,
+                username: ctx.from.username || "",
+                credits: signupCredits,
+                plan: existingUser?.plan || 'free',
+                last_active: new Date().toISOString()
+              }, { onConflict: 'telegram_id' })
+              .select()
+              .single();
+
+            if (fallbackError) {
+              console.error("Registration fallback error:", fallbackError);
+              return ctx.reply("❌ Registration failed. Please try again later.");
+            }
+
             await supabase.from("api_cache").upsert({
               endpoint: `registration_${telegramId}`,
               data: {
@@ -841,6 +873,7 @@ async function startServer() {
               updated_at: new Date().toISOString(),
             }, { onConflict: "endpoint" });
 
+            user = fallbackUser;
             await ctx.reply("✅ Registration successful. Your account is now active.");
             return;
           }
