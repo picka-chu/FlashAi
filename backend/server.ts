@@ -1494,13 +1494,15 @@ async function startServer() {
       await supabase.from("ads").insert({
         title: ad.title,
         subtitle: ad.subtitle,
-        image_url: ad.image_url || "https://placehold.co/1200x630/png",
+        image_url: ad.image_url || "",
         link: ad.link,
         active: ad.active,
+        cta: ad.cta,
+        expires_at: ad.expires_at,
+        primary_color: ad.primary_color,
+        target_group: ad.target_group,
       });
-    } catch (e) {
-      console.error("DB insert failed for ads:", e);
-    }
+    } catch {}
     return c.json(ad);
   });
 
