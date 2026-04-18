@@ -871,6 +871,9 @@ async function startServer() {
         // Check if referral was already rewarded (prevent race condition/duplicate reward)
         const referralAlreadyRewarded = existingUser?.referral_rewarded === true;
 
+        // Define signup credits for new users
+        const signupCredits = isNewRegistration ? 50 : (existingUser?.credits || 0);
+
         // 2. Perform registration/update with atomic credit handling
         const registrationPayload = {
           telegram_id: telegramId,
@@ -946,10 +949,12 @@ async function startServer() {
              
              if (rewardError) {
                // Fallback: Direct update (less safe but works)
-               await supabase.rpc('increment_user_credits', {
-                 target_telegram_id: existingUser.referrer_id,
-                 amount: rewardAmount
-               }).catch(async () => {
+               try {
+                 await supabase.rpc('increment_user_credits', {
+                   target_telegram_id: existingUser.referrer_id,
+                   amount: rewardAmount
+                 });
+               } catch {
                  // Final fallback: Regular update
                  const { data: referrerData } = await supabase
                    .from("users")
@@ -965,7 +970,7 @@ async function startServer() {
                      })
                      .eq("telegram_id", existingUser.referrer_id);
                  }
-               });
+               }
              }
              
              // Mark the new user's referral as rewarded to prevent double-processing

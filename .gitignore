@@ -1,41 +1,100 @@
 ```
-# Environment variables
-.env.local
-
 # Dependencies
 node_modules/
 
-# Build artifacts
-dist/
+# Logs and temp files
+*.log
+*.tmp
 
-# IDE files
+# Environment
+.env
+.env.local
+.env.*
+
+# Editors
 .vscode/
+.idea/
 
-# Python cache
+# Python
 __pycache__/
 *.pyc
 *.pyo
 *.pyd
 
-# Logs
-*.log
+# Build outputs
+dist/
+build/
+target/
 
-# Temporary files
-*.tmp
-*.swp
-*.swo
+# Compression files
+*.zip
+*.gz
+*.tar
+*.tgz
+*.bz2
+*.xz
+*.7z
+*.rar
+*.zst
+*.lz4
+*.lzh
+*.cab
+*.arj
+*.rpm
+*.deb
+*.Z
+*.lz
+*.lzo
+*.tar.gz
+*.tar.bz2
+*.tar.xz
+*.tar.zst
 
 # OS generated files
 .DS_Store
 Thumbs.db
 
-# Coverage reports
+# Testing
 coverage/
 htmlcov/
 .coverage
+*.cover
+*.log
 
-# Local configuration
-.env
-.env.*
-!.env.example
+# IDE
+*.swp
+*.swo
+*.tmp
+
+# MyPy
+.mypy_cache/
+.pytest_cache/
+
+# Gradle
+.gradle/
+
+# Virtual environments
+.venv/
+venv/
+env/
+ENV/
+
+# Compressed
+*.zip
+*.tar.gz
+*.rar
+*.7z
+*.gz
+*.bz2
+*.xz
+*.zst
+*.lz4
+*.lzh
+*.cab
+*.arj
+*.rpm
+*.deb
+*.Z
+*.lz
+*.lzo
 ```
