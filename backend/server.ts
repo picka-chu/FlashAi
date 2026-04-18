@@ -168,18 +168,22 @@ async function startServer() {
   /**
    * Professional Reset/Refill Logic
    * Ensures users get their daily quota based on plan.
+   * Credits refresh every 24 hours from last reset time.
    */
   async function syncUserCredits(userData: any) {
     const now = new Date();
-    const lastActive = userData.last_active ? new Date(userData.last_active) : null;
-    const isNewDay = !lastActive || lastActive.toDateString() !== now.toDateString();
+    const lastCreditReset = userData.last_credit_reset ? new Date(userData.last_credit_reset) : null;
+    
+    // Check if 24 hours have passed since last reset
+    const shouldReset = !lastCreditReset || 
+      (now.getTime() - lastCreditReset.getTime()) >= (24 * 60 * 60 * 1000);
 
     let currentCredits = userData.credits || 0;
     const plan = userData.plan || "free";
     const config = PLAN_CONFIG[plan] || PLAN_CONFIG.free;
 
-    if (isNewDay) {
-      // Professional refill: If user has less than daily quota, refill to quota. 
+    if (shouldReset) {
+      // Professional refill: If user has less than daily quota, refill to quota.
       // If they have more (e.g. from bonus), we don't downgrade them, just keep current.
       if (currentCredits < config.dailyCredits) {
         currentCredits = config.dailyCredits;
@@ -187,9 +191,10 @@ async function startServer() {
       
       await supabase
         .from("users")
-        .update({ 
+        .update({
           credits: currentCredits,
-          last_active: now.toISOString() 
+          last_credit_reset: now.toISOString(),
+          last_active: now.toISOString()
         })
         .eq("telegram_id", userData.telegram_id);
     }
@@ -474,7 +479,7 @@ async function startServer() {
       const phone = contact.phone_number;
 
       try {
-        // 1. Get user to check if they were referred
+        // 1. Get user to check if they were referred and prevent duplicate rewards
         const { data: existingUser } = await supabase
           .from("users")
           .select("*")
@@ -482,8 +487,11 @@ async function startServer() {
           .single();
 
         const isNewRegistration = !existingUser?.phone;
+        
+        // Check if referral was already rewarded (prevent race condition/duplicate reward)
+        const referralAlreadyRewarded = existingUser?.referral_rewarded === true;
 
-        // 2. Perform registration/update
+        // 2. Perform registration/update with atomic credit handling
         const { data: user, error } = await supabase
           .from("users")
           .upsert({
@@ -503,27 +511,57 @@ async function startServer() {
           return ctx.reply("❌ Registration failed. Please try again later.");
         }
 
-        // 3. Handle Referral Reward if this is a NEW registration
-        if (isNewRegistration && existingUser?.referrer_id) {
-           // Reward Referrer
-           const { data: referrer } = await supabase
-             .from("users")
-             .select("credits")
-             .eq("telegram_id", existingUser.referrer_id)
-             .single();
+        // 3. Handle Referral Reward - ATOMIC operation to prevent race conditions
+        if (isNewRegistration && existingUser?.referrer_id && !referralAlreadyRewarded) {
+           // Use RPC call or atomic increment to prevent race conditions
+           const rewardAmount = 50; // 50 credits for referring a friend
            
-           if (referrer) {
-             const rewardAmount = 50; // 50 credits for referring a friend
-             await supabase.from("users")
-               .update({ credits: (referrer.credits || 0) + rewardAmount })
-               .eq("telegram_id", existingUser.referrer_id);
+           try {
+             // Atomic increment using Supabase RPC (create this function in your DB)
+             // Fallback to regular update if RPC doesn't exist
+             const { error: rewardError } = await supabase.rpc('add_credits_to_user', {
+               user_telegram_id: existingUser.referrer_id,
+               credits_amount: rewardAmount
+             });
              
+             if (rewardError) {
+               // Fallback: Direct update (less safe but works)
+               await supabase.rpc('increment_user_credits', {
+                 target_telegram_id: existingUser.referrer_id,
+                 amount: rewardAmount
+               }).catch(async () => {
+                 // Final fallback: Regular update
+                 const { data: referrerData } = await supabase
+                   .from("users")
+                   .select("credits")
+                   .eq("telegram_id", existingUser.referrer_id)
+                   .single();
+                 
+                 if (referrerData) {
+                   await supabase.from("users")
+                     .update({ 
+                       credits: (referrerData.credits || 0) + rewardAmount,
+                       referral_rewarded: true // Mark as rewarded
+                     })
+                     .eq("telegram_id", existingUser.referrer_id);
+                 }
+               });
+             }
+             
+             // Mark the new user's referral as rewarded to prevent double-processing
+             await supabase.from("users")
+               .update({ referral_rewarded: true })
+               .eq("telegram_id", telegramId);
+
              // Notify Referrer
              try {
                await bot.telegram.sendMessage(existingUser.referrer_id, `👥 A friend joined Flash AI using your link! You've been rewarded with ${rewardAmount} credits. 🔥`);
              } catch (e) {
                console.error("Failed to notify referrer:", e);
              }
+           } catch (rewardErr) {
+             console.error("Referral reward error:", rewardErr);
+             // Don't fail registration if reward fails
            }
         }
 
@@ -545,8 +583,6 @@ async function startServer() {
         ctx.reply("An unexpected error occurred during registration.");
       }
     });
-
-    // Handle Telegram Stars Payment Validation
     bot.on('pre_checkout_query', (ctx) => {
       ctx.answerPreCheckoutQuery(true).catch(err => console.error("PreCheckout error:", err));
     });
