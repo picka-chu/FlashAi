@@ -312,14 +312,14 @@ class MultiAgentService {
       Example: ["Real Madrid vs Manchester City", "Arsenal vs Bayern Munich"]
     `;
 
-    try {
+    return executeWithRetry(async (apiKey, keyIndex) => {
       let result: any = null;
       let lastError: any = null;
       for (const model of SEARCH_MODELS) {
-        const attempts = this.instances.length;
+        const attempts = apiKeyManager.getKeys().length;
         for (let attempt = 0; attempt < attempts; attempt++) {
-          const ai = this.getNextInstance();
           try {
+            const ai = new GoogleGenAI({ apiKey });
             result = await ai.models.generateContent({
               model,
               contents: [{ role: "user", parts: [{ text: prompt }] }],
@@ -330,7 +330,7 @@ class MultiAgentService {
             break;
           } catch (error: any) {
             lastError = error;
-            if (this.isQuotaOrTransientError(error)) {
+            if (isRetryableGeminiError(error)) {
               console.warn(`[Gemini fixtures fallback] ${model} failed (attempt ${attempt + 1}/${attempts}), trying next key/model.`);
               continue;
             }
