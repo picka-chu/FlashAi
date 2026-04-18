@@ -51,14 +51,21 @@ export default function App() {
       }
 
       try {
-        const authRes = await fetch('/api/auth/me', {
-          headers: { 'X-TG-Init-Data': initData || '' }
-        });
+        const { data, error } = await supabase
+          .from('users')
+          .select('*')
+          .eq('telegram_id', tgUser.id)
+          .single();
 
-        if (authRes.ok) {
-          const payload = await authRes.json();
-          const data = payload?.user;
-          if (!data) return;
+        if (error && error.code === 'PGRST116') {
+          console.warn("User not found in 'users' table.");
+          // User is not registered - clear user state to show signup UI
+          setUser(null);
+          setLoading(false);
+        } else if (data) {
+          // User exists - check if they have completed registration (phone number)
+          const isRegistered = !!data.phone;
+          
           setUser({
             id: data.id,
             telegram_id: data.telegram_id,
@@ -103,6 +110,7 @@ export default function App() {
     if (tgUser?.id) {
       fetchProfile();
     } else if (isReady && !tgUser) {
+      setUser(null);
       setLoading(false);
     }
   }, [tgUser, isReady, initData, setUser, setLoading]);
