@@ -43,6 +43,8 @@ const PLAN_CREDITS: Record<string, number> = {
   monthly: 120,
   admin: 0,
 };
+const signupCreditsRaw = Number(process.env.SIGNUP_CREDITS ?? 3);
+const signupCredits = Number.isFinite(signupCreditsRaw) && signupCreditsRaw >= 0 ? Math.floor(signupCreditsRaw) : 3;
 
 function getPlanCreditAllocation(planId: string) {
   return PLAN_CREDITS[planId] ?? 0;
@@ -176,24 +178,79 @@ type UserHistoryItem = {
 };
 
 async function getUserHistory(telegramId: number): Promise<UserHistoryItem[]> {
-  const cacheKey = `user_history_${telegramId}`;
-  const { data } = await supabase
-    .from("api_cache")
-    .select("data")
-    .eq("endpoint", cacheKey)
-    .single();
+  try {
+    const { data, error } = await supabase
+      .from("user_history")
+      .select("id,fixture_id,match,home,away,prediction_market,confidence,reasoning,status,created_at,resolved_at")
+      .eq("telegram_id", telegramId)
+      .order("created_at", { ascending: false })
+      .limit(100);
 
-  const raw = data?.data;
-  return Array.isArray(raw) ? raw : [];
+    if (error) throw error;
+    return (data || []).map((row: any) => ({
+      id: row.id,
+      fixtureId: row.fixture_id || null,
+      match: row.match,
+      home: row.home,
+      away: row.away,
+      predictionMarket: row.prediction_market,
+      confidence: Number(row.confidence || 0),
+      reasoning: row.reasoning || "",
+      status: row.status || "pending",
+      created_at: row.created_at,
+      resolved_at: row.resolved_at || null,
+    }));
+  } catch (tableError: any) {
+    // Legacy fallback: history stored in api_cache blob.
+    if (tableError?.code && tableError.code !== "42P01") {
+      throw tableError;
+    }
+    const cacheKey = `user_history_${telegramId}`;
+    const { data } = await supabase
+      .from("api_cache")
+      .select("data")
+      .eq("endpoint", cacheKey)
+      .single();
+
+    const raw = data?.data;
+    return Array.isArray(raw) ? raw : [];
+  }
 }
 
 async function setUserHistory(telegramId: number, history: UserHistoryItem[]) {
-  const cacheKey = `user_history_${telegramId}`;
-  await supabase.from("api_cache").upsert({
-    endpoint: cacheKey,
-    data: history.slice(0, 100),
-    updated_at: new Date().toISOString(),
-  }, { onConflict: "endpoint" });
+  const trimmed = history.slice(0, 100);
+  try {
+    await supabase.from("user_history").delete().eq("telegram_id", telegramId);
+    if (trimmed.length > 0) {
+      const rows = trimmed.map((item) => ({
+        id: item.id,
+        telegram_id: telegramId,
+        fixture_id: item.fixtureId || null,
+        match: item.match,
+        home: item.home,
+        away: item.away,
+        prediction_market: item.predictionMarket,
+        confidence: Number(item.confidence || 0),
+        reasoning: item.reasoning || "",
+        status: item.status || "pending",
+        created_at: item.created_at || new Date().toISOString(),
+        resolved_at: item.resolved_at || null,
+      }));
+      const { error } = await supabase.from("user_history").insert(rows);
+      if (error) throw error;
+    }
+  } catch (tableError: any) {
+    // Legacy fallback: history stored in api_cache blob.
+    if (tableError?.code && tableError.code !== "42P01") {
+      throw tableError;
+    }
+    const cacheKey = `user_history_${telegramId}`;
+    await supabase.from("api_cache").upsert({
+      endpoint: cacheKey,
+      data: trimmed,
+      updated_at: new Date().toISOString(),
+    }, { onConflict: "endpoint" });
+  }
 }
 
 async function getCachedRegistration(telegramId: number): Promise<{ phone?: string; name?: string } | null> {
@@ -789,18 +846,25 @@ async function startServer() {
     bot.on('contact', async (ctx) => {
       const contact = ctx.message.contact;
       const telegramId = ctx.from.id;
+      const contactOwnerId = contact.user_id;
       const firstName = ctx.from.first_name;
       const lastName = ctx.from.last_name || "";
       const fullName = `${firstName} ${lastName}`.trim();
       const phone = contact.phone_number;
 
       try {
+        // Only accept the current user's own contact card
+        if (contactOwnerId && contactOwnerId !== telegramId) {
+          await ctx.reply("❌ Please share your own contact using the signup button.");
+          return;
+        }
+
         // 1. Get user to check if they were referred and prevent duplicate rewards
         const { data: existingUser } = await supabase
           .from("users")
           .select("*")
           .eq("telegram_id", telegramId)
-          .single();
+          .maybeSingle();
 
         const isNewRegistration = !existingUser?.phone;
         
@@ -808,23 +872,46 @@ async function startServer() {
         const referralAlreadyRewarded = existingUser?.referral_rewarded === true;
 
         // 2. Perform registration/update with atomic credit handling
-        const { data: user, error } = await supabase
+        const registrationPayload = {
+          telegram_id: telegramId,
+          name: fullName,
+          username: ctx.from.username || "",
+          phone,
+          credits: signupCredits,
+          plan: existingUser?.plan || 'free',
+          last_active: new Date().toISOString()
+        };
+
+        let { data: user, error } = await supabase
           .from("users")
-          .upsert({
-            telegram_id: telegramId,
-            name: fullName,
-            username: ctx.from.username || "",
-            phone: phone,
-            credits: signupCredits,
-            plan: existingUser?.plan || 'free',
-            last_active: new Date().toISOString()
-          }, { onConflict: 'telegram_id' })
+          .upsert(registrationPayload, { onConflict: 'telegram_id' })
           .select()
           .single();
 
         if (error) {
           console.error("Registration error:", error);
-          if (error.code === "42703" && String(error.message || "").includes("updated_at")) {
+
+          // Fallback for legacy schema where users.phone does not exist yet.
+          // Keep user reachable by caching the registration contact so app can verify signup.
+          if (error.code === "42703" && String(error.message || "").toLowerCase().includes("phone")) {
+            const { data: fallbackUser, error: fallbackError } = await supabase
+              .from("users")
+              .upsert({
+                telegram_id: telegramId,
+                name: fullName,
+                username: ctx.from.username || "",
+                credits: signupCredits,
+                plan: existingUser?.plan || 'free',
+                last_active: new Date().toISOString()
+              }, { onConflict: 'telegram_id' })
+              .select()
+              .single();
+
+            if (fallbackError) {
+              console.error("Registration fallback error:", fallbackError);
+              return ctx.reply("❌ Registration failed. Please try again later.");
+            }
+
             await supabase.from("api_cache").upsert({
               endpoint: `registration_${telegramId}`,
               data: {
@@ -837,6 +924,7 @@ async function startServer() {
               updated_at: new Date().toISOString(),
             }, { onConflict: "endpoint" });
 
+            user = fallbackUser;
             await ctx.reply("✅ Registration successful. Your account is now active.");
             return;
           }
@@ -1165,8 +1253,7 @@ async function startServer() {
 
       const { data, error } = await supabase
         .from("users")
-        .update({ name, username })
-        .eq("telegram_id", tgUser.id)
+        .upsert({ telegram_id: tgUser.id, name, username, last_active: new Date().toISOString() }, { onConflict: "telegram_id" })
         .select("id,telegram_id,name,username,phone,credits,plan,role,photo_url")
         .single();
 

@@ -271,7 +271,15 @@ export const Home: React.FC<HomeProps> = ({ onTabChange }) => {
         <div className="flex items-center gap-3">
           {user?.phone ? (
             <>
-              <div className="relative">
+              <button
+                type="button"
+                onClick={() => {
+                  hapticFeedback('light');
+                  onTabChange('profile');
+                }}
+                className="relative active:scale-95 transition-transform"
+                aria-label="Open profile"
+              >
                 {user.photo_url ? (
                   <img 
                     src={user.photo_url}
@@ -284,7 +292,7 @@ export const Home: React.FC<HomeProps> = ({ onTabChange }) => {
                   </div>
                 )}
                 <div className="absolute bottom-0 right-0 w-2.5 h-2.5 bg-[#ccff00] rounded-full border-2 border-[#0a0a0a]"></div>
-              </div>
+              </button>
               <div>
                 <p className="text-[10px] text-zinc-400 tracking-wider font-bold">Good morning!</p>
                 <p className="text-sm font-black text-white">{user.name}</p>

@@ -8,6 +8,8 @@ import {
 } from "./apiCacheService";
 
 const AGENT_MODELS = ["gemini-2.5-flash", "gemini-2.0-flash", "gemini-2.0-flash-lite"];
+const SEARCH_MODELS = ["gemini-2.5-flash", "gemini-2.0-flash", "gemini-2.0-flash-lite"];
+const VISION_MODELS = ["gemini-2.5-flash", "gemini-2.0-flash"];
 
 export enum AgentType {
   ANALYST = "analyst",
@@ -133,7 +135,12 @@ class MultiAgentService {
         if (start === -1 || end === -1 || end <= start) {
           throw new Error("Invalid JSON response from AI");
         }
-        data = JSON.parse(text.substring(start, end + 1));
+        try {
+          data = JSON.parse(text.substring(start, end + 1));
+        } catch (parseError) {
+          console.error("JSON parse error:", parseError);
+          throw new Error("Failed to parse AI response");
+        }
       }
 
       return data;
@@ -191,7 +198,12 @@ class MultiAgentService {
         if (start === -1 || end === -1 || end <= start) {
           throw new Error("Invalid JSON response from AI");
         }
-        data = JSON.parse(text.substring(start, end + 1));
+        try {
+          data = JSON.parse(text.substring(start, end + 1));
+        } catch (parseError) {
+          console.error("JSON parse error:", parseError);
+          throw new Error("Failed to parse AI response");
+        }
       }
 
       return data;
@@ -273,7 +285,12 @@ class MultiAgentService {
         if (start === -1 || end === -1 || end <= start) {
           throw new Error("Invalid JSON response from AI");
         }
-        data = JSON.parse(text.substring(start, end + 1));
+        try {
+          data = JSON.parse(text.substring(start, end + 1));
+        } catch (parseError) {
+          console.error("JSON parse error:", parseError);
+          throw new Error("Failed to parse AI response");
+        }
       }
 
       return data;
@@ -288,22 +305,40 @@ class MultiAgentService {
     const today = new Date().toISOString().split('T')[0];
     const cacheKey = globalCache.generateKey('top_fixtures', { date: today });
 
-    return executeWithRetry(async (apiKey, keyIndex) => {
-      const ai = new GoogleGenAI({ apiKey });
-      const prompt = `
-        Find today's (${today}) most featured and top football matches/fixtures globally.
-        Focus on major leagues like Champions League, Premier League, La Liga, etc.
-        Return ONLY a JSON array of match names in "Home vs Away" format, ordered by importance/hype.
-        Example: ["Real Madrid vs Manchester City", "Arsenal vs Bayern Munich"]
-      `;
+    const prompt = `
+      Find today's (${today}) most featured and top football matches/fixtures globally.
+      Focus on major leagues like Champions League, Premier League, La Liga, etc.
+      Return ONLY a JSON array of match names in "Home vs Away" format, ordered by importance/hype.
+      Example: ["Real Madrid vs Manchester City", "Arsenal vs Bayern Munich"]
+    `;
 
-      const result = await ai.models.generateContent({
-        model: "gemini-2.5-flash",
-        contents: [{ role: "user", parts: [{ text: prompt }] }],
-        config: { 
-          tools: [{ googleSearch: {} }] as any
+    try {
+      let result: any = null;
+      let lastError: any = null;
+      for (const model of SEARCH_MODELS) {
+        const attempts = this.instances.length;
+        for (let attempt = 0; attempt < attempts; attempt++) {
+          const ai = this.getNextInstance();
+          try {
+            result = await ai.models.generateContent({
+              model,
+              contents: [{ role: "user", parts: [{ text: prompt }] }],
+              config: {
+                tools: [{ googleSearch: {} }] as any
+              }
+            });
+            break;
+          } catch (error: any) {
+            lastError = error;
+            if (this.isQuotaOrTransientError(error)) {
+              console.warn(`[Gemini fixtures fallback] ${model} failed (attempt ${attempt + 1}/${attempts}), trying next key/model.`);
+              continue;
+            }
+          }
         }
-      });
+        if (result) break;
+      }
+      if (!result) throw lastError || new Error("All search fallback models failed");
 
       const text = result.text;
       if (!text) return [];
@@ -315,7 +350,12 @@ class MultiAgentService {
         const start = text.indexOf('[');
         const end = text.lastIndexOf(']');
         if (start !== -1 && end !== -1 && end > start) {
-          data = JSON.parse(text.substring(start, end + 1));
+          try {
+            data = JSON.parse(text.substring(start, end + 1));
+          } catch (parseError) {
+            console.error("JSON parse error in top fixtures:", parseError);
+            data = [];
+          }
         } else {
           data = [];
         }
@@ -383,19 +423,38 @@ class MultiAgentService {
         };
       });
 
-      const result = await ai.models.generateContent({
-        model: "gemini-2.5-flash",
-        contents: [{ 
-          role: "user", 
-          parts: [
-            { text: prompt },
-            ...imageParts as any
-          ] 
-        }],
-        config: { 
-          responseMimeType: "application/json"
+      let result: any = null;
+      let lastError: any = null;
+      for (const model of VISION_MODELS) {
+        const attempts = this.instances.length;
+        for (let attempt = 0; attempt < attempts; attempt++) {
+          const ai = this.getNextInstance();
+          try {
+            result = await ai.models.generateContent({
+              model,
+              contents: [{
+                role: "user",
+                parts: [
+                  { text: prompt },
+                  ...imageParts as any
+                ]
+              }],
+              config: {
+                responseMimeType: "application/json"
+              }
+            });
+            break;
+          } catch (error: any) {
+            lastError = error;
+            if (this.isQuotaOrTransientError(error)) {
+              console.warn(`[Gemini betslip fallback] ${model} failed (attempt ${attempt + 1}/${attempts}), trying next key/model.`);
+              continue;
+            }
+          }
         }
-      });
+        if (result) break;
+      }
+      if (!result) throw lastError || new Error("All betslip fallback models failed");
 
       const text = result.text;
       if (!text) throw new Error("Empty response");
@@ -409,7 +468,12 @@ class MultiAgentService {
         if (start === -1 || end === -1 || end <= start) {
           throw new Error("Invalid JSON response from AI");
         }
-        data = JSON.parse(text.substring(start, end + 1));
+        try {
+          data = JSON.parse(text.substring(start, end + 1));
+        } catch (parseError) {
+          console.error("JSON parse error in betslip analysis:", parseError);
+          throw new Error("Failed to parse AI response");
+        }
       }
 
       return data;
