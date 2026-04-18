@@ -637,8 +637,12 @@ export const Profile: React.FC = () => {
                       className="bg-zinc-900/50 border border-zinc-800 rounded-[32px] p-5 flex items-center justify-between"
                     >
                       <div className="flex items-center gap-4">
-                        <div className={`w-12 h-12 rounded-2xl ${task.bgColor || 'bg-zinc-800'} flex items-center justify-center`}>
-                          <Icon className={`w-6 h-6 ${task.color || 'text-zinc-400'}`} />
+                        <div className={`w-12 h-12 rounded-2xl ${task.bgColor || 'bg-zinc-800'} flex items-center justify-center overflow-hidden`}>
+                          {task.image_url ? (
+                            <img src={task.image_url} alt={task.title} className="w-full h-full object-cover" referrerPolicy="no-referrer" />
+                          ) : (
+                            <Icon className={`w-6 h-6 ${task.color || 'text-zinc-400'}`} />
+                          )}
                         </div>
                         <div className="text-left">
                           <p className="text-sm font-black text-white leading-tight">{task.title}</p>

@@ -39,7 +39,7 @@ import {
 } from 'recharts';
 import { useTelegram } from '../hooks/useTelegram';
 
-type AdminTab = 'dashboard' | 'analytics' | 'tasks' | 'ads' | 'users';
+type AdminTab = 'dashboard' | 'analytics' | 'tasks' | 'ads' | 'users' | 'notifications';
 
 export const Admin: React.FC = () => {
   const [activeTab, setActiveTab] = useState<AdminTab>('dashboard');
@@ -55,7 +55,7 @@ export const Admin: React.FC = () => {
   // Form states for adding items
   const [isAddingTask, setIsAddingTask] = useState(false);
   const [isAddingAd, setIsAddingAd] = useState(false);
-  const [newTask, setNewTask] = useState({ title: '', description: '', reward: 10, url: '', active: true });
+  const [newTask, setNewTask] = useState({ title: '', description: '', reward: 10, url: '', buttonLabel: 'Start Task', image_url: '', active: true });
   const [newAd, setNewAd] = useState({ 
     title: '', 
     subtitle: '', 
@@ -63,14 +63,23 @@ export const Admin: React.FC = () => {
     link: '', 
     active: true, 
     cta: 'Check Out', 
-    target_plan: 'all',
+    target_group: 'all',
     expires_at: '',
     primary_color: '#3b82f6'
   });
   const [isBroadcasting, setIsBroadcasting] = useState(false);
+  const [isSendingNotification, setIsSendingNotification] = useState(false);
   const [users, setUsers] = useState<any[]>([]);
   const [userSearch, setUserSearch] = useState('');
   const [notifyMessage, setNotifyMessage] = useState('');
+  const [pushForm, setPushForm] = useState({
+    message: '',
+    image_url: '',
+    with_button: false,
+    button_text: '',
+    button_url: '',
+    target_group: 'all'
+  });
 
   useEffect(() => {
     if (!initData) return;
@@ -179,7 +188,7 @@ export const Admin: React.FC = () => {
       if (res.ok) {
         fetchTasks();
         setIsAddingTask(false);
-        setNewTask({ title: '', description: '', reward: 10, url: '', active: true });
+        setNewTask({ title: '', description: '', reward: 10, url: '', buttonLabel: 'Start Task', image_url: '', active: true });
         showAlert('Task added successfully!');
       }
     } catch (e) {
@@ -204,7 +213,7 @@ export const Admin: React.FC = () => {
           link: '', 
           active: true, 
           cta: 'Check Out', 
-          target_plan: 'all',
+          target_group: 'all',
           expires_at: '',
           primary_color: '#3b82f6'
         });
@@ -326,6 +335,37 @@ export const Admin: React.FC = () => {
     );
   }
 
+  const handleUploadAsDataUrl = (file: File, cb: (dataUrl: string) => void) => {
+    const reader = new FileReader();
+    reader.onload = () => cb(String(reader.result || ''));
+    reader.readAsDataURL(file);
+  };
+
+  const sendPushNotification = async () => {
+    if (!pushForm.message.trim()) {
+      showAlert('Please enter a message.');
+      return;
+    }
+
+    setIsSendingNotification(true);
+    try {
+      const res = await fetch('/api/admin/notifications/send', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json', 'X-TG-Init-Data': initData },
+        body: JSON.stringify(pushForm)
+      });
+      const data = await res.json().catch(() => ({}));
+      if (res.ok) {
+        showAlert(`Push sent to ${data.sentCount ?? 0} users.`);
+        setPushForm({ message: '', image_url: '', with_button: false, button_text: '', button_url: '', target_group: 'all' });
+      } else {
+        showAlert(data.error || 'Failed to send push notification');
+      }
+    } finally {
+      setIsSendingNotification(false);
+    }
+  };
+
   return (
     <div className="min-h-[100dvh] flex flex-col bg-black overflow-hidden">
       {/* Header */}
@@ -342,7 +382,7 @@ export const Admin: React.FC = () => {
 
         {/* Tab Switcher */}
         <div className="flex gap-2 p-1 bg-zinc-900/50 rounded-2xl overflow-x-auto no-scrollbar">
-          {(['dashboard', 'analytics', 'tasks', 'ads', 'users'] as AdminTab[]).map(tab => (
+          {(['dashboard', 'analytics', 'tasks', 'ads', 'users', 'notifications'] as AdminTab[]).map(tab => (
             <button
               key={tab}
               onClick={() => { hapticFeedback('light'); setActiveTab(tab); }}
@@ -558,8 +598,19 @@ export const Admin: React.FC = () => {
                         <textarea value={newTask.description} onChange={e => setNewTask({...newTask, description: e.target.value})} placeholder="Task Description" className="w-full bg-zinc-800 border-none rounded-2xl p-4 text-white text-sm font-bold placeholder:text-zinc-600 h-24 focus:ring-2 ring-[#ccff00]/50" />
                         <div className="flex gap-4">
                            <input type="number" value={newTask.reward} onChange={e => setNewTask({...newTask, reward: Number(e.target.value)})} placeholder="Reward" className="flex-1 bg-zinc-800 border-none rounded-2xl p-4 text-white text-sm font-bold placeholder:text-zinc-600 focus:ring-2 ring-[#ccff00]/50" />
-                           <input value={newTask.url} onChange={e => setNewTask({...newTask, url: e.target.value})} placeholder="Task URL (optional)" className="flex-[2] bg-zinc-800 border-none rounded-2xl p-4 text-white text-sm font-bold placeholder:text-zinc-600 focus:ring-2 ring-[#ccff00]/50" />
+                           <input value={newTask.url} onChange={e => setNewTask({...newTask, url: e.target.value})} placeholder="Task redirect URL (optional)" className="flex-[2] bg-zinc-800 border-none rounded-2xl p-4 text-white text-sm font-bold placeholder:text-zinc-600 focus:ring-2 ring-[#ccff00]/50" />
                         </div>
+                        <div className="flex gap-4">
+                          <input value={newTask.buttonLabel} onChange={e => setNewTask({...newTask, buttonLabel: e.target.value})} placeholder="Button text (e.g. Join now)" className="flex-1 bg-zinc-800 border-none rounded-2xl p-4 text-white text-sm font-bold placeholder:text-zinc-600 focus:ring-2 ring-[#ccff00]/50" />
+                          <input value={newTask.image_url} onChange={e => setNewTask({...newTask, image_url: e.target.value})} placeholder="Task image URL (optional)" className="flex-[2] bg-zinc-800 border-none rounded-2xl p-4 text-white text-sm font-bold placeholder:text-zinc-600 focus:ring-2 ring-[#ccff00]/50" />
+                        </div>
+                        <label className="text-[10px] font-bold text-zinc-500 uppercase tracking-widest cursor-pointer block">
+                          Upload task image
+                          <input type="file" accept="image/*" className="hidden" onChange={(e) => {
+                            const file = e.target.files?.[0];
+                            if (file) handleUploadAsDataUrl(file, (dataUrl) => setNewTask({ ...newTask, image_url: dataUrl }));
+                          }} />
+                        </label>
                         <button onClick={handleAddTask} className="w-full py-5 bg-[#ccff00] text-black font-black uppercase tracking-widest text-xs rounded-2xl shadow-[0_0_30px_rgba(204,255,0,0.3)]">Publish Task</button>
                       </div>
                     </motion.div>
@@ -710,6 +761,22 @@ export const Admin: React.FC = () => {
                               <input value={newAd.image_url} onChange={e => setNewAd({...newAd, image_url: e.target.value})} placeholder="Banner Image URL" className="flex-[3] bg-zinc-800 border-none rounded-2xl p-4 text-white text-sm font-bold placeholder:text-zinc-600 focus:ring-2 ring-blue-500/50" />
                               <input type="color" value={newAd.primary_color} onChange={e => setNewAd({...newAd, primary_color: e.target.value})} className="flex-1 h-[52px] bg-zinc-800 border-none rounded-2xl p-2 cursor-pointer" />
                            </div>
+                           <label className="text-[10px] font-bold text-zinc-500 uppercase tracking-widest cursor-pointer block">
+                              Upload ad image
+                              <input type="file" accept="image/*" className="hidden" onChange={(e) => {
+                                const file = e.target.files?.[0];
+                                if (file) handleUploadAsDataUrl(file, (dataUrl) => setNewAd({ ...newAd, image_url: dataUrl }));
+                              }} />
+                           </label>
+                        </div>
+
+                        <div className="space-y-2">
+                           <p className="text-[10px] font-bold text-zinc-600 uppercase ml-2">Audience</p>
+                           <select value={newAd.target_group} onChange={e => setNewAd({...newAd, target_group: e.target.value})} className="w-full bg-zinc-800 rounded-2xl p-4 text-white text-sm font-bold focus:outline-none focus:ring-2 ring-blue-500/50">
+                              <option value="all">All users</option>
+                              <option value="unsubscribed">Unsubscribed users</option>
+                              <option value="subscribed">Subscribed users</option>
+                           </select>
                         </div>
 
                         <div className="space-y-2">
@@ -795,6 +862,68 @@ export const Admin: React.FC = () => {
                    </div>
                  ))}
                </div>
+            </motion.div>
+          )}
+
+          {activeTab === 'notifications' && (
+            <motion.div
+              key="notifications"
+              initial={{ opacity: 0, y: 10 }}
+              animate={{ opacity: 1, y: 0 }}
+              exit={{ opacity: 0, y: -10 }}
+              className="space-y-5"
+            >
+              <div className="bg-zinc-900/50 border border-zinc-800 rounded-3xl p-5 space-y-4">
+                <h3 className="text-sm font-black text-white uppercase tracking-wider">Push Notification Composer</h3>
+                <textarea
+                  value={pushForm.message}
+                  onChange={(e) => setPushForm({ ...pushForm, message: e.target.value })}
+                  placeholder="Notification message..."
+                  className="w-full bg-zinc-800 rounded-2xl p-4 text-white text-sm font-bold h-28 focus:outline-none focus:ring-2 ring-[#ccff00]/50"
+                />
+                <input
+                  value={pushForm.image_url}
+                  onChange={(e) => setPushForm({ ...pushForm, image_url: e.target.value })}
+                  placeholder="Image URL (optional)"
+                  className="w-full bg-zinc-800 rounded-2xl p-4 text-white text-sm font-bold placeholder:text-zinc-600 focus:outline-none focus:ring-2 ring-[#ccff00]/50"
+                />
+                <label className="text-[10px] font-bold text-zinc-500 uppercase tracking-widest cursor-pointer block">
+                  Upload image
+                  <input type="file" accept="image/*" className="hidden" onChange={(e) => {
+                    const file = e.target.files?.[0];
+                    if (file) handleUploadAsDataUrl(file, (dataUrl) => setPushForm({ ...pushForm, image_url: dataUrl }));
+                  }} />
+                </label>
+
+                <div className="flex items-center gap-2">
+                  <input
+                    id="withButton"
+                    type="checkbox"
+                    checked={pushForm.with_button}
+                    onChange={(e) => setPushForm({ ...pushForm, with_button: e.target.checked })}
+                  />
+                  <label htmlFor="withButton" className="text-xs font-bold text-zinc-300">Include inline redirect button</label>
+                </div>
+
+                {pushForm.with_button && (
+                  <div className="grid grid-cols-1 gap-3">
+                    <input value={pushForm.button_text} onChange={(e) => setPushForm({ ...pushForm, button_text: e.target.value })} placeholder="Inline button text" className="w-full bg-zinc-800 rounded-2xl p-4 text-white text-sm font-bold placeholder:text-zinc-600 focus:outline-none focus:ring-2 ring-[#ccff00]/50" />
+                    <input value={pushForm.button_url} onChange={(e) => setPushForm({ ...pushForm, button_url: e.target.value })} placeholder="Inline button URL" className="w-full bg-zinc-800 rounded-2xl p-4 text-white text-sm font-bold placeholder:text-zinc-600 focus:outline-none focus:ring-2 ring-[#ccff00]/50" />
+                  </div>
+                )}
+
+                <select value={pushForm.target_group} onChange={(e) => setPushForm({ ...pushForm, target_group: e.target.value })} className="w-full bg-zinc-800 rounded-2xl p-4 text-white text-sm font-bold focus:outline-none focus:ring-2 ring-[#ccff00]/50">
+                  <option value="all">All users</option>
+                  <option value="unsubscribed">Unsubscribed users</option>
+                  <option value="subscribed">Subscribed users</option>
+                  <option value="weekly">Weekly subscribers</option>
+                  <option value="monthly">Monthly subscribers</option>
+                </select>
+
+                <button disabled={isSendingNotification} onClick={sendPushNotification} className="w-full py-4 rounded-2xl bg-[#ccff00] text-black font-black uppercase tracking-widest text-xs disabled:opacity-50">
+                  {isSendingNotification ? 'Sending...' : 'Push Notification'}
+                </button>
+              </div>
             </motion.div>
           )}
         </AnimatePresence>

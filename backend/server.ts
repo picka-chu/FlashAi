@@ -276,6 +276,29 @@ async function startServer() {
     return current.count > RATE_LIMIT_MAX;
   };
 
+  const ADMIN_TASKS_KEY = "admin_tasks_v1";
+  const ADMIN_ADS_KEY = "admin_ads_v1";
+
+  const getCachedCollection = async <T = any>(key: string): Promise<T[]> => {
+    const { data } = await supabase.from("api_cache").select("data").eq("endpoint", key).maybeSingle();
+    const raw = data?.data;
+    return Array.isArray(raw) ? raw : [];
+  };
+
+  const setCachedCollection = async (key: string, list: any[]) => {
+    await supabase.from("api_cache").upsert({
+      endpoint: key,
+      data: list,
+      updated_at: new Date().toISOString(),
+    }, { onConflict: "endpoint" });
+  };
+
+  const normalizeAudience = (value: string) => {
+    const v = String(value || "all").toLowerCase();
+    if (["all", "subscribed", "unsubscribed", "weekly", "monthly", "admin"].includes(v)) return v;
+    return "all";
+  };
+
   // Usage Logging Middleware
   app.use("*", async (c, next) => {
     const start = Date.now();
@@ -1330,34 +1353,70 @@ async function startServer() {
 
   // Task Management
   app.get("/api/admin/tasks", adminOnly, async (c) => {
-    const { data: tasks } = await supabase.from("tasks").select("*").order("created_at", { ascending: false });
-    return c.json(tasks || []);
+    const tasks = await getCachedCollection<any>(ADMIN_TASKS_KEY);
+    tasks.sort((a, b) => new Date(b.created_at || 0).getTime() - new Date(a.created_at || 0).getTime());
+    return c.json(tasks);
   });
 
   app.post("/api/admin/tasks", adminOnly, async (c) => {
     const body = await c.req.json();
-    const { data, error } = await supabase.from("tasks").insert([body]).select().single();
-    if (error) return c.json({ error: error.message }, 400);
-    return c.json(data);
+    const tasks = await getCachedCollection<any>(ADMIN_TASKS_KEY);
+
+    const task = {
+      id: crypto.randomUUID(),
+      title: String(body.title || "").trim(),
+      description: String(body.description || "").trim(),
+      reward: Number(body.reward || 10),
+      url: String(body.url || "").trim(),
+      buttonLabel: String(body.buttonLabel || "Claim").trim(),
+      image_url: String(body.image_url || "").trim(),
+      active: body.active !== false,
+      created_at: new Date().toISOString(),
+    };
+
+    if (!task.title || !task.description) return c.json({ error: "Title and description are required" }, 400);
+
+    await setCachedCollection(ADMIN_TASKS_KEY, [task, ...tasks]);
+    return c.json(task);
   });
 
   app.delete("/api/admin/tasks/:id", adminOnly, async (c) => {
     const id = c.req.param("id");
-    await supabase.from("tasks").delete().eq("id", id);
+    const tasks = await getCachedCollection<any>(ADMIN_TASKS_KEY);
+    await setCachedCollection(ADMIN_TASKS_KEY, tasks.filter((t) => t.id !== id));
     return c.json({ success: true });
   });
 
   // Ad Management
   app.get("/api/admin/ads", adminOnly, async (c) => {
-    const { data: ads } = await supabase.from("ads").select("*").order("created_at", { ascending: false });
-    return c.json(ads || []);
+    const ads = await getCachedCollection<any>(ADMIN_ADS_KEY);
+    ads.sort((a, b) => new Date(b.created_at || 0).getTime() - new Date(a.created_at || 0).getTime());
+    return c.json(ads);
   });
 
   app.post("/api/admin/ads", adminOnly, async (c) => {
     const body = await c.req.json();
-    const { data, error } = await supabase.from("ads").insert([body]).select().single();
-    if (error) return c.json({ error: error.message }, 400);
-    return c.json(data);
+    const ads = await getCachedCollection<any>(ADMIN_ADS_KEY);
+
+    const ad = {
+      id: crypto.randomUUID(),
+      title: String(body.title || "").trim(),
+      subtitle: String(body.subtitle || "").trim(),
+      image_url: String(body.image_url || "").trim(),
+      link: String(body.link || "").trim(),
+      cta: String(body.cta || "Check Out").trim(),
+      active: body.active !== false,
+      target_group: normalizeAudience(body.target_group || body.target_plan || "all"),
+      expires_at: body.expires_at ? new Date(body.expires_at).toISOString() : null,
+      primary_color: String(body.primary_color || "#3b82f6"),
+      created_at: new Date().toISOString(),
+      views: 0,
+      clicks: 0,
+    };
+
+    if (!ad.title || !ad.subtitle) return c.json({ error: "Ad title and subtitle are required" }, 400);
+    await setCachedCollection(ADMIN_ADS_KEY, [ad, ...ads]);
+    return c.json(ad);
   });
 
   app.post("/api/admin/ads/broadcast", adminOnly, async (c) => {
@@ -1365,46 +1424,34 @@ async function startServer() {
     if (!adId || !targetGroup) return c.json({ error: "Missing parameters" }, 400);
 
     try {
-      const { data: ad } = await supabase.from("ads").select("*").eq("id", adId).single();
+      const ads = await getCachedCollection<any>(ADMIN_ADS_KEY);
+      const ad = ads.find((a) => a.id === adId);
       if (!ad) return c.json({ error: "Ad not found" }, 404);
 
       let query = supabase.from("users").select("telegram_id");
-      
       if (targetGroup === 'subscribed') query = query.neq('plan', 'free');
       if (targetGroup === 'unsubscribed') query = query.eq('plan', 'free');
       if (targetGroup === 'weekly') query = query.eq('plan', 'weekly');
       if (targetGroup === 'monthly') query = query.eq('plan', 'monthly');
 
-      const { data: users } = await query;
-      
+      const { data: users } = await query.not("telegram_id", "is", null);
       if (!users || !bot) return c.json({ success: true, sentCount: 0 });
 
       let count = 0;
       for (const user of users) {
         try {
-          const message = `*${ad.title}*\n\n${ad.subtitle}`;
-          const keyboard = ad.link ? Markup.inlineKeyboard([
-            [Markup.button.url(ad.cta || "Check it Out", ad.link)]
-          ]) : undefined;
-          
+          const message = `*${ad.title}*
+
+${ad.subtitle}`;
+          const keyboard = ad.link ? Markup.inlineKeyboard([[Markup.button.url(ad.cta || "Check it Out", ad.link)]]) : undefined;
           if (ad.image_url) {
-            await bot.telegram.sendPhoto(user.telegram_id, ad.image_url, {
-              caption: message,
-              parse_mode: 'Markdown',
-              ...keyboard
-            });
+            await bot.telegram.sendPhoto(user.telegram_id, ad.image_url, { caption: message, parse_mode: 'Markdown', ...keyboard });
           } else {
-            await bot.telegram.sendMessage(user.telegram_id, message, {
-              parse_mode: 'Markdown',
-              ...keyboard
-            });
+            await bot.telegram.sendMessage(user.telegram_id, message, { parse_mode: 'Markdown', ...keyboard });
           }
           count++;
-          // Rate limiting protection
           if (count % 20 === 0) await new Promise(r => setTimeout(r, 1000));
-        } catch (err) {
-          // Skip users who blocked the bot
-        }
+        } catch {}
       }
 
       return c.json({ success: true, sentCount: count });
@@ -1415,7 +1462,8 @@ async function startServer() {
 
   app.delete("/api/admin/ads/:id", adminOnly, async (c) => {
     const id = c.req.param("id");
-    await supabase.from("ads").delete().eq("id", id);
+    const ads = await getCachedCollection<any>(ADMIN_ADS_KEY);
+    await setCachedCollection(ADMIN_ADS_KEY, ads.filter((a) => a.id !== id));
     return c.json({ success: true });
   });
 
@@ -1463,36 +1511,94 @@ async function startServer() {
       return c.json({ error: e?.message || "Failed to notify user" }, 500);
     }
   });
+  app.post("/api/admin/notifications/send", adminOnly, async (c) => {
+    if (!bot) return c.json({ error: "Bot not configured" }, 500);
+
+    const body = await c.req.json().catch(() => ({} as any));
+    const message = String(body.message || "").trim();
+    const image_url = String(body.image_url || "").trim();
+    const with_button = Boolean(body.with_button);
+    const button_text = String(body.button_text || "").trim();
+    const button_url = String(body.button_url || appUrl).trim();
+    const target_group = normalizeAudience(body.target_group || "all");
+
+    if (!message) return c.json({ error: "Message is required" }, 400);
+
+    let query = supabase.from("users").select("telegram_id,plan").not("telegram_id", "is", null);
+    if (target_group === 'subscribed') query = query.neq('plan', 'free');
+    if (target_group === 'unsubscribed') query = query.eq('plan', 'free');
+    if (target_group === 'weekly') query = query.eq('plan', 'weekly');
+    if (target_group === 'monthly') query = query.eq('plan', 'monthly');
+    if (target_group === 'admin') query = query.eq('plan', 'admin');
+
+    const { data: users } = await query;
+    if (!users?.length) return c.json({ success: true, sentCount: 0 });
+
+    const keyboard = with_button ? Markup.inlineKeyboard([[Markup.button.url(button_text || "Open", button_url)]]) : undefined;
+
+    let sentCount = 0;
+    for (const user of users) {
+      try {
+        if (image_url) {
+          await bot.telegram.sendPhoto(user.telegram_id, image_url, { caption: message, ...keyboard });
+        } else {
+          await bot.telegram.sendMessage(user.telegram_id, message, keyboard ? { ...keyboard } : undefined);
+        }
+        sentCount += 1;
+        if (sentCount % 20 === 0) await new Promise((r) => setTimeout(r, 900));
+      } catch {}
+    }
+
+    return c.json({ success: true, sentCount });
+  });
+
 
   // Public Overrides
   app.get("/api/common/tasks", async (c) => {
-    const { data } = await supabase.from("tasks").select("*").eq("active", true);
-    return c.json(data || []);
+    const tasks = await getCachedCollection<any>(ADMIN_TASKS_KEY);
+    return c.json(tasks.filter((t) => t.active !== false));
   });
 
   app.get("/api/common/ads", async (c) => {
-    const now = new Date().toISOString();
-    const { data } = await supabase
-      .from("ads")
-      .select("*")
-      .eq("active", true)
-      .or(`expires_at.gt.${now},expires_at.is.null`)
-      .order("created_at", { ascending: false })
-      .limit(5);
+    const now = Date.now();
+    const ads = await getCachedCollection<any>(ADMIN_ADS_KEY);
 
-    return c.json(data || []);
+    const initData = c.req.header("X-TG-Init-Data") || "";
+    const tgUser = initData ? getTelegramUserFromInitData(initData) : null;
+    let userPlan = "free";
+    if (tgUser?.id) {
+      const { data: user } = await supabase.from("users").select("plan").eq("telegram_id", tgUser.id).maybeSingle();
+      userPlan = user?.plan || "free";
+    }
+
+    const filtered = ads.filter((ad) => {
+      if (ad.active === false) return false;
+      if (ad.expires_at && new Date(ad.expires_at).getTime() < now) return false;
+
+      const group = normalizeAudience(ad.target_group || "all");
+      if (group === "all") return true;
+      if (group === "subscribed") return userPlan !== "free";
+      if (group === "unsubscribed") return userPlan === "free";
+      if (group === "admin") return userPlan === "admin";
+      return userPlan === group;
+    });
+
+    filtered.sort((a, b) => new Date(b.created_at || 0).getTime() - new Date(a.created_at || 0).getTime());
+    return c.json(filtered.slice(0, 10));
   });
 
   app.post("/api/common/ads/:id/track", async (c) => {
     const id = c.req.param("id");
-    const { type } = await c.req.json(); // 'view' or 'click'
-    
-    if (type === 'view') {
-      await supabase.rpc('increment_ad_views', { ad_id: id });
-    } else if (type === 'click') {
-      await supabase.rpc('increment_ad_clicks', { ad_id: id });
-    }
-    
+    const { type } = await c.req.json().catch(() => ({ type: "view" }));
+
+    const ads = await getCachedCollection<any>(ADMIN_ADS_KEY);
+    const next = ads.map((ad) => {
+      if (ad.id !== id) return ad;
+      if (type === 'click') return { ...ad, clicks: Number(ad.clicks || 0) + 1 };
+      return { ...ad, views: Number(ad.views || 0) + 1 };
+    });
+    await setCachedCollection(ADMIN_ADS_KEY, next);
+
     return c.json({ success: true });
   });
 
