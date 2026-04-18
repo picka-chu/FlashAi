@@ -35,6 +35,8 @@ export const Analyze: React.FC = () => {
   const [images, setImages] = useState<string[]>([]);
   const [betSlipResult, setBetSlipResult] = useState<BetSlipAnalysis | null>(null);
   const [error, setError] = useState<string | null>(null);
+  const [showInsufficientSheet, setShowInsufficientSheet] = useState(false);
+  const [creditMeta, setCreditMeta] = useState({ required: 1, current: 0 });
   const [loadingMessageIndex, setLoadingMessageIndex] = useState(0);
   const fileInputRef = useRef<HTMLInputElement>(null);
   const scrollRef = useRef<HTMLDivElement>(null);
@@ -60,7 +62,7 @@ export const Analyze: React.FC = () => {
     updateCredits
   } = useUserStore();
 
-  const { hapticFeedback, initData } = useTelegram();
+  const { hapticFeedback, initData, tg } = useTelegram();
 
   useEffect(() => {
     let interval: NodeJS.Timeout;
@@ -96,6 +98,8 @@ export const Analyze: React.FC = () => {
 
           if (!response.ok) {
             if (response.status === 402) {
+              setCreditMeta({ required: Number(data.required || 1), current: Number(data.current || 0) });
+              if (user?.plan === 'free') setShowInsufficientSheet(true);
               setError(`Insufficient credits. You need ${data.required} but have ${data.current}.`);
             } else {
               setError(data.error || "Analysis failed.");
@@ -155,6 +159,8 @@ export const Analyze: React.FC = () => {
     const requiredCredits = images.length > 0 ? 3 : 1;
     if (user.credits < requiredCredits) {
       hapticFeedback('error');
+      setCreditMeta({ required: requiredCredits, current: user.credits });
+      if (user.plan === 'free') setShowInsufficientSheet(true);
       setError(`Minimum ${requiredCredits} credits required for this analysis. You have ${user.credits}.`);
       return;
     }
@@ -178,6 +184,8 @@ export const Analyze: React.FC = () => {
 
         if (!response.ok) {
           if (response.status === 402) {
+            setCreditMeta({ required: Number(data.required || 1), current: Number(data.current || 0) });
+            if (user?.plan === 'free') setShowInsufficientSheet(true);
             setError(`Insufficient credits. Required: ${data.required}, Current: ${data.current}`);
           } else {
             setError(data.error || "Analysis failed.");
@@ -800,7 +808,48 @@ export const Analyze: React.FC = () => {
         isOpen={isSignUpOpen} 
         onClose={() => setIsSignUpOpen(false)} 
       />
+
+      <AnimatePresence>
+        {showInsufficientSheet && user?.plan === 'free' && (
+          <>
+            <motion.div
+              initial={{ opacity: 0 }}
+              animate={{ opacity: 1 }}
+              exit={{ opacity: 0 }}
+              className="fixed inset-0 bg-black/70 z-[120]"
+              onClick={() => setShowInsufficientSheet(false)}
+            />
+            <motion.div
+              initial={{ y: '100%' }}
+              animate={{ y: 0 }}
+              exit={{ y: '100%' }}
+              className="fixed bottom-0 left-0 right-0 z-[121] bg-zinc-950 border-t border-zinc-800 rounded-t-[36px] p-6 space-y-4"
+            >
+              <h3 className="text-lg font-black text-white">Insufficient Credits</h3>
+              <p className="text-sm font-bold text-zinc-400 leading-relaxed">
+                You currently have <span className="text-white">{creditMeta.current}</span> credits, but this action needs <span className="text-white">{creditMeta.required}</span>. Upgrade now to continue instantly.
+              </p>
+
+              <button
+                onClick={() => {
+                  const upgradeUrl = `${window.location.origin}${window.location.pathname}?tab=profile`;
+                  tg?.openLink?.(upgradeUrl);
+                  setShowInsufficientSheet(false);
+                }}
+                className="w-full py-4 rounded-2xl bg-[#ccff00] text-black font-black uppercase tracking-widest text-xs"
+              >
+                Subscribe to continue
+              </button>
+              <button
+                onClick={() => setShowInsufficientSheet(false)}
+                className="w-full py-3 rounded-2xl bg-zinc-800 text-zinc-300 font-black text-xs uppercase"
+              >
+                Close
+              </button>
+            </motion.div>
+          </>
+        )}
+      </AnimatePresence>
     </div>
   );
 };
-
