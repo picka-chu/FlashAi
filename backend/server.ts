@@ -178,24 +178,79 @@ type UserHistoryItem = {
 };
 
 async function getUserHistory(telegramId: number): Promise<UserHistoryItem[]> {
-  const cacheKey = `user_history_${telegramId}`;
-  const { data } = await supabase
-    .from("api_cache")
-    .select("data")
-    .eq("endpoint", cacheKey)
-    .single();
+  try {
+    const { data, error } = await supabase
+      .from("user_history")
+      .select("id,fixture_id,match,home,away,prediction_market,confidence,reasoning,status,created_at,resolved_at")
+      .eq("telegram_id", telegramId)
+      .order("created_at", { ascending: false })
+      .limit(100);
 
-  const raw = data?.data;
-  return Array.isArray(raw) ? raw : [];
+    if (error) throw error;
+    return (data || []).map((row: any) => ({
+      id: row.id,
+      fixtureId: row.fixture_id || null,
+      match: row.match,
+      home: row.home,
+      away: row.away,
+      predictionMarket: row.prediction_market,
+      confidence: Number(row.confidence || 0),
+      reasoning: row.reasoning || "",
+      status: row.status || "pending",
+      created_at: row.created_at,
+      resolved_at: row.resolved_at || null,
+    }));
+  } catch (tableError: any) {
+    // Legacy fallback: history stored in api_cache blob.
+    if (tableError?.code && tableError.code !== "42P01") {
+      throw tableError;
+    }
+    const cacheKey = `user_history_${telegramId}`;
+    const { data } = await supabase
+      .from("api_cache")
+      .select("data")
+      .eq("endpoint", cacheKey)
+      .single();
+
+    const raw = data?.data;
+    return Array.isArray(raw) ? raw : [];
+  }
 }
 
 async function setUserHistory(telegramId: number, history: UserHistoryItem[]) {
-  const cacheKey = `user_history_${telegramId}`;
-  await supabase.from("api_cache").upsert({
-    endpoint: cacheKey,
-    data: history.slice(0, 100),
-    updated_at: new Date().toISOString(),
-  }, { onConflict: "endpoint" });
+  const trimmed = history.slice(0, 100);
+  try {
+    await supabase.from("user_history").delete().eq("telegram_id", telegramId);
+    if (trimmed.length > 0) {
+      const rows = trimmed.map((item) => ({
+        id: item.id,
+        telegram_id: telegramId,
+        fixture_id: item.fixtureId || null,
+        match: item.match,
+        home: item.home,
+        away: item.away,
+        prediction_market: item.predictionMarket,
+        confidence: Number(item.confidence || 0),
+        reasoning: item.reasoning || "",
+        status: item.status || "pending",
+        created_at: item.created_at || new Date().toISOString(),
+        resolved_at: item.resolved_at || null,
+      }));
+      const { error } = await supabase.from("user_history").insert(rows);
+      if (error) throw error;
+    }
+  } catch (tableError: any) {
+    // Legacy fallback: history stored in api_cache blob.
+    if (tableError?.code && tableError.code !== "42P01") {
+      throw tableError;
+    }
+    const cacheKey = `user_history_${telegramId}`;
+    await supabase.from("api_cache").upsert({
+      endpoint: cacheKey,
+      data: trimmed,
+      updated_at: new Date().toISOString(),
+    }, { onConflict: "endpoint" });
+  }
 }
 
 async function getCachedRegistration(telegramId: number): Promise<{ phone?: string; name?: string } | null> {
@@ -1202,8 +1257,7 @@ async function startServer() {
 
       const { data, error } = await supabase
         .from("users")
-        .update({ name, username })
-        .eq("telegram_id", tgUser.id)
+        .upsert({ telegram_id: tgUser.id, name, username, last_active: new Date().toISOString() }, { onConflict: "telegram_id" })
         .select("id,telegram_id,name,username,phone,credits,plan,role,photo_url")
         .single();
 
