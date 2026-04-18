@@ -392,20 +392,24 @@ async function startServer() {
    */
   async function syncUserCredits(userData: any) {
     const now = new Date();
-    const lastActive = userData.last_active ? new Date(userData.last_active) : null;
-    const isNewDay = !lastActive || lastActive.toDateString() !== now.toDateString();
+    const refreshKey = `credit_refresh_${userData.telegram_id}`;
+    const { data: refreshCache } = await supabase
+      .from("api_cache")
+      .select("data")
+      .eq("endpoint", refreshKey)
+      .maybeSingle();
 
-    let currentCredits = userData.credits || 0;
+    const lastRefreshIso = refreshCache?.data?.lastRefillAt || null;
+    const lastRefreshTs = lastRefreshIso ? new Date(lastRefreshIso).getTime() : 0;
+    const shouldRefill = !lastRefreshTs || (Date.now() - lastRefreshTs) >= 24 * 60 * 60 * 1000;
+
+    let currentCredits = Number(userData.credits || 0);
     const plan = userData.plan || "free";
     const config = PLAN_CONFIG[plan] || PLAN_CONFIG.free;
 
-    if (isNewDay) {
-      // Professional refill: If user has less than daily quota, refill to quota. 
-      // If they have more (e.g. from bonus), we don't downgrade them, just keep current.
-      if (currentCredits < config.dailyCredits) {
-        currentCredits = config.dailyCredits;
-      }
-      
+    if (shouldRefill) {
+      currentCredits = Math.max(currentCredits, config.dailyCredits);
+
       await supabase
         .from("users")
         .update({ 
@@ -413,6 +417,12 @@ async function startServer() {
           last_active: now.toISOString() 
         })
         .eq("telegram_id", userData.telegram_id);
+
+      await supabase.from("api_cache").upsert({
+        endpoint: refreshKey,
+        data: { lastRefillAt: now.toISOString(), plan, dailyCredits: config.dailyCredits },
+        updated_at: now.toISOString(),
+      }, { onConflict: "endpoint" });
     }
     
     return currentCredits;
@@ -768,7 +778,7 @@ async function startServer() {
 
         const isNewRegistration = !existingUser?.phone;
         const signupCredits = isNewRegistration
-          ? (existingUser?.referrer_id ? 7 : 5)
+          ? (existingUser?.referrer_id ? 5 : 3)
           : (existingUser?.credits || 0);
 
         // 2. Perform registration/update
@@ -816,8 +826,8 @@ async function startServer() {
         }
 
         const rewardText = isNewRegistration && existingUser?.referrer_id
-          ? "7 credits (5 signup + 2 referral bonus)"
-          : "5 free credits";
+          ? "5 credits (3 signup + 2 referral bonus)"
+          : "3 free credits";
         ctx.reply(`✅ Registration successful, ${firstName}!\n\nYou've been rewarded with ${rewardText}. Welcome to the elite squad! ⚽🔥`, {
           reply_markup: {
             remove_keyboard: true
@@ -919,7 +929,7 @@ async function startServer() {
           username: tgUser.username || "",
           role: isBootstrapAdmin ? "admin" : "user",
           plan: isBootstrapAdmin ? "admin" : "free",
-          credits: isBootstrapAdmin ? 999 : 0,
+          credits: isBootstrapAdmin ? 999 : 3,
           last_active: new Date().toISOString(),
         });
         if (insertError) throw insertError;
@@ -1687,7 +1697,7 @@ ${ad.subtitle}`;
       if (type === 'registration') {
         const { data } = await supabase.from("users").select("telegram_id").is("phone", null);
         users = data || [];
-        message = "⏳ *Time is running out!* Finish your registration now to claim your *5 free credits* and start winning. Most users win their first bet within 24 hours! ⚽🔥";
+        message = "⏳ *Time is running out!* Finish your registration now to claim your *3 free credits* and start winning. Most users win their first bet within 24 hours! ⚽🔥";
         ctaLabel = "🚀 Finish Registration";
       } else if (type === 'subscription') {
         const { data } = await supabase.from("users").select("telegram_id").eq("plan", "free");
@@ -1871,10 +1881,75 @@ ${ad.subtitle}`;
     }
   };
 
+  const runDailyFeaturedMatchFomo = async () => {
+    try {
+      if (!bot) return;
+
+      const todayKey = new Date().toISOString().slice(0, 10);
+      const checkpointKey = `automation_featured_fomo_${todayKey}`;
+      const { data: checkpoint } = await supabase.from("api_cache").select("data").eq("endpoint", checkpointKey).maybeSingle();
+      if (checkpoint?.data?.sent) return;
+
+      const matches = await getUpcomingMatches();
+      const featured = matches?.[0];
+      if (!featured) return;
+
+      const featuredLabel = `${featured.teams?.home?.name || "Home"} vs ${featured.teams?.away?.name || "Away"}`;
+      const kickoff = featured?.fixture?.date ? new Date(featured.fixture.date).toLocaleString() : "today";
+      const creativeAngles = [
+        "urgent and elite",
+        "sharp and data-first",
+        "bold and hype-driven",
+        "exclusive and premium",
+      ];
+      const angle = creativeAngles[Math.floor(Math.random() * creativeAngles.length)];
+
+      const { multiAgentService } = await import("../src/services/multiAgentService.js");
+      const messageForFree = await multiAgentService.generateMarketingMessage([
+        { match: featuredLabel, kickoff, audience: "free", angle, cta: "Unlock your edge" },
+      ]);
+      const messageForSubs = await multiAgentService.generateMarketingMessage([
+        { match: featuredLabel, kickoff, audience: "subscribed", angle, cta: "Open today’s top picks" },
+      ]);
+
+      const [{ data: freeUsers }, { data: subUsers }] = await Promise.all([
+        supabase.from("users").select("telegram_id").eq("plan", "free").not("telegram_id", "is", null),
+        supabase.from("users").select("telegram_id").neq("plan", "free").not("telegram_id", "is", null),
+      ]);
+
+      let sentCount = 0;
+      for (const user of freeUsers || []) {
+        try {
+          await bot.telegram.sendMessage(user.telegram_id, messageForFree || `⚽ Featured match today: ${featuredLabel}`,
+            { ...Markup.inlineKeyboard([[Markup.button.webApp("Upgrade & Analyze", appUrl)]]) });
+          sentCount += 1;
+        } catch {}
+      }
+
+      for (const user of subUsers || []) {
+        try {
+          await bot.telegram.sendMessage(user.telegram_id, messageForSubs || `⚽ Featured match today: ${featuredLabel}`,
+            { ...Markup.inlineKeyboard([[Markup.button.webApp("View Featured Match", appUrl)]]) });
+          sentCount += 1;
+        } catch {}
+      }
+
+      await supabase.from("api_cache").upsert({
+        endpoint: checkpointKey,
+        data: { sent: true, sentCount, featuredLabel, at: new Date().toISOString() },
+        updated_at: new Date().toISOString(),
+      }, { onConflict: "endpoint" });
+    } catch (error) {
+      console.error("Featured FOMO automation failed:", error);
+    }
+  };
+
   // Run once on startup, then on interval
   await ensureBootstrapAdminRole();
   refreshLiveCache();
+  runDailyFeaturedMatchFomo();
   setInterval(refreshLiveCache, CACHE_INTERVAL);
+  setInterval(runDailyFeaturedMatchFomo, 60 * 60 * 1000);
 
   console.log(`Server running on http://localhost:${PORT}`);
   serve({
