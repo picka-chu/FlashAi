@@ -71,204 +71,7 @@ const CountdownBadge: React.FC<{ expiresAt: string, color: string }> = ({ expire
   );
 };
 
-const TOP_PICKS_FALLBACK = [
-  { 
-    id: 'tp1', 
-    home: 'Real Madrid', 
-    away: 'Man City', 
-    homeShort: 'RMA',
-    awayShort: 'MCI',
-    league: 'Champions League', 
-    confidence: 94, 
-    time: '21:00',
-    date: 'Today',
-    gradient: 'from-white/10 via-zinc-900 to-sky-500/20'
-  },
-  { 
-    id: 'tp2', 
-    home: 'Arsenal', 
-    away: 'Bayern', 
-    homeShort: 'ARS',
-    awayShort: 'BAY',
-    league: 'Champions League', 
-    confidence: 88, 
-    time: '21:00',
-    date: 'Today',
-    gradient: 'from-red-500/20 via-zinc-900 to-red-600/10'
-  },
-  { 
-    id: 'tp3', 
-    home: 'PSG', 
-    away: 'Barcelona', 
-    homeShort: 'PSG',
-    awayShort: 'BAR',
-    league: 'Champions League', 
-    confidence: 91, 
-    time: '21:00',
-    date: 'Today',
-    gradient: 'from-blue-600/20 via-zinc-900 to-red-600/20'
-  },
-];
-
-const LIVE_OPPORTUNITIES = [
-  { id: 'l1', home: 'Liverpool', away: 'Chelsea', homeShort: 'LIV', awayShort: 'CHE', score: '1-1', minute: '72\'', status: 'Goal Likely', intensity: 'High Pressure', league: 'Premier League' },
-  { id: 'l2', home: 'PSG', away: 'Barcelona', homeShort: 'PSG', awayShort: 'BAR', score: '2-2', minute: '85\'', status: 'Late Drama', intensity: 'Extreme Pressure', league: 'Champions League' },
-];
-
-const TRENDING_MATCHES = [
-  { id: 1, teams: 'Inter vs AC Milan', activity: '24.5k analyzing', trend: '+12%' },
-  { id: 2, teams: 'Dortmund vs Atletico', activity: '18.2k analyzing', trend: '+8%' },
-  { id: 3, teams: 'Leverkusen vs West Ham', activity: '15.1k analyzing', trend: '+5%' },
-];
-
-const MOCK_LIVE = [
-  {
-    id: 'm1',
-    home: 'Real Madrid',
-    away: 'Barcelona',
-    homeShort: 'RMA',
-    awayShort: 'BAR',
-    homeLogo: 'https://media.api-sports.io/football/teams/541.png',
-    awayLogo: 'https://media.api-sports.io/football/teams/529.png',
-    score: '2-1',
-    minute: '65\'',
-    status: 'Live',
-    intensity: 'High Pressure',
-    league: 'La Liga'
-  },
-  {
-    id: 'm2',
-    home: 'Liverpool',
-    away: 'Man City',
-    homeShort: 'LIV',
-    awayShort: 'MCI',
-    homeLogo: 'https://media.api-sports.io/football/teams/40.png',
-    awayLogo: 'https://media.api-sports.io/football/teams/50.png',
-    score: '0-0',
-    minute: '12\'',
-    status: 'Live',
-    intensity: 'Tactical Battle',
-    league: 'Premier League'
-  },
-  {
-    id: 'm3',
-    home: 'Bayern Munich',
-    away: 'Dortmund',
-    homeShort: 'BAY',
-    awayShort: 'DOR',
-    homeLogo: 'https://media.api-sports.io/football/teams/157.png',
-    awayLogo: 'https://media.api-sports.io/football/teams/165.png',
-    score: '3-1',
-    minute: '82\'',
-    status: 'Live',
-    intensity: 'Goal Likely',
-    league: 'Bundesliga'
-  }
-];
-
-const MOCK_UPCOMING = [
-  {
-    id: 'u1',
-    home: 'Arsenal',
-    away: 'Chelsea',
-    homeShort: 'ARS',
-    awayShort: 'CHE',
-    homeLogo: 'https://media.api-sports.io/football/teams/42.png',
-    awayLogo: 'https://media.api-sports.io/football/teams/49.png',
-    league: 'Premier League',
-    confidence: 88,
-    time: '20:00',
-    date: 'Today',
-    gradient: 'from-red-500/20 via-zinc-900 to-red-600/10'
-  },
-  {
-    id: 'u2',
-    home: 'Inter Milan',
-    away: 'Juventus',
-    homeShort: 'INT',
-    awayShort: 'JUV',
-    homeLogo: 'https://media.api-sports.io/football/teams/505.png',
-    awayLogo: 'https://media.api-sports.io/football/teams/496.png',
-    league: 'Serie A',
-    confidence: 92,
-    time: '21:45',
-    date: 'Today',
-    gradient: 'from-blue-600/20 via-zinc-900 to-black'
-  },
-  {
-    id: 'u3',
-    home: 'PSG',
-    away: 'Lyon',
-    homeShort: 'PSG',
-    awayShort: 'LYO',
-    homeLogo: 'https://media.api-sports.io/football/teams/85.png',
-    awayLogo: 'https://media.api-sports.io/football/teams/80.png',
-    league: 'Ligue 1',
-    confidence: 95,
-    time: '21:00',
-    date: 'Today',
-    gradient: 'from-blue-900 via-zinc-900 to-red-900/20'
-  },
-  {
-    id: 'u4',
-    home: 'Benfica',
-    away: 'Porto',
-    homeShort: 'BEN',
-    awayShort: 'POR',
-    homeLogo: 'https://media.api-sports.io/football/teams/211.png',
-    awayLogo: 'https://media.api-sports.io/football/teams/212.png',
-    league: 'Primeira Liga',
-    confidence: 84,
-    time: '22:15',
-    date: 'Today',
-    gradient: 'from-red-600/20 via-zinc-900 to-blue-600/20'
-  },
-  {
-    id: 'u5',
-    home: 'Ajax',
-    away: 'PSV',
-    homeShort: 'AJA',
-    awayShort: 'PSV',
-    homeLogo: 'https://media.api-sports.io/football/teams/194.png',
-    awayLogo: 'https://media.api-sports.io/football/teams/197.png',
-    league: 'Eredivisie',
-    confidence: 81,
-    time: '18:45',
-    date: 'Today',
-    gradient: 'from-red-500/10 via-zinc-900 to-white/10'
-  }
-];
-
-const ADS = [
-  { 
-    id: 1, 
-    title: 'Unlock Elite AI Insights', 
-    sub: 'Get 95%+ confidence picks daily.', 
-    cta: 'Upgrade Now', 
-    icon: ShieldCheck, 
-    bg: 'from-[#ccff00] to-[#aacc00]',
-    deco: Target,
-    darkText: true
-  },
-  { 
-    id: 2, 
-    title: 'Join VIP Channel', 
-    sub: 'Get instant alerts on Telegram.', 
-    cta: 'Join Now', 
-    icon: Star, 
-    bg: 'from-blue-500 to-blue-700',
-    deco: Rocket
-  },
-  { 
-    id: 3, 
-    title: 'Refer & Earn Credits', 
-    sub: 'Get 50 credits for every friend.', 
-    cta: 'Invite Friends', 
-    icon: Zap, 
-    bg: 'from-purple-500 to-purple-700',
-    deco: Sparkles
-  }
-];
+const ADS: any[] = [];
 
 interface HomeProps {
   onTabChange: (tab: any) => void;
@@ -292,6 +95,7 @@ export const Home: React.FC<HomeProps> = ({ onTabChange }) => {
   const [upcomingMatches, setUpcomingMatches] = useState<any[]>([]);
   const [trendingMatches, setTrendingMatches] = useState<any[]>([]);
   const [dynamicAds, setDynamicAds] = useState<any[]>([]);
+  const [activities, setActivities] = useState<any[]>([]);
   const [isLoading, setIsLoading] = useState(true);
   
   const topPicksRef = useRef<HTMLDivElement>(null);
@@ -302,7 +106,7 @@ export const Home: React.FC<HomeProps> = ({ onTabChange }) => {
   const { hapticFeedback, tg } = useTelegram();
 
   useEffect(() => {
-    const activeAd = (dynamicAds.length > 0 ? dynamicAds : ADS)[adIndex];
+    const activeAd = dynamicAds[adIndex];
     if (activeAd?.id && typeof activeAd.id === 'string') {
        fetch(`/api/common/ads/${activeAd.id}/track`, {
          method: 'POST',
@@ -333,10 +137,11 @@ export const Home: React.FC<HomeProps> = ({ onTabChange }) => {
   useEffect(() => {
     const fetchData = async () => {
       try {
-        const [upcoming, trending, adsRes] = await Promise.all([
+        const [upcoming, trending, adsRes, activitiesRes] = await Promise.all([
           getUpcomingMatches(),
           getTrendingPicks(),
-          fetch('/api/common/ads').then(r => r.json())
+          fetch('/api/common/ads', { headers: { 'X-TG-Init-Data': tg?.initData || '' } }).then(r => r.json()),
+          fetch('/api/user/activities', { headers: { 'X-TG-Init-Data': tg?.initData || '' } }).then(r => r.ok ? r.json() : [])
         ]);
         
         if (adsRes && adsRes.length > 0) {
@@ -344,7 +149,7 @@ export const Home: React.FC<HomeProps> = ({ onTabChange }) => {
         }
         
         const mappedUpcoming = upcoming.map((m: any, i: number) => {
-          const leagueName = m.league?.name || m.league?.displayName || 'Leagues';
+          const leagueName = m.league?.name || m.league?.displayName || m.competition?.name || 'Unknown League';
           return {
             ...m,
             id: m.fixture.id,
@@ -355,7 +160,7 @@ export const Home: React.FC<HomeProps> = ({ onTabChange }) => {
             homeLogo: m.teams.home.logo,
             awayLogo: m.teams.away.logo,
             league: leagueName,
-            confidence: Math.floor(Math.random() * 15) + 80, // Simulated confidence for UI
+            confidence: m.confidence || null,
             time: new Date(m.fixture.date).toLocaleTimeString('en-GB', { hour: '2-digit', minute: '2-digit' }),
             date: (() => {
               const matchDate = new Date(m.fixture.date);
@@ -372,28 +177,26 @@ export const Home: React.FC<HomeProps> = ({ onTabChange }) => {
         });
 
         if (trending && trending.length > 0) {
-          setTrendingMatches(trending.map((t: any, i: number) => {
-            const clicks = t.clicks;
-            const activityStr = `${clicks}`;
-              
+          setTrendingMatches(trending.map((t: any) => {
             return {
               id: t.id,
               teams: t.teams,
-              activity: activityStr,
-              trend: `+${Math.floor(Math.random() * 10) + 2}%`
+              activity: String(t.clicks || 0),
             };
           }));
-        } else if (mappedUpcoming.length > 0) {
-          // Fallback to real upcoming matches if no trending data yet
-          setTrendingMatches(mappedUpcoming.slice(0, 3).map((m: any) => ({
-            id: m.id,
-            teams: `${m.home} vs ${m.away}`,
-            activity: `${Math.floor(Math.random() * 20) + 5}`,
-            trend: `+${Math.floor(Math.random() * 5) + 1}%`
-          })));
+        } else {
+          setTrendingMatches(mappedUpcoming.slice(0, 3).map((m: any) => {
+            const hash = String(m.id || `${m.home}-${m.away}`).split('').reduce((acc: number, c: string) => acc + c.charCodeAt(0), 0);
+            return {
+              id: m.id,
+              teams: `${m.home} vs ${m.away}`,
+              activity: String(10 + (hash % 90)),
+            };
+          }));
         }
 
-        setUpcomingMatches(mappedUpcoming.slice(0, 20));
+        setUpcomingMatches(mappedUpcoming.slice(0, 200));
+        setActivities(Array.isArray(activitiesRes) ? activitiesRes : []);
       } catch (error) {
         console.error("Failed to fetch matches:", error);
         setUpcomingMatches([]);
@@ -422,7 +225,8 @@ export const Home: React.FC<HomeProps> = ({ onTabChange }) => {
 
   // Auto-scroll for Ads
   useEffect(() => {
-    const adsToScroll = dynamicAds.length > 0 ? dynamicAds : ADS;
+    const adsToScroll = dynamicAds;
+    if (!adsToScroll.length) return;
     const interval = setInterval(() => {
       if (adsRef.current) {
         const nextIndex = (adIndex + 1) % adsToScroll.length;
@@ -447,7 +251,7 @@ export const Home: React.FC<HomeProps> = ({ onTabChange }) => {
   };
 
   const handleAnalyze = (match: any) => {
-    if (!user) {
+    if (!user?.phone) {
       hapticFeedback('medium');
       setIsSignUpOpen(true);
       return;
@@ -468,11 +272,17 @@ export const Home: React.FC<HomeProps> = ({ onTabChange }) => {
           {user?.phone ? (
             <>
               <div className="relative">
-                <img 
-                  src={user.photo_url || "https://i.pravatar.cc/150?img=11"} 
-                  alt="User" 
-                  className="w-10 h-10 rounded-full border-2 border-[#ccff00]/50" 
-                />
+                {user.photo_url ? (
+                  <img 
+                    src={user.photo_url}
+                    alt="User" 
+                    className="w-10 h-10 rounded-full border-2 border-[#ccff00]/50 object-cover" 
+                  />
+                ) : (
+                  <div className="w-10 h-10 rounded-full border-2 border-[#ccff00]/50 bg-zinc-800 flex items-center justify-center">
+                    <Users className="w-4 h-4 text-zinc-400" />
+                  </div>
+                )}
                 <div className="absolute bottom-0 right-0 w-2.5 h-2.5 bg-[#ccff00] rounded-full border-2 border-[#0a0a0a]"></div>
               </div>
               <div>
@@ -587,9 +397,11 @@ export const Home: React.FC<HomeProps> = ({ onTabChange }) => {
 
                   <div className="flex flex-col items-center gap-2">
                     <div className="text-3xl font-black text-black/10 italic tracking-tighter">VS</div>
-                    <div className="px-4 py-1.5 rounded-full bg-black shadow-lg">
-                      <span className="text-[11px] font-black text-[#ccff00]">{upcomingMatches[0].confidence}% win</span>
-                    </div>
+                    {upcomingMatches[0].confidence ? (
+                      <div className="px-4 py-1.5 rounded-full bg-black shadow-lg">
+                        <span className="text-[11px] font-black text-[#ccff00]">{upcomingMatches[0].confidence}% win</span>
+                      </div>
+                    ) : null}
                   </div>
 
                   <div className="flex flex-col items-center gap-3 flex-1">
@@ -601,16 +413,7 @@ export const Home: React.FC<HomeProps> = ({ onTabChange }) => {
                 </div>
 
                 <div className="mt-8 pt-6 border-t border-black/10 flex items-center justify-between">
-                  <div className="flex items-center gap-3">
-                    <div className="flex -space-x-2">
-                      {[1, 2, 3].map((i) => (
-                        <img key={i} src={`https://i.pravatar.cc/100?img=${i + 20}`} className="w-6 h-6 rounded-full border-2 border-[#ccff00]" />
-                      ))}
-                    </div>
-                    <span className="text-[10px] font-bold text-black/60">
-                      <span className="text-black font-black">{Math.floor(Math.random() * 500) + 1200}</span> users analyzing
-                    </span>
-                  </div>
+                  <span className="text-[10px] font-bold text-black/60">Real-time fixture insights</span>
                   <button className="bg-black text-white px-4 py-2 rounded-2xl transition-colors active:scale-95">
                     <div className="flex items-center gap-2">
                       <Sparkles className="w-3.5 h-3.5 text-[#ccff00]" />
@@ -630,7 +433,7 @@ export const Home: React.FC<HomeProps> = ({ onTabChange }) => {
             onScroll={() => handleScroll(adsRef, setAdIndex)}
             className="flex gap-4 overflow-x-auto no-scrollbar snap-x py-2"
           >
-            {(dynamicAds.length > 0 ? dynamicAds : ADS).map((ad: any, i: number) => {
+            {dynamicAds.map((ad: any, i: number) => {
               const Icon = ad.icon || Megaphone;
               const Deco = ad.deco || Sparkles;
               const primaryColor = ad.primary_color || '#ccff00';
@@ -715,7 +518,7 @@ export const Home: React.FC<HomeProps> = ({ onTabChange }) => {
           
           {/* Pagination Dots */}
           <div className="flex justify-center gap-1.5 mt-4">
-            {(dynamicAds.length > 0 ? dynamicAds : ADS).map((_, i) => (
+            {dynamicAds.map((_, i) => (
               <div 
                 key={i} 
                 className={`h-1 rounded-full transition-all duration-300 ${i === adIndex ? 'w-6 bg-[#ccff00]' : 'w-1.5 bg-white/20'}`} 
@@ -810,7 +613,7 @@ export const Home: React.FC<HomeProps> = ({ onTabChange }) => {
                   </div>
                   <div className="bg-[#ccff00]/10 border border-[#ccff00]/20 px-2 py-0.5 rounded-full flex items-center gap-1">
                     <Activity className="w-3 h-3 text-[#ccff00]" />
-                    <span className="text-[10px] font-black text-[#ccff00]">{match.trend}</span>
+                    <span className="text-[10px] font-black text-[#ccff00]">{match.activity}</span>
                   </div>
                 </div>
 
@@ -824,18 +627,11 @@ export const Home: React.FC<HomeProps> = ({ onTabChange }) => {
                 </div>
 
                 {/* Social Proof Stack */}
-                <div className="flex items-center gap-3 mt-4 pt-3 border-t border-white/5">
-                  <div className="flex -space-x-2">
-                    <img className="w-6 h-6 rounded-full border-2 border-[#0a0a0a]" src={`https://i.pravatar.cc/100?img=${i*3 + 1}`} alt="User" />
-                    <img className="w-6 h-6 rounded-full border-2 border-[#0a0a0a]" src={`https://i.pravatar.cc/100?img=${i*3 + 2}`} alt="User" />
-                    <img className="w-6 h-6 rounded-full border-2 border-[#0a0a0a]" src={`https://i.pravatar.cc/100?img=${i*3 + 3}`} alt="User" />
-                  </div>
-                  <div className="flex items-center gap-1.5">
-                    <span className="text-[10px] font-black text-[#ccff00] bg-[#ccff00]/10 px-1.5 py-0.5 rounded">
-                      {match.activity}
-                    </span>
-                    <span className="text-[10px] font-bold text-zinc-500">People analyzing</span>
-                  </div>
+                <div className="flex items-center gap-1.5 mt-4 pt-3 border-t border-white/5">
+                  <span className="text-[10px] font-black text-[#ccff00] bg-[#ccff00]/10 px-1.5 py-0.5 rounded">
+                    {match.activity}
+                  </span>
+                  <span className="text-[10px] font-bold text-zinc-500">Recent interactions</span>
                 </div>
                 
                 {/* Subtle glow behind card */}
@@ -853,22 +649,22 @@ export const Home: React.FC<HomeProps> = ({ onTabChange }) => {
           </div>
 
           <div className="space-y-3">
-            {[
-              { id: 1, type: 'Analysis', match: 'Real Madrid vs Man City', time: '2 mins ago', status: 'Completed', icon: Target },
-              { id: 2, type: 'Prediction', match: 'Arsenal vs Bayern', time: '15 mins ago', status: 'Won', icon: Trophy },
-              { id: 3, type: 'Credit', match: 'Daily Reward', time: '1 hour ago', status: '+50 Credits', icon: Zap },
-            ].map((activity) => (
+            {activities.length === 0 ? (
+              <div className="bg-zinc-900/50 border border-zinc-800/50 rounded-2xl p-3 text-center text-xs text-zinc-500">
+                No recent activities yet.
+              </div>
+            ) : activities.slice(0, 5).map((activity) => (
               <div key={activity.id} className="bg-zinc-900/50 border border-zinc-800/50 rounded-2xl p-3 flex items-center justify-between">
                 <div className="flex items-center gap-3">
                   <div className="w-10 h-10 rounded-xl bg-zinc-800 flex items-center justify-center">
-                    <activity.icon className="w-5 h-5 text-[#ccff00]" />
+                    <Activity className="w-5 h-5 text-[#ccff00]" />
                   </div>
                   <div>
-                    <p className="text-xs font-black text-white">{activity.match}</p>
-                    <p className="text-[10px] font-bold text-zinc-500">{activity.type} • {activity.time}</p>
+                    <p className="text-xs font-black text-white">{activity.endpoint}</p>
+                    <p className="text-[10px] font-bold text-zinc-500">{new Date(activity.created_at).toLocaleString()}</p>
                   </div>
                 </div>
-                <span className={`text-[10px] font-black px-2 py-1 rounded-lg ${activity.status.includes('+') ? 'bg-[#ccff00]/10 text-[#ccff00]' : 'bg-white/5 text-zinc-400'}`}>
+                <span className="text-[10px] font-black px-2 py-1 rounded-lg bg-white/5 text-zinc-400">
                   {activity.status}
                 </span>
               </div>
@@ -885,5 +681,3 @@ export const Home: React.FC<HomeProps> = ({ onTabChange }) => {
     </div>
   );
 };
-
-
