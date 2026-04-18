@@ -1073,20 +1073,60 @@ async function startServer() {
       }
 
       let count = 0;
+      const twentyFourHoursAgo = new Date(Date.now() - 24 * 60 * 60 * 1000).toISOString();
+      
       for (const u of users) {
         try {
+          // RATE LIMITING: Check if user was notified in the last 24 hours
+          const { data: recentNotification } = await supabase
+            .from("notification_logs")
+            .select("id")
+            .eq("telegram_id", u.telegram_id)
+            .eq("message_type", type)
+            .gte("sent_at", twentyFourHoursAgo)
+            .single();
+
+          if (recentNotification) {
+            console.log(`Skipping user ${u.telegram_id}: Already notified in last 24h`);
+            continue; // Skip this user to prevent message exhaustion
+          }
+
           await bot.telegram.sendMessage(u.telegram_id, message, {
             parse_mode: 'Markdown',
             ...Markup.inlineKeyboard([[Markup.button.webApp(ctaLabel, appUrl)]])
           });
+          
+          // Log the notification for rate limiting
+          await supabase.from("notification_logs").insert({
+            telegram_id: u.telegram_id,
+            message_type: type,
+            message_content: message.substring(0, 200),
+            sent_at: new Date().toISOString(),
+            success: true
+          });
+          
           count++;
-          if (count % 25 === 0) await new Promise(r => setTimeout(r, 1000));
-        } catch (err) {
-          console.error(`Failed to send message to user ${u.telegram_id}:`, err);
+          
+          // Add delay every 25 messages to prevent Telegram API rate limiting
+          if (count % 25 === 0) {
+            await new Promise(r => setTimeout(r, 1000));
+          }
+        } catch (err: any) {
+          console.error(`Failed to send message to user ${u.telegram_id}:`, err.message);
+          
+          // Log failed notification
+          await supabase.from("notification_logs").insert({
+            telegram_id: u.telegram_id,
+            message_type: type,
+            message_content: message.substring(0, 200),
+            sent_at: new Date().toISOString(),
+            success: false,
+            error_message: err.message
+          });
         }
       }
 
-      return c.json({ success: true, processed: count });
+      return c.json({ success: true, processed: count, skipped: users.length - count });
     } catch (e: any) {
       console.error("Retention automation error:", e.message);
       return c.json({ error: e.message }, 500);
