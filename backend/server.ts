@@ -497,11 +497,7 @@ async function startServer() {
         })
         .eq("telegram_id", userData.telegram_id);
 
-      await supabase.from("api_cache").upsert({
-        endpoint: refreshKey,
-        data: { lastRefillAt: now.toISOString(), plan, dailyCredits: config.dailyCredits },
-        updated_at: now.toISOString(),
-      }, { onConflict: "endpoint" });
+      await supabase.from("users").update({ credits: currentCredits }).eq("telegram_id", userData.telegram_id);
     }
     
     return currentCredits;
@@ -998,12 +994,12 @@ async function startServer() {
           }
         });
 
-        // Small delay then send the open app button
-        setTimeout(() => {
-          ctx.reply("Ready to analyze? Click the button below:", Markup.inlineKeyboard([
-            [Markup.button.webApp("Open Flash AI", appUrl)]
-          ]));
-        }, 1000);
+        // Send inline keyboard with Start Analysis button immediately
+        ctx.reply("Ready to analyze? Click below:", Markup.inlineKeyboard([
+          [Markup.button.webApp("⚡ Start Analysis", appUrl)],
+          [Markup.button.callback("📊 View Matches", "matches_tab")],
+          [Markup.button.callback("👤 My Profile", "profile_tab")]
+        ]));
 
       } catch (err) {
         console.error("Unexpected error in registration:", err);
@@ -1761,8 +1757,10 @@ ${ad.subtitle}`;
     const body = await c.req.json().catch(() => ({} as any));
     const message = String(body.message || "").trim();
     const image_url = String(body.image_url || "").trim();
-    const with_button = Boolean(body.with_button);
-    const button_text = String(body.button_text || "").trim();
+    const with_app_button = Boolean(body.with_app_button);
+    const app_button_text = String(body.app_button_text || "Open Flash AI").trim();
+    const with_url_button = Boolean(body.with_url_button);
+    const url_button_text = String(body.url_button_text || "Learn More").trim();
     const button_url = String(body.button_url || appUrl).trim();
     const target_group = normalizeAudience(body.target_group || "all");
 
@@ -1778,7 +1776,15 @@ ${ad.subtitle}`;
     const { data: users } = await query;
     if (!users?.length) return c.json({ success: true, sentCount: 0 });
 
-    const keyboard = with_button ? Markup.inlineKeyboard([[Markup.button.url(button_text || "Open", button_url)]]) : undefined;
+    // Build keyboard based on button type
+    let keyboard: any = undefined;
+    if (with_app_button && app_button_text) {
+      // App button - opens the web app
+      keyboard = Markup.inlineKeyboard([[Markup.button.webApp(app_button_text, appUrl)]]);
+    } else if (with_url_button && url_button_text && button_url) {
+      // External URL button
+      keyboard = Markup.inlineKeyboard([[Markup.button.url(url_button_text, button_url)]]);
+    }
 
     let sentCount = 0;
     for (const user of users) {
@@ -1955,20 +1961,60 @@ ${ad.subtitle}`;
       }
 
       let count = 0;
+      const twentyFourHoursAgo = new Date(Date.now() - 24 * 60 * 60 * 1000).toISOString();
+      
       for (const u of users) {
         try {
+          // RATE LIMITING: Check if user was notified in the last 24 hours
+          const { data: recentNotification } = await supabase
+            .from("notification_logs")
+            .select("id")
+            .eq("telegram_id", u.telegram_id)
+            .eq("message_type", type)
+            .gte("sent_at", twentyFourHoursAgo)
+            .single();
+
+          if (recentNotification) {
+            console.log(`Skipping user ${u.telegram_id}: Already notified in last 24h`);
+            continue; // Skip this user to prevent message exhaustion
+          }
+
           await bot.telegram.sendMessage(u.telegram_id, message, {
             parse_mode: 'Markdown',
             ...Markup.inlineKeyboard([[Markup.button.webApp(ctaLabel, appUrl)]])
           });
+          
+          // Log the notification for rate limiting
+          await supabase.from("notification_logs").insert({
+            telegram_id: u.telegram_id,
+            message_type: type,
+            message_content: message.substring(0, 200),
+            sent_at: new Date().toISOString(),
+            success: true
+          });
+          
           count++;
-          if (count % 25 === 0) await new Promise(r => setTimeout(r, 1000));
-        } catch (err) {
-          console.error(`Failed to send message to user ${u.telegram_id}:`, err);
+          
+          // Add delay every 25 messages to prevent Telegram API rate limiting
+          if (count % 25 === 0) {
+            await new Promise(r => setTimeout(r, 1000));
+          }
+        } catch (err: any) {
+          console.error(`Failed to send message to user ${u.telegram_id}:`, err.message);
+          
+          // Log failed notification
+          await supabase.from("notification_logs").insert({
+            telegram_id: u.telegram_id,
+            message_type: type,
+            message_content: message.substring(0, 200),
+            sent_at: new Date().toISOString(),
+            success: false,
+            error_message: err.message
+          });
         }
       }
 
-      return c.json({ success: true, processed: count });
+      return c.json({ success: true, processed: count, skipped: users.length - count });
     } catch (e: any) {
       console.error("Retention automation error:", e.message);
       return c.json({ error: e.message }, 500);

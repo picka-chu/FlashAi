@@ -75,8 +75,10 @@ export const Admin: React.FC = () => {
   const [pushForm, setPushForm] = useState({
     message: '',
     image_url: '',
-    with_button: false,
-    button_text: '',
+    with_app_button: false,
+    app_button_text: '',
+    with_url_button: false,
+    url_button_text: '',
     button_url: '',
     target_group: 'all'
   });
@@ -357,7 +359,7 @@ export const Admin: React.FC = () => {
       const data = await res.json().catch(() => ({}));
       if (res.ok) {
         showAlert(`Push sent to ${data.sentCount ?? 0} users.`);
-        setPushForm({ message: '', image_url: '', with_button: false, button_text: '', button_url: '', target_group: 'all' });
+        setPushForm({ message: '', image_url: '', with_app_button: false, app_button_text: '', with_url_button: false, url_button_text: '', button_url: '', target_group: 'all' });
       } else {
         showAlert(data.error || 'Failed to send push notification');
       }
@@ -895,22 +897,53 @@ export const Admin: React.FC = () => {
                   }} />
                 </label>
 
-                <div className="flex items-center gap-2">
-                  <input
-                    id="withButton"
-                    type="checkbox"
-                    checked={pushForm.with_button}
-                    onChange={(e) => setPushForm({ ...pushForm, with_button: e.target.checked })}
-                  />
-                  <label htmlFor="withButton" className="text-xs font-bold text-zinc-300">Include inline redirect button</label>
-                </div>
-
-                {pushForm.with_button && (
-                  <div className="grid grid-cols-1 gap-3">
-                    <input value={pushForm.button_text} onChange={(e) => setPushForm({ ...pushForm, button_text: e.target.value })} placeholder="Inline button text" className="w-full bg-zinc-800 rounded-2xl p-4 text-white text-sm font-bold placeholder:text-zinc-600 focus:outline-none focus:ring-2 ring-[#ccff00]/50" />
-                    <input value={pushForm.button_url} onChange={(e) => setPushForm({ ...pushForm, button_url: e.target.value })} placeholder="Inline button URL" className="w-full bg-zinc-800 rounded-2xl p-4 text-white text-sm font-bold placeholder:text-zinc-600 focus:outline-none focus:ring-2 ring-[#ccff00]/50" />
+                <div className="space-y-4">
+                  <div className="flex items-center gap-2">
+                    <input
+                      id="withAppButton"
+                      type="checkbox"
+                      checked={pushForm.with_app_button}
+                      onChange={(e) => setPushForm({ ...pushForm, with_app_button: e.target.checked, with_url_button: e.target.checked ? false : pushForm.with_url_button })}
+                    />
+                    <label htmlFor="withAppButton" className="text-xs font-bold text-zinc-300">Open App Button (sets button text only)</label>
                   </div>
-                )}
+
+                  {pushForm.with_app_button && (
+                    <input 
+                      value={pushForm.app_button_text} 
+                      onChange={(e) => setPushForm({ ...pushForm, app_button_text: e.target.value })} 
+                      placeholder="App button text (e.g., Open Flash AI)" 
+                      className="w-full bg-zinc-800 rounded-2xl p-4 text-white text-sm font-bold placeholder:text-zinc-600 focus:outline-none focus:ring-2 ring-[#ccff00]/50" 
+                    />
+                  )}
+
+                  <div className="flex items-center gap-2">
+                    <input
+                      id="withUrlButton"
+                      type="checkbox"
+                      checked={pushForm.with_url_button}
+                      onChange={(e) => setPushForm({ ...pushForm, with_url_button: e.target.checked, with_app_button: e.target.checked ? false : pushForm.with_app_button })}
+                    />
+                    <label htmlFor="withUrlButton" className="text-xs font-bold text-zinc-300">External URL Button (sets button text + URL)</label>
+                  </div>
+
+                  {pushForm.with_url_button && (
+                    <div className="grid grid-cols-1 gap-3">
+                      <input 
+                        value={pushForm.url_button_text} 
+                        onChange={(e) => setPushForm({ ...pushForm, url_button_text: e.target.value })} 
+                        placeholder="URL button text" 
+                        className="w-full bg-zinc-800 rounded-2xl p-4 text-white text-sm font-bold placeholder:text-zinc-600 focus:outline-none focus:ring-2 ring-[#ccff00]/50" 
+                      />
+                      <input 
+                        value={pushForm.button_url} 
+                        onChange={(e) => setPushForm({ ...pushForm, button_url: e.target.value })} 
+                        placeholder="External URL (e.g., https://example.com)" 
+                        className="w-full bg-zinc-800 rounded-2xl p-4 text-white text-sm font-bold placeholder:text-zinc-600 focus:outline-none focus:ring-2 ring-[#ccff00]/50" 
+                      />
+                    </div>
+                  )}
+                </div>
 
                 <select value={pushForm.target_group} onChange={(e) => setPushForm({ ...pushForm, target_group: e.target.value })} className="w-full bg-zinc-800 rounded-2xl p-4 text-white text-sm font-bold focus:outline-none focus:ring-2 ring-[#ccff00]/50">
                   <option value="all">All users</option>
