@@ -12,7 +12,9 @@ CREATE TABLE IF NOT EXISTS public.users (
   telegram_id BIGINT UNIQUE NOT NULL,
   name TEXT,
   username TEXT,
+  phone TEXT,
   photo_url TEXT,
+  referrer_id BIGINT,
   role TEXT NOT NULL DEFAULT 'user' CHECK (role IN ('user', 'admin')),
   plan TEXT NOT NULL DEFAULT 'free' CHECK (plan IN ('free', 'weekly', 'monthly')),
   credits INTEGER NOT NULL DEFAULT 5 CHECK (credits >= 0),
@@ -35,10 +37,9 @@ CREATE TABLE IF NOT EXISTS public.faqs (
 );
 
 CREATE TABLE IF NOT EXISTS public.api_cache (
-  key TEXT PRIMARY KEY,
+  endpoint TEXT PRIMARY KEY,
   data JSONB NOT NULL,
-  expires_at TIMESTAMPTZ NOT NULL,
-  created_at TIMESTAMPTZ NOT NULL DEFAULT now()
+  updated_at TIMESTAMPTZ NOT NULL DEFAULT now()
 );
 
 CREATE TABLE IF NOT EXISTS public.usage_logs (
@@ -79,7 +80,8 @@ CREATE INDEX IF NOT EXISTS idx_usage_logs_created_at ON public.usage_logs(create
 CREATE INDEX IF NOT EXISTS idx_usage_logs_telegram_id ON public.usage_logs(telegram_id);
 CREATE INDEX IF NOT EXISTS idx_tasks_active ON public.tasks(active);
 CREATE INDEX IF NOT EXISTS idx_ads_active ON public.ads(active);
-CREATE INDEX IF NOT EXISTS idx_api_cache_expires_at ON public.api_cache(expires_at);
+CREATE INDEX IF NOT EXISTS idx_users_referrer_id ON public.users(referrer_id);
+CREATE INDEX IF NOT EXISTS idx_api_cache_updated_at ON public.api_cache(updated_at DESC);
 
 -- 3) Triggers and functions
 CREATE OR REPLACE FUNCTION public.handle_updated_at()
