@@ -312,33 +312,32 @@ class MultiAgentService {
       Example: ["Real Madrid vs Manchester City", "Arsenal vs Bayern Munich"]
     `;
 
-    return executeWithRetry(async (apiKey, keyIndex) => {
+    return executeWithRetry(async (apiKey) => {
       let result: any = null;
       let lastError: any = null;
+
       for (const model of SEARCH_MODELS) {
-        const attempts = this.instances.length;
-        for (let attempt = 0; attempt < attempts; attempt++) {
-          const ai = this.getNextInstance();
-          try {
-            result = await ai.models.generateContent({
-              model,
-              contents: [{ role: "user", parts: [{ text: prompt }] }],
-              config: {
-                tools: [{ googleSearch: {} }] as any
-              }
-            });
-            break;
-          } catch (error: any) {
-            lastError = error;
-            if (this.isQuotaOrTransientError(error)) {
-              console.warn(`[Gemini fixtures fallback] ${model} failed (attempt ${attempt + 1}/${attempts}), trying next key/model.`);
-              continue;
+        try {
+          const ai = new GoogleGenAI({ apiKey });
+          result = await ai.models.generateContent({
+            model,
+            contents: [{ role: "user", parts: [{ text: prompt }] }],
+            config: {
+              tools: [{ googleSearch: {} }] as any
             }
+          });
+          break;
+        } catch (error: any) {
+          lastError = error;
+          if (!isRetryableGeminiError(error)) {
+            throw error;
           }
         }
-        if (result) break;
       }
-      if (!result) throw lastError || new Error("All search fallback models failed");
+
+      if (!result) {
+        throw lastError || new Error("All search fallback models failed");
+      }
 
       const text = result.text;
       if (!text) return [];
@@ -371,8 +370,7 @@ class MultiAgentService {
   }
 
   async analyzeBetSlip(images: string[]) {
-    return executeWithRetry(async (apiKey, keyIndex) => {
-      const ai = new GoogleGenAI({ apiKey });
+    return executeWithRetry(async (apiKey) => {
       const prompt = `
         You are an expert sports betting analyst. 
         Analyze the provided bet slip image(s). 
@@ -426,34 +424,30 @@ class MultiAgentService {
       let result: any = null;
       let lastError: any = null;
       for (const model of VISION_MODELS) {
-        const attempts = this.instances.length;
-        for (let attempt = 0; attempt < attempts; attempt++) {
-          const ai = this.getNextInstance();
-          try {
-            result = await ai.models.generateContent({
-              model,
-              contents: [{
-                role: "user",
-                parts: [
-                  { text: prompt },
-                  ...imageParts as any
-                ]
-              }],
-              config: {
-                responseMimeType: "application/json"
-              }
-            });
-            break;
-          } catch (error: any) {
-            lastError = error;
-            if (this.isQuotaOrTransientError(error)) {
-              console.warn(`[Gemini betslip fallback] ${model} failed (attempt ${attempt + 1}/${attempts}), trying next key/model.`);
-              continue;
+        try {
+          const ai = new GoogleGenAI({ apiKey });
+          result = await ai.models.generateContent({
+            model,
+            contents: [{
+              role: "user",
+              parts: [
+                { text: prompt },
+                ...(imageParts as any)
+              ]
+            }],
+            config: {
+              responseMimeType: "application/json"
             }
+          });
+          break;
+        } catch (error: any) {
+          lastError = error;
+          if (!isRetryableGeminiError(error)) {
+            throw error;
           }
         }
-        if (result) break;
       }
+
       if (!result) throw lastError || new Error("All betslip fallback models failed");
 
       const text = result.text;
