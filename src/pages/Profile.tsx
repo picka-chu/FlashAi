@@ -8,7 +8,6 @@ import {
   FileText, 
   ChevronRight,
   Pencil,
-  LogOut,
   Camera,
   ArrowLeft,
   Check,
@@ -47,7 +46,7 @@ const PLANS = [
     icon: Zap,
     color: 'text-zinc-400',
     bgColor: 'bg-zinc-900',
-    features: ['5 Daily credits', '1 Bet slip analysis', 'No AI chat after analysis']
+    features: ['3 Daily credits', '1 Bet slip analysis', 'No AI chat after analysis']
   },
   {
     id: 'weekly',
@@ -85,10 +84,12 @@ export const Profile: React.FC = () => {
   const [isViewingSubscriptions, setIsViewingSubscriptions] = useState(false);
   const [isViewingReferral, setIsViewingReferral] = useState(false);
   const [isViewingSupport, setIsViewingSupport] = useState(false);
+  const [isReportingIssue, setIsReportingIssue] = useState(false);
   const [referralTab, setReferralTab] = useState<'referral' | 'earn'>('referral');
   const [supportTab, setSupportTab] = useState<'chat' | 'faq'>('chat');
   const [editName, setEditName] = useState(user?.name || 'Alex Volkov');
   const [editUsername, setEditUsername] = useState(user?.username || 'alex_v');
+  const [editPhotoUrl, setEditPhotoUrl] = useState(user?.photo_url || '');
   const [tonConnectUI] = useTonConnectUI();
   const [dynamicTasks, setDynamicTasks] = useState<any[]>([]);
   const [referralStats, setReferralStats] = useState<{ totalReferred: number; earnedCredits: number; referralLink: string }>({
@@ -130,12 +131,20 @@ export const Profile: React.FC = () => {
   const [chatHistory, setChatHistory] = useState<{ role: 'user' | 'model', parts: string }[]>([]);
   const [isChatLoading, setIsChatLoading] = useState(false);
   const [faqs, setFaqs] = useState<FAQ[]>([]);
+  const [reportCategory, setReportCategory] = useState('general');
+  const [reportSubject, setReportSubject] = useState('');
+  const [reportDetails, setReportDetails] = useState('');
+  const [isSubmittingReport, setIsSubmittingReport] = useState(false);
+  const [isSavingProfile, setIsSavingProfile] = useState(false);
+  const [isViewingLegal, setIsViewingLegal] = useState(false);
+  const [legalContent, setLegalContent] = useState('');
   const chatEndRef = useRef<HTMLDivElement>(null);
 
   useEffect(() => {
     setEditName(user?.name || '');
     setEditUsername(user?.username || '');
-  }, [user?.name, user?.username]);
+    setEditPhotoUrl(user?.photo_url || '');
+  }, [user?.name, user?.username, user?.photo_url]);
 
   useEffect(() => {
     if (isViewingSupport) {
@@ -144,16 +153,28 @@ export const Profile: React.FC = () => {
   }, [isViewingSupport]);
 
   useEffect(() => {
+    if (!isViewingLegal) return;
+    fetch('/api/legal/terms')
+      .then((r) => r.ok ? r.text() : '')
+      .then((txt) => setLegalContent(txt))
+      .catch(() => setLegalContent('Terms are temporarily unavailable.'));
+  }, [isViewingLegal]);
+
+  useEffect(() => {
     chatEndRef.current?.scrollIntoView({ behavior: 'smooth' });
   }, [chatHistory]);
 
   useEffect(() => {
     if (tg?.BackButton) {
-      if (isEditing || isViewingSubscriptions || isViewingReferral || isViewingSupport || isPaymentSheetOpen) {
+      if (isEditing || isViewingSubscriptions || isViewingReferral || isViewingSupport || isPaymentSheetOpen || isReportingIssue || isViewingLegal) {
         tg.BackButton.show();
         const handleBack = () => {
           if (isPaymentSheetOpen) {
             setIsPaymentSheetOpen(false);
+          } else if (isViewingLegal) {
+            setIsViewingLegal(false);
+          } else if (isReportingIssue) {
+            setIsReportingIssue(false);
           } else {
             setIsEditing(false);
             setIsViewingSubscriptions(false);
@@ -170,7 +191,58 @@ export const Profile: React.FC = () => {
         tg.BackButton.hide();
       }
     }
-  }, [isEditing, isViewingSubscriptions, isViewingReferral, isViewingSupport, isPaymentSheetOpen, tg]);
+  }, [isEditing, isViewingSubscriptions, isViewingReferral, isViewingSupport, isPaymentSheetOpen, isReportingIssue, isViewingLegal, tg]);
+
+  const refreshAuthedProfile = async () => {
+    const effectiveInitData = initData || (window as any)?.Telegram?.WebApp?.initData || '';
+    if (!effectiveInitData) return;
+    const res = await fetch('/api/auth/me', { headers: { 'X-TG-Init-Data': effectiveInitData } });
+    const payload = await res.json().catch(() => ({}));
+    if (!res.ok || !payload?.user || !user) return;
+    setUser({
+      ...user,
+      ...payload.user,
+      role: payload.user.role || user.role,
+      plan: payload.user.plan || user.plan,
+      credits: Number(payload.user.credits ?? user.credits),
+    });
+  };
+
+  const submitReport = async () => {
+    if (!reportSubject.trim() || !reportDetails.trim()) {
+      showAlert('Please fill in both subject and details.');
+      return;
+    }
+    setIsSubmittingReport(true);
+    try {
+      const res = await fetch('/api/user/report', {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          'X-TG-Init-Data': initData || '',
+        },
+        body: JSON.stringify({
+          category: reportCategory,
+          subject: reportSubject,
+          details: reportDetails,
+        }),
+      });
+      const data = await res.json().catch(() => ({}));
+      if (!res.ok) {
+        showAlert(data.error || 'Failed to submit report.');
+        return;
+      }
+      setReportSubject('');
+      setReportDetails('');
+      setReportCategory('general');
+      setIsReportingIssue(false);
+      showAlert('Report submitted successfully. Admin has been notified.');
+    } catch (error) {
+      showAlert('Failed to submit report. Please try again.');
+    } finally {
+      setIsSubmittingReport(false);
+    }
+  };
 
   const handleAction = (name: string) => {
     hapticFeedback('light');
@@ -187,13 +259,8 @@ export const Profile: React.FC = () => {
       setIsViewingReferral(true);
     } else if (name === 'Support') {
       setIsViewingSupport(true);
-    } else if (name === 'Logout') {
-      showConfirm('Are you sure you want to log out?', (ok) => {
-        if (ok) {
-          setUser(null);
-          showAlert('Logged out successfully');
-        }
-      });
+    } else if (name === 'Terms') {
+      setIsViewingLegal(true);
     } else {
       showAlert(`${name} feature coming soon!`);
     }
@@ -202,15 +269,26 @@ export const Profile: React.FC = () => {
   const handleSaveProfile = async () => {
     hapticFeedback('success');
     if (!user) return;
+    if (!editName.trim()) {
+      showAlert('Name is required.');
+      return;
+    }
 
     try {
+      setIsSavingProfile(true);
+      const effectiveInitData = initData || (window as any)?.Telegram?.WebApp?.initData || '';
       const response = await fetch('/api/user/profile', {
         method: 'PUT',
         headers: {
           'Content-Type': 'application/json',
-          'X-TG-Init-Data': initData || ''
+          'X-TG-Init-Data': effectiveInitData
         },
-        body: JSON.stringify({ name: editName, username: editUsername })
+        body: JSON.stringify({
+          telegramId: user.telegram_id,
+          name: editName.trim(),
+          username: editUsername.trim(),
+          photo_url: editPhotoUrl || null,
+        })
       });
 
       const data = await response.json();
@@ -222,12 +300,15 @@ export const Profile: React.FC = () => {
       setUser({
         ...user,
         name: data?.user?.name || editName,
-        username: data?.user?.username || editUsername
+        username: data?.user?.username || editUsername,
+        photo_url: data?.user?.photo_url || editPhotoUrl || user.photo_url,
       });
       setIsEditing(false);
       showAlert('Profile updated successfully!');
     } catch (e) {
       showAlert('Failed to save profile. Please try again.');
+    } finally {
+      setIsSavingProfile(false);
     }
   };
 
@@ -239,6 +320,12 @@ export const Profile: React.FC = () => {
 
   const handleTonPayment = async () => {
     hapticFeedback('medium');
+    if (!selectedPlanForPayment || !user) return;
+    const tonReceiver = import.meta.env.VITE_TON_RECEIVER_ADDRESS || '';
+    if (!tonReceiver) {
+      showAlert('TON payments are temporarily unavailable. Missing receiver configuration.');
+      return;
+    }
     
     if (!tonConnectUI.connected) {
       showAlert('Redirecting to connect your TON wallet...');
@@ -253,7 +340,7 @@ export const Profile: React.FC = () => {
         validUntil: Math.floor(Date.now() / 1000) + 60, // 60 sec
         messages: [
           {
-            address: "UQB1vS8u8a4S6X2m7S7_K3X-QO-V6aX7L-u1tS7K-aX7-a-z", // Your admin wallet address
+            address: tonReceiver,
             amount: (selectedPlanForPayment.tonPrice * 1e9).toString(), // nanoTON
             payload: btoa(`plan:${selectedPlanForPayment.id}:user:${user.telegram_id}`) // Memo for tracking
           },
@@ -268,7 +355,7 @@ export const Profile: React.FC = () => {
         method: 'POST',
         headers: {
           'Content-Type': 'application/json',
-          'X-TG-Init-Data': initData
+          'X-TG-Init-Data': initData || (window as any)?.Telegram?.WebApp?.initData || ''
         },
         body: JSON.stringify({
           telegramId: user.telegram_id,
@@ -280,19 +367,21 @@ export const Profile: React.FC = () => {
 
       if (verifyRes.ok) {
         hapticFeedback('success');
-        showAlert(`Congratulations! You have successfully upgraded to ${selectedPlanForPayment.name}. Credits have been added.`);
-        setUser({ ...user, plan: selectedPlanForPayment.id as any });
+        await refreshAuthedProfile();
+        showAlert(`Congratulations! You have successfully upgraded to ${selectedPlanForPayment.name}.`);
       } else {
-        throw new Error('Verification failed');
+        const verifyData = await verifyRes.json().catch(() => ({}));
+        throw new Error(verifyData.error || 'Verification failed');
       }
     } catch (e: any) {
       console.error('TON Payment error:', e);
-      showAlert('TON payment failed or canceled.');
+      showAlert(`TON payment failed: ${e?.message || 'Canceled or failed.'}`);
     }
   };
 
   const handleStarsPayment = async () => {
     hapticFeedback('medium');
+    if (!selectedPlanForPayment || !user) return;
     setIsPaymentSheetOpen(false);
     
     if (!tg || !user) {
@@ -325,8 +414,7 @@ export const Profile: React.FC = () => {
           if (status === 'paid') {
             hapticFeedback('success');
             showAlert(`Congratulations! You have successfully upgraded to ${selectedPlanForPayment.name}`);
-            // Force refresh user data
-            setUser({ ...user, plan: selectedPlanForPayment.id as any });
+            refreshAuthedProfile();
           } else if (status === 'cancelled') {
             showAlert('Payment cancelled.');
           } else {
@@ -342,9 +430,22 @@ export const Profile: React.FC = () => {
     }
   };
 
-  const copyReferralLink = () => {
+  const copyReferralLink = async () => {
     const fallbackRefId = user?.telegram_id || user?.id;
-    const link = referralStats.referralLink || (fallbackRefId ? `https://t.me/Deepflashaibot?start=${fallbackRefId}` : '');
+    let link = referralStats.referralLink || '';
+    if (!link && initData) {
+      try {
+        const res = await fetch('/api/user/referral', { headers: { 'X-TG-Init-Data': initData } });
+        const data = await res.json().catch(() => ({}));
+        if (res.ok && data?.referralLink) {
+          link = data.referralLink;
+          setReferralStats(prev => ({ ...prev, referralLink: data.referralLink }));
+        }
+      } catch {}
+    }
+    if (!link && fallbackRefId) {
+      link = `https://t.me/Deepflashaibot?start=${fallbackRefId}`;
+    }
     if (!link) {
       showAlert('Referral link is not ready yet.');
       return;
@@ -539,13 +640,55 @@ export const Profile: React.FC = () => {
                     </button>
                   </div>
                   <button 
-                    onClick={() => showAlert('Report feature coming soon!')}
+                    onClick={() => setIsReportingIssue(true)}
                     className="w-full py-3 rounded-xl border border-red-500/20 bg-red-500/5 text-red-500 text-[10px] font-black tracking-widest flex items-center justify-center gap-2"
                   >
                     <AlertCircle className="w-3 h-3" />
                     Report a problem
                   </button>
                 </div>
+
+                {isReportingIssue && (
+                  <div className="fixed inset-0 z-[120] bg-black/90 p-6 flex items-end">
+                    <div className="w-full bg-zinc-950 border border-zinc-800 rounded-3xl p-5 space-y-4">
+                      <div className="flex items-center justify-between">
+                        <h3 className="text-sm font-black text-white uppercase tracking-wider">Submit report</h3>
+                        <button onClick={() => setIsReportingIssue(false)} className="w-8 h-8 rounded-xl bg-zinc-800 flex items-center justify-center">
+                          <X className="w-4 h-4 text-zinc-300" />
+                        </button>
+                      </div>
+                      <select
+                        value={reportCategory}
+                        onChange={(e) => setReportCategory(e.target.value)}
+                        className="w-full bg-zinc-900 border border-zinc-800 rounded-2xl px-4 py-3 text-sm font-bold text-white"
+                      >
+                        <option value="general">General issue</option>
+                        <option value="payment">Payment issue</option>
+                        <option value="analysis">Analysis issue</option>
+                        <option value="bug">Bug report</option>
+                      </select>
+                      <input
+                        value={reportSubject}
+                        onChange={(e) => setReportSubject(e.target.value)}
+                        placeholder="Short subject"
+                        className="w-full bg-zinc-900 border border-zinc-800 rounded-2xl px-4 py-3 text-sm font-bold text-white placeholder:text-zinc-600"
+                      />
+                      <textarea
+                        value={reportDetails}
+                        onChange={(e) => setReportDetails(e.target.value)}
+                        placeholder="Describe the issue in detail..."
+                        className="w-full h-28 bg-zinc-900 border border-zinc-800 rounded-2xl px-4 py-3 text-sm font-bold text-white placeholder:text-zinc-600"
+                      />
+                      <button
+                        onClick={submitReport}
+                        disabled={isSubmittingReport}
+                        className="w-full py-3 rounded-2xl bg-red-500 text-white text-xs font-black uppercase tracking-widest disabled:opacity-50"
+                      >
+                        {isSubmittingReport ? 'Submitting...' : 'Submit report'}
+                      </button>
+                    </div>
+                  </div>
+                )}
               </motion.div>
             ) : (
               <motion.div 
@@ -722,8 +865,9 @@ export const Profile: React.FC = () => {
 
   if (isViewingSubscriptions) {
     return (
-      <div className="fixed inset-0 z-[100] bg-black flex flex-col overflow-hidden">
-        <div className="flex-1 overflow-y-auto no-scrollbar px-6 py-8 space-y-8">
+      <>
+        <div className="fixed inset-0 z-[100] bg-black flex flex-col overflow-hidden">
+          <div className="flex-1 overflow-y-auto no-scrollbar px-6 py-8 space-y-8">
           <div className="text-center space-y-2">
             <h1 className="text-3xl font-black text-white tracking-tight">Upgrade Plan</h1>
             <p className="text-zinc-500 text-sm font-bold">Choose the best plan for your success</p>
@@ -857,6 +1001,9 @@ export const Profile: React.FC = () => {
                   <p className="text-[10px] font-bold text-zinc-500 text-center leading-relaxed">
                     By clicking Continue, you agree to our Terms of Service. Payments via TON require a connected wallet.
                   </p>
+                  <button onClick={() => setIsViewingLegal(true)} className="w-full mt-3 py-2 rounded-xl bg-zinc-800 text-[10px] font-black uppercase text-zinc-300">
+                    View Terms & Privacy
+                  </button>
                 </div>
 
                 <button 
@@ -868,8 +1015,24 @@ export const Profile: React.FC = () => {
               </motion.div>
             </>
           )}
+          </AnimatePresence>
+        </div>
+
+        <AnimatePresence>
+          {isViewingLegal && (
+            <>
+              <motion.div initial={{ opacity: 0 }} animate={{ opacity: 1 }} exit={{ opacity: 0 }} className="fixed inset-0 bg-black/80 z-[220]" onClick={() => setIsViewingLegal(false)} />
+              <motion.div initial={{ y: '100%' }} animate={{ y: 0 }} exit={{ y: '100%' }} className="fixed bottom-0 left-0 right-0 z-[221] bg-zinc-950 border-t border-zinc-800 rounded-t-[32px] p-6 max-h-[82vh] overflow-y-auto no-scrollbar space-y-4">
+                <h3 className="text-lg font-black text-white">Terms & Privacy Policy</h3>
+                <pre className="whitespace-pre-wrap text-[11px] leading-relaxed text-zinc-300 font-medium bg-zinc-900/50 border border-zinc-800 rounded-2xl p-4">
+                  {legalContent || 'Loading terms...'}
+                </pre>
+                <button onClick={() => setIsViewingLegal(false)} className="w-full py-3 rounded-2xl bg-[#ccff00] text-black text-xs font-black uppercase tracking-widest">Close</button>
+              </motion.div>
+            </>
+          )}
         </AnimatePresence>
-      </div>
+      </>
     );
   }
 
@@ -881,8 +1044,8 @@ export const Profile: React.FC = () => {
           <div className="flex flex-col items-center">
             <div className="relative w-32 h-32 rounded-full p-1 bg-gradient-to-b from-zinc-800 to-zinc-900">
               <div className="w-full h-full rounded-full bg-zinc-900 flex items-center justify-center overflow-hidden border-4 border-black">
-                {user?.photo_url ? (
-                  <img src={user.photo_url} alt="Profile" className="w-full h-full object-cover opacity-50" />
+                {editPhotoUrl ? (
+                  <img src={editPhotoUrl} alt="Profile" className="w-full h-full object-cover opacity-50" />
                 ) : (
                   <div className="w-full h-full bg-zinc-800 flex items-center justify-center">
                     <User className="w-10 h-10 text-zinc-600" />
@@ -893,9 +1056,25 @@ export const Profile: React.FC = () => {
                 </div>
               </div>
             </div>
-            <button className="mt-4 text-sm font-bold text-[#ccff00]">
+            <label className="mt-4 text-sm font-bold text-[#ccff00] cursor-pointer">
               Change Photo
-            </button>
+              <input
+                type="file"
+                accept="image/*"
+                className="hidden"
+                onChange={(e) => {
+                  const file = e.target.files?.[0];
+                  if (!file) return;
+                  if (file.size > 2 * 1024 * 1024) {
+                    showAlert('Image too large. Maximum 2MB.');
+                    return;
+                  }
+                  const reader = new FileReader();
+                  reader.onload = () => setEditPhotoUrl(String(reader.result || ''));
+                  reader.readAsDataURL(file);
+                }}
+              />
+            </label>
           </div>
 
           {/* Form Fields */}
@@ -927,9 +1106,10 @@ export const Profile: React.FC = () => {
         <div className="p-6 bg-black border-t border-zinc-900">
           <button 
             onClick={handleSaveProfile}
+            disabled={isSavingProfile}
             className="w-full bg-[#ccff00] text-black font-black text-sm tracking-widest py-4 rounded-2xl shadow-[0_0_20px_rgba(204,255,0,0.2)] active:scale-[0.98] transition-all"
           >
-            Save changes
+            {isSavingProfile ? 'Saving...' : 'Save changes'}
           </button>
         </div>
       </div>
@@ -1057,17 +1237,6 @@ export const Profile: React.FC = () => {
               <span className="text-sm font-black text-white">Terms of Service</span>
             </div>
           </button>
-          {user && (
-            <button 
-              onClick={() => handleAction('Logout')}
-              className="w-full bg-red-500/5 border border-red-500/10 rounded-2xl p-4 flex items-center justify-between group active:bg-red-500/10 transition-colors"
-            >
-              <div className="flex items-center gap-3">
-                <LogOut className="w-4 h-4 text-red-500" />
-                <span className="text-sm font-black text-red-500">Log Out</span>
-              </div>
-            </button>
-          )}
         </div>
       </div>
 
