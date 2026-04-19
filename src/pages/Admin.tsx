@@ -38,25 +38,24 @@ import {
   Cell
 } from 'recharts';
 import { useTelegram } from '../hooks/useTelegram';
-import { useUserStore } from '../store/useUserStore';
 
-type AdminTab = 'dashboard' | 'analytics' | 'tasks' | 'ads' | 'users';
+type AdminTab = 'dashboard' | 'analytics' | 'tasks' | 'ads' | 'users' | 'notifications';
 
 export const Admin: React.FC = () => {
   const [activeTab, setActiveTab] = useState<AdminTab>('dashboard');
   const { tg, hapticFeedback, showAlert, showConfirm, initData } = useTelegram();
-  const { user } = useUserStore();
   
   const [stats, setStats] = useState<any>(null);
   const [analytics, setAnalytics] = useState<any>(null);
   const [tasks, setTasks] = useState<any[]>([]);
   const [ads, setAds] = useState<any[]>([]);
   const [isLoading, setIsLoading] = useState(true);
+  const [isForbidden, setIsForbidden] = useState(false);
 
   // Form states for adding items
   const [isAddingTask, setIsAddingTask] = useState(false);
   const [isAddingAd, setIsAddingAd] = useState(false);
-  const [newTask, setNewTask] = useState({ title: '', description: '', reward: 10, url: '', active: true });
+  const [newTask, setNewTask] = useState({ title: '', description: '', reward: 10, url: '', buttonLabel: 'Start Task', image_url: '', active: true });
   const [newAd, setNewAd] = useState({ 
     title: '', 
     subtitle: '', 
@@ -64,29 +63,69 @@ export const Admin: React.FC = () => {
     link: '', 
     active: true, 
     cta: 'Check Out', 
-    target_plan: 'all',
+    target_group: 'all',
     expires_at: '',
     primary_color: '#3b82f6'
   });
   const [isBroadcasting, setIsBroadcasting] = useState(false);
+  const [isSendingNotification, setIsSendingNotification] = useState(false);
+  const [users, setUsers] = useState<any[]>([]);
+  const [userSearch, setUserSearch] = useState('');
+  const [notifyMessage, setNotifyMessage] = useState('');
+  const [pushForm, setPushForm] = useState({
+    message: '',
+    image_url: '',
+    with_app_button: false,
+    app_button_text: '',
+    with_url_button: false,
+    url_button_text: '',
+    button_url: '',
+    target_group: 'all'
+  });
 
   useEffect(() => {
+    if (!initData) return;
     fetchDashboard();
     fetchAnalytics();
     fetchTasks();
     fetchAds();
-  }, []);
+    fetchUsers();
+  }, [initData]);
+
+  const fetchUsers = async (q = '') => {
+    try {
+      const res = await fetch(`/api/admin/users${q ? `?q=${encodeURIComponent(q)}` : ''}`, {
+        headers: { 'X-TG-Init-Data': initData }
+      });
+      if (!res.ok) {
+        setUsers([]);
+        return;
+      }
+      const data = await res.json();
+      setUsers(Array.isArray(data) ? data : []);
+    } catch (e) {
+      console.error(e);
+      setUsers([]);
+    }
+  };
 
   const fetchDashboard = async () => {
     try {
       const res = await fetch('/api/admin/dashboard', {
         headers: { 'X-TG-Init-Data': initData }
       });
+      if (res.status === 403) {
+        setIsForbidden(true);
+        setIsLoading(false);
+        return;
+      }
+      if (!res.ok) throw new Error(`Dashboard request failed (${res.status})`);
       const data = await res.json();
       setStats(data.stats);
-      setIsLoading(false);
     } catch (e) {
       console.error(e);
+    } finally {
+      setIsLoading(false);
     }
   };
 
@@ -95,6 +134,10 @@ export const Admin: React.FC = () => {
       const res = await fetch('/api/admin/analytics', {
         headers: { 'X-TG-Init-Data': initData }
       });
+      if (!res.ok) {
+        setAnalytics(null);
+        return;
+      }
       const data = await res.json();
       setAnalytics(data);
     } catch (e) {
@@ -107,10 +150,15 @@ export const Admin: React.FC = () => {
       const res = await fetch('/api/admin/tasks', {
         headers: { 'X-TG-Init-Data': initData }
       });
+      if (!res.ok) {
+        setTasks([]);
+        return;
+      }
       const data = await res.json();
-      setTasks(data);
+      setTasks(Array.isArray(data) ? data : []);
     } catch (e) {
       console.error(e);
+      setTasks([]);
     }
   };
 
@@ -119,10 +167,15 @@ export const Admin: React.FC = () => {
       const res = await fetch('/api/admin/ads', {
         headers: { 'X-TG-Init-Data': initData }
       });
+      if (!res.ok) {
+        setAds([]);
+        return;
+      }
       const data = await res.json();
-      setAds(data);
+      setAds(Array.isArray(data) ? data : []);
     } catch (e) {
       console.error(e);
+      setAds([]);
     }
   };
 
@@ -137,7 +190,7 @@ export const Admin: React.FC = () => {
       if (res.ok) {
         fetchTasks();
         setIsAddingTask(false);
-        setNewTask({ title: '', description: '', reward: 10, url: '', active: true });
+        setNewTask({ title: '', description: '', reward: 10, url: '', buttonLabel: 'Start Task', image_url: '', active: true });
         showAlert('Task added successfully!');
       }
     } catch (e) {
@@ -162,7 +215,7 @@ export const Admin: React.FC = () => {
           link: '', 
           active: true, 
           cta: 'Check Out', 
-          target_plan: 'all',
+          target_group: 'all',
           expires_at: '',
           primary_color: '#3b82f6'
         });
@@ -196,13 +249,49 @@ export const Admin: React.FC = () => {
 
   const triggerAutomation = async (type: string) => {
     try {
-      const res = await fetch('/api/bot/notify/inactive', { // This might be better as a test trigger
+      const res = await fetch('/api/admin/automation/retention', {
         method: 'POST',
-        headers: { 'X-TG-Init-Data': initData }
+        headers: { 'Content-Type': 'application/json', 'X-TG-Init-Data': initData },
+        body: JSON.stringify({ type })
       });
-      showAlert('Automation triggered (check server logs)');
+      const data = await res.json().catch(() => ({}));
+      if (res.ok) {
+        showAlert(`Automation triggered. Sent to ${data.sentCount ?? 0} users.`);
+      } else {
+        showAlert(data.error || 'Failed to trigger automation');
+      }
     } catch (e) {
       showAlert('Failed to trigger');
+    }
+  };
+
+  const promoteUser = async (telegramId: number, role: 'user' | 'admin') => {
+    const res = await fetch('/api/admin/users/promote', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json', 'X-TG-Init-Data': initData },
+      body: JSON.stringify({ telegramId, role })
+    });
+    if (res.ok) {
+      fetchUsers(userSearch);
+      showAlert(`User updated to ${role}`);
+    }
+  };
+
+  const notifyUser = async (telegramId: number) => {
+    if (!notifyMessage.trim()) {
+      showAlert('Please type a message first.');
+      return;
+    }
+    const res = await fetch('/api/admin/users/notify', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json', 'X-TG-Init-Data': initData },
+      body: JSON.stringify({ telegramId, message: notifyMessage })
+    });
+    const data = await res.json().catch(() => ({}));
+    if (res.ok) {
+      showAlert('Notification sent.');
+    } else {
+      showAlert(data.error || 'Failed to notify user');
     }
   };
 
@@ -233,8 +322,54 @@ export const Admin: React.FC = () => {
     );
   }
 
+  const trafficData = Array.isArray(analytics?.traffic) ? analytics.traffic : [];
+  const patternData = Array.isArray(analytics?.patterns) ? analytics.patterns : [];
+
+  if (isForbidden) {
+    return (
+      <div className="min-h-[100dvh] bg-black text-white flex items-center justify-center p-6">
+        <div className="max-w-md w-full bg-zinc-900/50 border border-zinc-800 rounded-3xl p-6 text-center space-y-3">
+          <AlertCircle className="w-8 h-8 text-amber-400 mx-auto" />
+          <h2 className="text-lg font-black">Admin Access Required</h2>
+          <p className="text-xs text-zinc-400 font-semibold">This page is restricted to admin accounts only.</p>
+        </div>
+      </div>
+    );
+  }
+
+  const handleUploadAsDataUrl = (file: File, cb: (dataUrl: string) => void) => {
+    const reader = new FileReader();
+    reader.onload = () => cb(String(reader.result || ''));
+    reader.readAsDataURL(file);
+  };
+
+  const sendPushNotification = async () => {
+    if (!pushForm.message.trim()) {
+      showAlert('Please enter a message.');
+      return;
+    }
+
+    setIsSendingNotification(true);
+    try {
+      const res = await fetch('/api/admin/notifications/send', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json', 'X-TG-Init-Data': initData },
+        body: JSON.stringify(pushForm)
+      });
+      const data = await res.json().catch(() => ({}));
+      if (res.ok) {
+        showAlert(`Push sent to ${data.sentCount ?? 0} users.`);
+        setPushForm({ message: '', image_url: '', with_app_button: false, app_button_text: '', with_url_button: false, url_button_text: '', button_url: '', target_group: 'all' });
+      } else {
+        showAlert(data.error || 'Failed to send push notification');
+      }
+    } finally {
+      setIsSendingNotification(false);
+    }
+  };
+
   return (
-    <div className="flex-1 flex flex-col bg-black overflow-hidden pb-24">
+    <div className="min-h-[100dvh] flex flex-col bg-black overflow-hidden">
       {/* Header */}
       <div className="px-6 pt-8 pb-4 border-b border-zinc-900 bg-black/50 backdrop-blur-md sticky top-0 z-20">
         <div className="flex items-center justify-between mb-4">
@@ -249,7 +384,7 @@ export const Admin: React.FC = () => {
 
         {/* Tab Switcher */}
         <div className="flex gap-2 p-1 bg-zinc-900/50 rounded-2xl overflow-x-auto no-scrollbar">
-          {(['dashboard', 'analytics', 'tasks', 'ads', 'users'] as AdminTab[]).map(tab => (
+          {(['dashboard', 'analytics', 'tasks', 'ads', 'users', 'notifications'] as AdminTab[]).map(tab => (
             <button
               key={tab}
               onClick={() => { hapticFeedback('light'); setActiveTab(tab); }}
@@ -344,7 +479,7 @@ export const Admin: React.FC = () => {
                 </div>
                 <div className="h-64 w-full">
                   <ResponsiveContainer width="100%" height="100%">
-                    <AreaChart data={analytics?.traffic || []}>
+                    <AreaChart data={trafficData}>
                       <defs>
                         <linearGradient id="colorValue" x1="0" y1="0" x2="0" y2="1">
                           <stop offset="5%" stopColor="#ccff00" stopOpacity={0.3}/>
@@ -380,7 +515,7 @@ export const Admin: React.FC = () => {
                 </div>
                 <div className="h-64 w-full">
                   <ResponsiveContainer width="100%" height="100%">
-                    <BarChart data={analytics?.patterns || []}>
+                    <BarChart data={patternData}>
                       <XAxis 
                         dataKey="label" 
                         stroke="#71717a" 
@@ -395,7 +530,7 @@ export const Admin: React.FC = () => {
                         contentStyle={{ backgroundColor: '#18181b', border: 'none', borderRadius: '12px', fontSize: '10px' }}
                       />
                       <Bar dataKey="value" radius={[10, 10, 10, 10]}>
-                        {analytics?.patterns?.map((entry: any, index: number) => (
+                        {patternData.map((entry: any, index: number) => (
                           <Cell key={`cell-${index}`} fill={index % 2 === 0 ? '#ccff00' : '#3b82f6'} />
                         ))}
                       </Bar>
@@ -465,8 +600,19 @@ export const Admin: React.FC = () => {
                         <textarea value={newTask.description} onChange={e => setNewTask({...newTask, description: e.target.value})} placeholder="Task Description" className="w-full bg-zinc-800 border-none rounded-2xl p-4 text-white text-sm font-bold placeholder:text-zinc-600 h-24 focus:ring-2 ring-[#ccff00]/50" />
                         <div className="flex gap-4">
                            <input type="number" value={newTask.reward} onChange={e => setNewTask({...newTask, reward: Number(e.target.value)})} placeholder="Reward" className="flex-1 bg-zinc-800 border-none rounded-2xl p-4 text-white text-sm font-bold placeholder:text-zinc-600 focus:ring-2 ring-[#ccff00]/50" />
-                           <input value={newTask.url} onChange={e => setNewTask({...newTask, url: e.target.value})} placeholder="Task URL (optional)" className="flex-[2] bg-zinc-800 border-none rounded-2xl p-4 text-white text-sm font-bold placeholder:text-zinc-600 focus:ring-2 ring-[#ccff00]/50" />
+                           <input value={newTask.url} onChange={e => setNewTask({...newTask, url: e.target.value})} placeholder="Task redirect URL (optional)" className="flex-[2] bg-zinc-800 border-none rounded-2xl p-4 text-white text-sm font-bold placeholder:text-zinc-600 focus:ring-2 ring-[#ccff00]/50" />
                         </div>
+                        <div className="flex gap-4">
+                          <input value={newTask.buttonLabel} onChange={e => setNewTask({...newTask, buttonLabel: e.target.value})} placeholder="Button text (e.g. Join now)" className="flex-1 bg-zinc-800 border-none rounded-2xl p-4 text-white text-sm font-bold placeholder:text-zinc-600 focus:ring-2 ring-[#ccff00]/50" />
+                          <input value={newTask.image_url} onChange={e => setNewTask({...newTask, image_url: e.target.value})} placeholder="Task image URL (optional)" className="flex-[2] bg-zinc-800 border-none rounded-2xl p-4 text-white text-sm font-bold placeholder:text-zinc-600 focus:ring-2 ring-[#ccff00]/50" />
+                        </div>
+                        <label className="text-[10px] font-bold text-zinc-500 uppercase tracking-widest cursor-pointer block">
+                          Upload task image
+                          <input type="file" accept="image/*" className="hidden" onChange={(e) => {
+                            const file = e.target.files?.[0];
+                            if (file) handleUploadAsDataUrl(file, (dataUrl) => setNewTask({ ...newTask, image_url: dataUrl }));
+                          }} />
+                        </label>
                         <button onClick={handleAddTask} className="w-full py-5 bg-[#ccff00] text-black font-black uppercase tracking-widest text-xs rounded-2xl shadow-[0_0_30px_rgba(204,255,0,0.3)]">Publish Task</button>
                       </div>
                     </motion.div>
@@ -617,6 +763,22 @@ export const Admin: React.FC = () => {
                               <input value={newAd.image_url} onChange={e => setNewAd({...newAd, image_url: e.target.value})} placeholder="Banner Image URL" className="flex-[3] bg-zinc-800 border-none rounded-2xl p-4 text-white text-sm font-bold placeholder:text-zinc-600 focus:ring-2 ring-blue-500/50" />
                               <input type="color" value={newAd.primary_color} onChange={e => setNewAd({...newAd, primary_color: e.target.value})} className="flex-1 h-[52px] bg-zinc-800 border-none rounded-2xl p-2 cursor-pointer" />
                            </div>
+                           <label className="text-[10px] font-bold text-zinc-500 uppercase tracking-widest cursor-pointer block">
+                              Upload ad image
+                              <input type="file" accept="image/*" className="hidden" onChange={(e) => {
+                                const file = e.target.files?.[0];
+                                if (file) handleUploadAsDataUrl(file, (dataUrl) => setNewAd({ ...newAd, image_url: dataUrl }));
+                              }} />
+                           </label>
+                        </div>
+
+                        <div className="space-y-2">
+                           <p className="text-[10px] font-bold text-zinc-600 uppercase ml-2">Audience</p>
+                           <select value={newAd.target_group} onChange={e => setNewAd({...newAd, target_group: e.target.value})} className="w-full bg-zinc-800 rounded-2xl p-4 text-white text-sm font-bold focus:outline-none focus:ring-2 ring-blue-500/50">
+                              <option value="all">All users</option>
+                              <option value="unsubscribed">Unsubscribed users</option>
+                              <option value="subscribed">Subscribed users</option>
+                           </select>
                         </div>
 
                         <div className="space-y-2">
@@ -656,33 +818,152 @@ export const Admin: React.FC = () => {
             >
                <div className="bg-zinc-900/50 border border-zinc-800 rounded-3xl p-5 flex items-center gap-3">
                  <Search className="w-4 h-4 text-zinc-600" />
-                 <input placeholder="Search user ID or name..." className="bg-transparent border-none text-sm font-bold text-white focus:outline-none w-full" />
+                 <input
+                   value={userSearch}
+                   onChange={(e) => setUserSearch(e.target.value)}
+                   onKeyDown={(e) => { if (e.key === 'Enter') fetchUsers(userSearch); }}
+                   placeholder="Search user ID or name..."
+                   className="bg-transparent border-none text-sm font-bold text-white focus:outline-none w-full"
+                 />
+                 <button onClick={() => fetchUsers(userSearch)} className="text-[10px] text-[#ccff00] font-black">GO</button>
+               </div>
+
+               <div className="bg-zinc-900/50 border border-zinc-800 rounded-3xl p-4">
+                 <textarea
+                   value={notifyMessage}
+                   onChange={(e) => setNotifyMessage(e.target.value)}
+                   placeholder="Message template for user notification..."
+                   className="w-full bg-zinc-800 border-none rounded-2xl p-3 text-white text-xs font-bold placeholder:text-zinc-600 h-20 focus:ring-2 ring-[#ccff00]/40"
+                 />
                </div>
 
                <div className="space-y-4">
-                 <div className="p-4 bg-zinc-900/50 border border-zinc-800 rounded-3xl relative">
-                   <div className="flex items-center gap-4">
-                      <div className="w-12 h-12 rounded-2xl bg-[#ccff00] flex items-center justify-center font-black text-black">
-                         AV
-                      </div>
-                      <div>
-                         <p className="text-sm font-black text-white">Alex Volkov (You)</p>
-                         <div className="flex items-center gap-2">
-                            <span className="text-[10px] font-bold text-[#ccff00] tracking-widest uppercase">Admin</span>
-                            <span className="w-1 h-1 rounded-full bg-zinc-800" />
-                            <span className="text-[10px] font-bold text-zinc-600 uppercase">Pro Plan</span>
+                 {users.map((u) => (
+                   <div key={u.telegram_id} className="p-4 bg-zinc-900/50 border border-zinc-800 rounded-3xl relative space-y-3">
+                     <div className="flex items-center gap-4">
+                       <div className="w-12 h-12 rounded-2xl bg-[#ccff00] flex items-center justify-center font-black text-black">
+                         {(u.name || u.username || 'U').substring(0, 2).toUpperCase()}
+                       </div>
+                       <div className="min-w-0">
+                         <p className="text-sm font-black text-white truncate">{u.name || 'Unknown User'}</p>
+                         <div className="flex items-center gap-2 flex-wrap">
+                           <span className="text-[10px] font-bold text-[#ccff00] tracking-widest uppercase">{u.role}</span>
+                           <span className="w-1 h-1 rounded-full bg-zinc-800" />
+                           <span className="text-[10px] font-bold text-zinc-500 uppercase">{u.plan}</span>
+                           <span className="w-1 h-1 rounded-full bg-zinc-800" />
+                           <span className="text-[10px] font-bold text-zinc-400">ID {u.telegram_id}</span>
                          </div>
-                      </div>
+                       </div>
+                     </div>
+
+                     <div className="flex gap-2">
+                       <button onClick={() => promoteUser(u.telegram_id, 'admin')} className="flex-1 py-2 rounded-xl bg-[#ccff00]/10 text-[10px] font-black uppercase text-[#ccff00]">Make Admin</button>
+                       <button onClick={() => promoteUser(u.telegram_id, 'user')} className="flex-1 py-2 rounded-xl bg-zinc-800 text-[10px] font-black uppercase text-zinc-300">Make User</button>
+                       <button onClick={() => notifyUser(u.telegram_id)} className="flex-1 py-2 rounded-xl bg-blue-500/10 text-[10px] font-black uppercase text-blue-300">Notify</button>
+                     </div>
                    </div>
-                 </div>
+                 ))}
                </div>
+            </motion.div>
+          )}
+
+          {activeTab === 'notifications' && (
+            <motion.div
+              key="notifications"
+              initial={{ opacity: 0, y: 10 }}
+              animate={{ opacity: 1, y: 0 }}
+              exit={{ opacity: 0, y: -10 }}
+              className="space-y-5"
+            >
+              <div className="bg-zinc-900/50 border border-zinc-800 rounded-3xl p-5 space-y-4">
+                <h3 className="text-sm font-black text-white uppercase tracking-wider">Push Notification Composer</h3>
+                <textarea
+                  value={pushForm.message}
+                  onChange={(e) => setPushForm({ ...pushForm, message: e.target.value })}
+                  placeholder="Notification message..."
+                  className="w-full bg-zinc-800 rounded-2xl p-4 text-white text-sm font-bold h-28 focus:outline-none focus:ring-2 ring-[#ccff00]/50"
+                />
+                <input
+                  value={pushForm.image_url}
+                  onChange={(e) => setPushForm({ ...pushForm, image_url: e.target.value })}
+                  placeholder="Image URL (optional)"
+                  className="w-full bg-zinc-800 rounded-2xl p-4 text-white text-sm font-bold placeholder:text-zinc-600 focus:outline-none focus:ring-2 ring-[#ccff00]/50"
+                />
+                <label className="text-[10px] font-bold text-zinc-500 uppercase tracking-widest cursor-pointer block">
+                  Upload image
+                  <input type="file" accept="image/*" className="hidden" onChange={(e) => {
+                    const file = e.target.files?.[0];
+                    if (file) handleUploadAsDataUrl(file, (dataUrl) => setPushForm({ ...pushForm, image_url: dataUrl }));
+                  }} />
+                </label>
+
+                <div className="space-y-4">
+                  <div className="flex items-center gap-2">
+                    <input
+                      id="withAppButton"
+                      type="checkbox"
+                      checked={pushForm.with_app_button}
+                      onChange={(e) => setPushForm({ ...pushForm, with_app_button: e.target.checked, with_url_button: e.target.checked ? false : pushForm.with_url_button })}
+                    />
+                    <label htmlFor="withAppButton" className="text-xs font-bold text-zinc-300">Open App Button (sets button text only)</label>
+                  </div>
+
+                  {pushForm.with_app_button && (
+                    <input 
+                      value={pushForm.app_button_text} 
+                      onChange={(e) => setPushForm({ ...pushForm, app_button_text: e.target.value })} 
+                      placeholder="App button text (e.g., Open Flash AI)" 
+                      className="w-full bg-zinc-800 rounded-2xl p-4 text-white text-sm font-bold placeholder:text-zinc-600 focus:outline-none focus:ring-2 ring-[#ccff00]/50" 
+                    />
+                  )}
+
+                  <div className="flex items-center gap-2">
+                    <input
+                      id="withUrlButton"
+                      type="checkbox"
+                      checked={pushForm.with_url_button}
+                      onChange={(e) => setPushForm({ ...pushForm, with_url_button: e.target.checked, with_app_button: e.target.checked ? false : pushForm.with_app_button })}
+                    />
+                    <label htmlFor="withUrlButton" className="text-xs font-bold text-zinc-300">External URL Button (sets button text + URL)</label>
+                  </div>
+
+                  {pushForm.with_url_button && (
+                    <div className="grid grid-cols-1 gap-3">
+                      <input 
+                        value={pushForm.url_button_text} 
+                        onChange={(e) => setPushForm({ ...pushForm, url_button_text: e.target.value })} 
+                        placeholder="URL button text" 
+                        className="w-full bg-zinc-800 rounded-2xl p-4 text-white text-sm font-bold placeholder:text-zinc-600 focus:outline-none focus:ring-2 ring-[#ccff00]/50" 
+                      />
+                      <input 
+                        value={pushForm.button_url} 
+                        onChange={(e) => setPushForm({ ...pushForm, button_url: e.target.value })} 
+                        placeholder="External URL (e.g., https://example.com)" 
+                        className="w-full bg-zinc-800 rounded-2xl p-4 text-white text-sm font-bold placeholder:text-zinc-600 focus:outline-none focus:ring-2 ring-[#ccff00]/50" 
+                      />
+                    </div>
+                  )}
+                </div>
+
+                <select value={pushForm.target_group} onChange={(e) => setPushForm({ ...pushForm, target_group: e.target.value })} className="w-full bg-zinc-800 rounded-2xl p-4 text-white text-sm font-bold focus:outline-none focus:ring-2 ring-[#ccff00]/50">
+                  <option value="all">All users</option>
+                  <option value="unsubscribed">Unsubscribed users</option>
+                  <option value="subscribed">Subscribed users</option>
+                  <option value="weekly">Weekly subscribers</option>
+                  <option value="monthly">Monthly subscribers</option>
+                </select>
+
+                <button disabled={isSendingNotification} onClick={sendPushNotification} className="w-full py-4 rounded-2xl bg-[#ccff00] text-black font-black uppercase tracking-widest text-xs disabled:opacity-50">
+                  {isSendingNotification ? 'Sending...' : 'Push Notification'}
+                </button>
+              </div>
             </motion.div>
           )}
         </AnimatePresence>
       </div>
 
       {/* Admin Safety Notice */}
-      <div className="px-6 py-4 bg-zinc-950/50 border-t border-zinc-900 absolute bottom-0 left-0 right-0 flex items-center justify-center gap-2">
+      <div className="px-6 py-4 bg-zinc-950/50 border-t border-zinc-900 flex items-center justify-center gap-2">
          <div className="w-1.5 h-1.5 rounded-full bg-[#ccff00] animate-pulse" />
          <p className="text-[9px] font-bold text-zinc-600 uppercase tracking-[2px]">Encrypted Admin Session Active</p>
       </div>

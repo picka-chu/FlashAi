@@ -17,7 +17,7 @@ import { init, retrieveLaunchParams } from '@telegram-apps/sdk-react';
 
 export default function App() {
   const [activeTab, setActiveTab] = useState<TabType>("home");
-  const { user: tgUser, isReady, setHeaderColor, setBackgroundColor } = useTelegram();
+  const { user: tgUser, isReady, initData, setHeaderColor, setBackgroundColor } = useTelegram();
   const { setUser, isLoading, setLoading } = useUserStore();
   
   const [lp, setLp] = useState<any>(null);
@@ -45,23 +45,17 @@ export default function App() {
 
   useEffect(() => {
     const fetchProfile = async () => {
-      if (!tgUser?.id || !supabase) {
+      if (!tgUser?.id) {
         setLoading(false);
         return;
       }
 
       try {
-        const profileQuery = supabase
+        const { data, error } = await supabase
           .from('users')
           .select('*')
           .eq('telegram_id', tgUser.id)
           .single();
-
-        const timeoutPromise = new Promise((_, reject) =>
-          setTimeout(() => reject(new Error("Profile request timeout")), 12000)
-        );
-
-        const { data, error } = await Promise.race([profileQuery, timeoutPromise]) as any;
 
         if (error && error.code === 'PGRST116') {
           console.warn("User not found in 'users' table.");
@@ -91,12 +85,37 @@ export default function App() {
             id: data.id,
             telegram_id: data.telegram_id,
             name: data.name,
+            username: data.username,
             phone: data.phone,
             credits: data.credits || 0,
             plan: data.plan || "free",
             role: data.role || "user",
             photo_url: data.photo_url
           });
+          return;
+        }
+
+        // Fallback to direct Supabase read for local/dev environments
+        if (supabase) {
+          const { data, error } = await supabase
+            .from('users')
+            .select('*')
+            .eq('telegram_id', tgUser.id)
+            .single();
+
+          if (!error && data) {
+            setUser({
+              id: data.id,
+              telegram_id: data.telegram_id,
+              name: data.name,
+              username: data.username,
+              phone: data.phone,
+              credits: data.credits || 0,
+              plan: data.plan || "free",
+              role: data.role || "user",
+              photo_url: data.photo_url
+            });
+          }
         }
       } catch (err) {
         console.error("Error fetching profile:", err);
@@ -109,9 +128,21 @@ export default function App() {
     if (tgUser?.id) {
       fetchProfile();
     } else if (isReady && !tgUser) {
+      setUser(null);
       setLoading(false);
     }
-  }, [tgUser, isReady, setUser, setLoading]);
+  }, [tgUser, isReady, initData, setUser, setLoading]);
+
+  useEffect(() => {
+    const params = new URLSearchParams(window.location.search);
+    const requestedTab = params.get("tab");
+    if (!requestedTab) return;
+
+    const validTabs: TabType[] = ["home", "matches", "analyze", "history", "profile", "admin"];
+    if (!validTabs.includes(requestedTab as TabType)) return;
+
+    setActiveTab(requestedTab as TabType);
+  }, []);
 
   const renderPage = () => {
     switch (activeTab) {
@@ -134,6 +165,10 @@ export default function App() {
         </div>
       </div>
     );
+  }
+
+  if (activeTab === "admin") {
+    return <Admin />;
   }
 
   return (

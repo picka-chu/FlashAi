@@ -1,4 +1,10 @@
 import { GoogleGenAI } from '@google/genai';
+import { 
+  apiKeyManager, 
+  analysisCache,
+  executeWithRetry,
+  isRetryableGeminiError 
+} from '../../src/services/apiCacheService';
 
 export interface FAQ {
   id?: string;
@@ -35,22 +41,12 @@ const INITIAL_FAQS: FAQ[] = [
   },
 ];
 
-function getAiClient() {
-  const key = process.env.GEMINI_API_KEY || process.env.GEMINI_API_KEY_1 || '';
-  if (!key) {
-    throw new Error('Support AI is not configured');
-  }
-
-  return new GoogleGenAI({ apiKey: key });
-}
-
 export async function generateSupportReply(
   message: string,
   history: { role: 'user' | 'model'; parts: string }[] = [],
   faqs: FAQ[] = INITIAL_FAQS,
 ) {
   const faqContext = faqs.map((f) => `Q: ${f.question}\nA: ${f.answer}`).join('\n\n');
-  const ai = getAiClient();
 
   const systemInstruction = `
 You are the Flash AI Support Agent for a Telegram mini app.
@@ -61,19 +57,46 @@ FAQ:
 ${faqContext}
 `;
 
-  const response = await ai.models.generateContent({
-    model: 'gemini-2.5-flash',
-    contents: [
-      ...history.map((h) => ({ role: h.role, parts: [{ text: h.parts }] })),
-      { role: 'user', parts: [{ text: message }] },
-    ],
-    config: {
-      systemInstruction,
-      temperature: 0.5,
-    },
-  });
+  const cacheKey = `support_${Buffer.from(message).toString('base64').substring(0, 32)}`;
+  
+  return executeWithRetry(async (apiKey, keyIndex) => {
+    const models = ['gemini-2.5-flash', 'gemini-2.0-flash', 'gemini-2.0-flash-lite'];
+    let lastError: any = null;
 
-  return response.text || 'Sorry, I could not generate a response right now.';
+    for (const model of models) {
+      try {
+        const ai = new GoogleGenAI({ apiKey });
+        const response = await ai.models.generateContent({
+          model,
+          contents: [
+            ...history.map((h) => ({ role: h.role, parts: [{ text: h.parts }] })),
+            { role: 'user', parts: [{ text: message }] },
+          ],
+          config: {
+            systemInstruction,
+            temperature: 0.5,
+          },
+        });
+        if (response.text) return response.text;
+      } catch (error: any) {
+        lastError = error;
+        // Continue to next model if retryable error
+        if (!isRetryableGeminiError(error)) {
+          throw error;
+        }
+      }
+    }
+
+    throw lastError || new Error('All models failed');
+  }, {
+    cache: analysisCache,
+    cacheKey,
+    metadata: { type: 'support_chat' },
+    customTtl: 30 * 60 * 1000, // 30 minutes for support responses
+  }).catch((err) => {
+    console.error('Support AI fallback exhausted:', err?.message || err);
+    return 'Sorry, I could not generate a response right now.';
+  });
 }
 
 export function getDefaultFaqs() {
