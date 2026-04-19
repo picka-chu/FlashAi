@@ -135,6 +135,7 @@ export const Profile: React.FC = () => {
   const [reportSubject, setReportSubject] = useState('');
   const [reportDetails, setReportDetails] = useState('');
   const [isSubmittingReport, setIsSubmittingReport] = useState(false);
+  const [isSavingProfile, setIsSavingProfile] = useState(false);
   const chatEndRef = useRef<HTMLDivElement>(null);
 
   useEffect(() => {
@@ -245,15 +246,21 @@ export const Profile: React.FC = () => {
   const handleSaveProfile = async () => {
     hapticFeedback('success');
     if (!user) return;
+    if (!editName.trim()) {
+      showAlert('Name is required.');
+      return;
+    }
 
     try {
+      setIsSavingProfile(true);
+      const effectiveInitData = initData || (window as any)?.Telegram?.WebApp?.initData || '';
       const response = await fetch('/api/user/profile', {
         method: 'PUT',
         headers: {
           'Content-Type': 'application/json',
-          'X-TG-Init-Data': initData || ''
+          'X-TG-Init-Data': effectiveInitData
         },
-        body: JSON.stringify({ name: editName, username: editUsername })
+        body: JSON.stringify({ name: editName.trim(), username: editUsername.trim() })
       });
 
       const data = await response.json();
@@ -271,6 +278,8 @@ export const Profile: React.FC = () => {
       showAlert('Profile updated successfully!');
     } catch (e) {
       showAlert('Failed to save profile. Please try again.');
+    } finally {
+      setIsSavingProfile(false);
     }
   };
 
@@ -1012,9 +1021,10 @@ export const Profile: React.FC = () => {
         <div className="p-6 bg-black border-t border-zinc-900">
           <button 
             onClick={handleSaveProfile}
+            disabled={isSavingProfile}
             className="w-full bg-[#ccff00] text-black font-black text-sm tracking-widest py-4 rounded-2xl shadow-[0_0_20px_rgba(204,255,0,0.2)] active:scale-[0.98] transition-all"
           >
-            Save changes
+            {isSavingProfile ? 'Saving...' : 'Save changes'}
           </button>
         </div>
       </div>

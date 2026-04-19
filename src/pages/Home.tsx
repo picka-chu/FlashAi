@@ -135,6 +135,11 @@ export const Home: React.FC<HomeProps> = ({ onTabChange }) => {
   };
 
   useEffect(() => {
+    if (!tg?.initData && user?.phone) {
+      // Wait for Telegram init data so user-scoped endpoints (recent activities) work reliably.
+      return;
+    }
+
     const fetchData = async () => {
       try {
         const [upcoming, trending, adsRes, activitiesRes] = await Promise.all([
@@ -205,7 +210,16 @@ export const Home: React.FC<HomeProps> = ({ onTabChange }) => {
       }
     };
     fetchData();
-  }, []);
+  }, [tg?.initData, user?.phone]);
+
+  const formatActivityLabel = (endpoint: string, method: string) => {
+    if (endpoint.includes('/api/analyze-betslip')) return 'Bet slip analyzed';
+    if (endpoint.includes('/api/analyze')) return 'Match analyzed';
+    if (endpoint.includes('/api/user/history')) return 'Viewed history';
+    if (endpoint.includes('/api/user/profile')) return 'Profile updated';
+    if (endpoint.includes('/api/tasks/claim')) return 'Task reward claimed';
+    return `${method || 'GET'} ${endpoint || 'activity'}`;
+  };
 
   // Auto-scroll for Top Picks
   useEffect(() => {
@@ -668,7 +682,7 @@ export const Home: React.FC<HomeProps> = ({ onTabChange }) => {
                     <Activity className="w-5 h-5 text-[#ccff00]" />
                   </div>
                   <div>
-                    <p className="text-xs font-black text-white">{activity.endpoint}</p>
+                    <p className="text-xs font-black text-white">{formatActivityLabel(activity.endpoint, activity.method)}</p>
                     <p className="text-[10px] font-bold text-zinc-500">{new Date(activity.created_at).toLocaleString()}</p>
                   </div>
                 </div>

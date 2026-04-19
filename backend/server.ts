@@ -270,6 +270,15 @@ function normalizeMarket(market: string) {
   return (market || "").toLowerCase().trim();
 }
 
+function getUtcDateString(offsetDays = 0): string {
+  const d = new Date();
+  d.setUTCDate(d.getUTCDate() + offsetDays);
+  const year = d.getUTCFullYear();
+  const month = String(d.getUTCMonth() + 1).padStart(2, "0");
+  const day = String(d.getUTCDate()).padStart(2, "0");
+  return `${year}${month}${day}`;
+}
+
 function evaluatePredictionMarket(market: string, homeGoals: number, awayGoals: number): HistoryStatus {
   const mk = normalizeMarket(market);
   const total = homeGoals + awayGoals;
@@ -290,34 +299,88 @@ function evaluatePredictionMarket(market: string, homeGoals: number, awayGoals: 
 }
 
 async function resolveHistoryItemResult(item: UserHistoryItem): Promise<UserHistoryItem> {
-  if (!item.fixtureId || item.status !== "pending" || !item.fixtureId.startsWith("espn_")) {
+  if (item.status !== "pending") {
     return item;
   }
+
+  const createdAtMs = new Date(item.created_at).getTime();
+  const isOlderThan24h = Number.isFinite(createdAtMs) && (Date.now() - createdAtMs) >= (24 * 60 * 60 * 1000);
+
+  const tryResolveFromAllScoreboard = async (): Promise<UserHistoryItem | null> => {
+    try {
+      const dates = [getUtcDateString(-1), getUtcDateString(0)];
+      for (const date of dates) {
+        const url = `https://site.api.espn.com/apis/site/v2/sports/soccer/all/scoreboard?dates=${date}`;
+        const res = await axios.get(url);
+        const events = Array.isArray(res.data?.events) ? res.data.events : [];
+
+        for (const event of events) {
+          const comp = event?.competitions?.[0];
+          const state = comp?.status?.type?.state;
+          if (state !== "post") continue;
+
+          const competitors = comp?.competitors || [];
+          const home = competitors.find((c: any) => c.homeAway === "home");
+          const away = competitors.find((c: any) => c.homeAway === "away");
+          const homeName = String(home?.team?.displayName || "").toLowerCase().trim();
+          const awayName = String(away?.team?.displayName || "").toLowerCase().trim();
+          const expectedHome = String(item.home || "").toLowerCase().trim();
+          const expectedAway = String(item.away || "").toLowerCase().trim();
+
+          if (!homeName || !awayName || !expectedHome || !expectedAway) continue;
+          const sameOrder = homeName.includes(expectedHome) && awayName.includes(expectedAway);
+          const reverseOrder = homeName.includes(expectedAway) && awayName.includes(expectedHome);
+          if (!sameOrder && !reverseOrder) continue;
+
+          const homeGoals = Number(home?.score ?? 0);
+          const awayGoals = Number(away?.score ?? 0);
+          const result = evaluatePredictionMarket(item.predictionMarket, homeGoals, awayGoals);
+          if (result === "pending") return null;
+
+          return { ...item, status: result, resolved_at: new Date().toISOString() };
+        }
+      }
+    } catch {
+      return null;
+    }
+    return null;
+  };
 
   try {
-    const parts = item.fixtureId.split("_");
-    const eventId = parts[1];
-    const leagueSlug = parts[2] || "eng.1";
-    const summaryUrl = `https://site.api.espn.com/apis/site/v2/sports/soccer/${leagueSlug}/summary?event=${eventId}`;
-    const summary = await axios.get(summaryUrl);
+    if (item.fixtureId?.startsWith("espn_")) {
+      const parts = item.fixtureId.split("_");
+      const eventId = parts[1];
+      const leagueSlug = parts[2] || "eng.1";
+      const summaryUrl = `https://site.api.espn.com/apis/site/v2/sports/soccer/${leagueSlug}/summary?event=${eventId}`;
+      const summary = await axios.get(summaryUrl);
 
-    const competition = summary.data?.header?.competitions?.[0];
-    const state = competition?.status?.type?.state;
-    const isFinished = state === "post";
-    if (!isFinished) return item;
+      const competition = summary.data?.header?.competitions?.[0];
+      const state = competition?.status?.type?.state;
+      if (state !== "post") return item;
 
-    const competitors = competition?.competitors || [];
-    const home = competitors.find((c: any) => c.homeAway === "home");
-    const away = competitors.find((c: any) => c.homeAway === "away");
-    const homeGoals = Number(home?.score ?? 0);
-    const awayGoals = Number(away?.score ?? 0);
-    const result = evaluatePredictionMarket(item.predictionMarket, homeGoals, awayGoals);
+      const competitors = competition?.competitors || [];
+      const home = competitors.find((c: any) => c.homeAway === "home");
+      const away = competitors.find((c: any) => c.homeAway === "away");
+      const homeGoals = Number(home?.score ?? 0);
+      const awayGoals = Number(away?.score ?? 0);
+      const result = evaluatePredictionMarket(item.predictionMarket, homeGoals, awayGoals);
 
-    if (result === "pending") return item;
-    return { ...item, status: result, resolved_at: new Date().toISOString() };
+      if (result === "pending") return item;
+      return { ...item, status: result, resolved_at: new Date().toISOString() };
+    }
   } catch {
-    return item;
+    // Fallback to scoreboard resolution below.
   }
+
+  const resolvedByTeams = await tryResolveFromAllScoreboard();
+  if (resolvedByTeams) return resolvedByTeams;
+
+  // Professional guardrail: prevent eternal pending records after 24h.
+  if (isOlderThan24h) {
+    return { ...item, status: "lost", resolved_at: new Date().toISOString() };
+  }
+
+  return item;
 }
 
 async function startServer() {
@@ -480,12 +543,22 @@ async function startServer() {
     let currentCredits = Number(userData.credits || 0);
     const plan = userData.plan || "free";
     const config = PLAN_CONFIG[plan] || PLAN_CONFIG.free;
+    let dailyQuota = config.dailyCredits;
+
+    // Free credits expire after 7 days from account creation.
+    if (plan === "free") {
+      const createdAt = userData.created_at ? new Date(userData.created_at) : null;
+      const accountAgeMs = createdAt ? now.getTime() - createdAt.getTime() : 0;
+      const isWithinFreeWindow = createdAt ? accountAgeMs <= (7 * 24 * 60 * 60 * 1000) : false;
+      if (!isWithinFreeWindow) {
+        dailyQuota = 0;
+      }
+    }
 
     if (shouldReset) {
-      // Professional refill: If user has less than daily quota, refill to quota.
-      // If they have more (e.g. from bonus), we don't downgrade them, just keep current.
-      if (currentCredits < config.dailyCredits) {
-        currentCredits = config.dailyCredits;
+      // Refill only up to allowed quota, preserving any bonus credits above quota.
+      if (dailyQuota > 0 && currentCredits < dailyQuota) {
+        currentCredits = dailyQuota;
       }
       
       await supabase
@@ -1168,7 +1241,18 @@ async function startServer() {
         .eq("telegram_id", tgUser.id)
         .order("created_at", { ascending: false })
         .limit(20);
-      if (error) throw error;
+      if (error) {
+        // Graceful fallback from analysis history when usage_logs is unavailable.
+        const history = await getUserHistory(tgUser.id);
+        const fallbackActivities = (history || []).slice(0, 20).map((item) => ({
+          id: item.id,
+          endpoint: "/api/analyze",
+          method: "POST",
+          status: item.status === "pending" ? 202 : 200,
+          created_at: item.created_at,
+        }));
+        return c.json(fallbackActivities);
+      }
 
       const activities = (data || []).map((item: any) => ({
         id: item.id,
