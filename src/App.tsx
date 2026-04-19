@@ -51,48 +51,35 @@ export default function App() {
       }
 
       try {
-        const { data, error } = await supabase
-          .from('users')
-          .select('*')
-          .eq('telegram_id', tgUser.id)
-          .single();
+        const mapUser = (data: any) => ({
+          id: data.id,
+          telegram_id: data.telegram_id,
+          name: data.name,
+          username: data.username,
+          phone: data.phone,
+          credits: data.credits || 0,
+          plan: data.plan || "free",
+          role: data.role || "user",
+          photo_url: data.photo_url,
+        });
 
-        if (error && error.code === 'PGRST116') {
-          console.warn("User not found in 'users' table.");
-          // User is not registered - clear user state to show signup UI
-          setUser(null);
-          setLoading(false);
-          return;
-        }
+        // Primary path: ask backend for the authenticated profile.
+        // This handles legacy schema fallbacks (registration cache) and keeps frontend logic simple.
+        if (initData) {
+          const res = await fetch('/api/auth/me', {
+            headers: { 'X-TG-Init-Data': initData },
+          });
 
-        if (error) {
-          console.error("Profile fetch error:", error);
-          setLoading(false);
-          return;
-        } else if (data) {
-          // User exists - check if they have completed registration (phone number)
-          const isRegistered = !!data.phone;
-          
-          if (!isRegistered) {
-            // User exists in DB but hasn't provided phone yet
-            console.warn("User exists but hasn't completed registration (no phone)");
-            setUser(null);
-            setLoading(false);
+          if (res.ok) {
+            const payload = await res.json();
+            const profile = payload?.user;
+            if (profile?.phone) {
+              setUser(mapUser(profile));
+            } else {
+              setUser(null);
+            }
             return;
           }
-          
-          setUser({
-            id: data.id,
-            telegram_id: data.telegram_id,
-            name: data.name,
-            username: data.username,
-            phone: data.phone,
-            credits: data.credits || 0,
-            plan: data.plan || "free",
-            role: data.role || "user",
-            photo_url: data.photo_url
-          });
-          return;
         }
 
         // Fallback to direct Supabase read for local/dev environments
@@ -103,18 +90,10 @@ export default function App() {
             .eq('telegram_id', tgUser.id)
             .single();
 
-          if (!error && data) {
-            setUser({
-              id: data.id,
-              telegram_id: data.telegram_id,
-              name: data.name,
-              username: data.username,
-              phone: data.phone,
-              credits: data.credits || 0,
-              plan: data.plan || "free",
-              role: data.role || "user",
-              photo_url: data.photo_url
-            });
+          if (!error && data?.phone) {
+            setUser(mapUser(data));
+          } else {
+            setUser(null);
           }
         }
       } catch (err) {
