@@ -871,8 +871,8 @@ async function startServer() {
         // Check if referral was already rewarded (prevent race condition/duplicate reward)
         const referralAlreadyRewarded = existingUser?.referral_rewarded === true;
 
-        // Define signup credits for new users
-        const signupCredits = isNewRegistration ? 50 : (existingUser?.credits || 0);
+        // Define signup credits for new users (default: 3, configurable via SIGNUP_CREDITS)
+        const signupCreditsToApply = isNewRegistration ? signupCredits : (existingUser?.credits || 0);
 
         // 2. Perform registration/update with atomic credit handling
         const registrationPayload = {
@@ -880,7 +880,7 @@ async function startServer() {
           name: fullName,
           username: ctx.from.username || "",
           phone,
-          credits: signupCredits,
+          credits: signupCreditsToApply,
           plan: existingUser?.plan || 'free',
           last_active: new Date().toISOString()
         };
@@ -903,7 +903,7 @@ async function startServer() {
                 telegram_id: telegramId,
                 name: fullName,
                 username: ctx.from.username || "",
-                credits: signupCredits,
+                credits: signupCreditsToApply,
                 plan: existingUser?.plan || 'free',
                 last_active: new Date().toISOString()
               }, { onConflict: 'telegram_id' })
@@ -1267,6 +1267,52 @@ async function startServer() {
     } catch (e: any) {
       console.error("Profile update error:", e?.message || e);
       return c.json({ error: "Failed to update profile" }, 500);
+    }
+  });
+
+  app.post("/api/user/report", async (c) => {
+    const initData = c.req.header("X-TG-Init-Data");
+    if (!isPlaceholderToken && botToken && (!initData || !validateTelegramInitData(initData, botToken))) {
+      return c.json({ error: "Invalid Telegram authentication" }, 401);
+    }
+
+    try {
+      const tgUser = initData ? getTelegramUserFromInitData(initData) : null;
+      if (!tgUser?.id) return c.json({ error: "User not identified" }, 401);
+
+      const body = await c.req.json().catch(() => ({} as any));
+      const subject = String(body?.subject || "").trim();
+      const details = String(body?.details || "").trim();
+      const category = String(body?.category || "general").trim().toLowerCase();
+
+      if (!subject || !details) {
+        return c.json({ error: "Subject and details are required." }, 400);
+      }
+
+      const { data: user } = await supabase
+        .from("users")
+        .select("name,username")
+        .eq("telegram_id", tgUser.id)
+        .maybeSingle();
+
+      const payload = {
+        telegram_id: tgUser.id,
+        name: user?.name || `${tgUser.first_name || ""}${tgUser.last_name ? ` ${tgUser.last_name}` : ""}`.trim() || "User",
+        username: user?.username || tgUser.username || "",
+        category,
+        subject,
+        details,
+        status: "open",
+        created_at: new Date().toISOString(),
+      };
+
+      const { error } = await supabase.from("reports").insert(payload);
+      if (error) throw error;
+
+      return c.json({ success: true });
+    } catch (e: any) {
+      console.error("User report submit error:", e?.message || e);
+      return c.json({ error: "Failed to submit report" }, 500);
     }
   });
 
@@ -1756,6 +1802,40 @@ ${ad.subtitle}`;
       return c.json({ error: e?.message || "Failed to notify user" }, 500);
     }
   });
+
+  app.get("/api/admin/reports", adminOnly, async (c) => {
+    const status = String(c.req.query("status") || "all").trim().toLowerCase();
+    let query = supabase
+      .from("reports")
+      .select("*")
+      .order("created_at", { ascending: false })
+      .limit(200);
+
+    if (status !== "all") query = query.eq("status", status);
+    const { data, error } = await query;
+    if (error) return c.json({ error: error.message }, 500);
+    return c.json(data || []);
+  });
+
+  app.post("/api/admin/reports/:id/status", adminOnly, async (c) => {
+    const id = c.req.param("id");
+    const body = await c.req.json().catch(() => ({} as any));
+    const status = String(body?.status || "").trim().toLowerCase();
+    if (!["open", "reviewing", "resolved"].includes(status)) {
+      return c.json({ error: "Invalid status" }, 400);
+    }
+
+    const { error } = await supabase
+      .from("reports")
+      .update({
+        status,
+        updated_at: new Date().toISOString(),
+      })
+      .eq("id", id);
+
+    if (error) return c.json({ error: error.message }, 500);
+    return c.json({ success: true });
+  });
   app.post("/api/admin/notifications/send", adminOnly, async (c) => {
     if (!bot) return c.json({ error: "Bot not configured" }, 500);
 
@@ -1866,202 +1946,29 @@ ${ad.subtitle}`;
   });
 
   app.post("/api/bot/notify", async (c) => {
-    const body = await c.req.json().catch(() => ({} as any));
-    const telegramId = Number(body?.telegram_id);
-    const type = String(body?.type || "").trim().toLowerCase();
-
-    if (!bot) return c.json({ error: "Bot not configured" }, 500);
-    if (!telegramId || !type) return c.json({ error: "telegram_id and type are required" }, 400);
-
-    const templates: Record<string, { text: string; cta: string }> = {
-      fomo: {
-        text: "⚡ Big fixtures are moving fast right now. Your edge is one analysis away.",
-        cta: "Analyze now",
-      },
-      addiction: {
-        text: "🔥 You're on a streak. Keep your momentum with today's top AI picks.",
-        cta: "Keep streak",
-      },
-      comeback: {
-        text: "👋 We saved your seat. New high-confidence football insights are ready.",
-        cta: "I'm back",
-      },
-      inactive: {
-        text: "⏳ We miss you. Fresh matches are live and your credits are waiting.",
-        cta: "Return now",
-      },
-    };
-
-    const template = templates[type] || templates.comeback;
-    await bot.telegram.sendMessage(telegramId, template.text, {
-      ...Markup.inlineKeyboard([[Markup.button.webApp(template.cta, appUrl)]]),
-    });
-
-    return c.json({ success: true });
+    return c.json({
+      success: false,
+      disabled: true,
+      message: "Automated FOMO/marketing bot notifications are disabled. Use admin notifications instead."
+    }, 410);
   });
 
   app.post("/api/admin/automation/retention", adminOnly, async (c) => {
-    const { type } = await c.req.json().catch(() => ({ type: "inactive" }));
-    if (!bot) return c.json({ error: "Bot not configured" }, 500);
-
-    try {
-      let users: any[] = [];
-      if (type === "registration") {
-        const { data } = await supabase.from("users").select("telegram_id").is("phone", null).not("telegram_id", "is", null);
-        users = data || [];
-      } else {
-        const daysAgo = new Date();
-        daysAgo.setDate(daysAgo.getDate() - 5);
-        const { data } = await supabase.from("users").select("telegram_id").lt("last_active", daysAgo.toISOString()).not("telegram_id", "is", null);
-        users = data || [];
-      }
-
-      let sent = 0;
-      for (const u of users) {
-        try {
-          await bot.telegram.sendMessage(u.telegram_id, "📣 Flash AI update: fresh opportunities are available now.", {
-            ...Markup.inlineKeyboard([[Markup.button.webApp("Open Flash AI", appUrl)]]),
-          });
-          sent += 1;
-        } catch {}
-      }
-
-      return c.json({ success: true, sentCount: sent });
-    } catch (e: any) {
-      return c.json({ error: e?.message || "Automation failed" }, 500);
-    }
+    return c.json({
+      success: false,
+      disabled: true,
+      message: "Retention automation is disabled. Use Admin > Notifications for manual messaging."
+    }, 410);
   });
 
   // Retention & Engagement Automation (Single Definition)
   app.post("/api/automation/retention", async (c) => {
-    const authHeader = c.req.header("Authorization");
-    if (authHeader !== `Bearer ${process.env.AUTOMATION_SECRET}`) {
-      return c.json({ error: "Unauthorized" }, 401);
-    }
-
-    try {
-      const { type, targetDays } = await c.req.json();
-      let users: any[] = [];
-      let message = "";
-      let ctaLabel = "Open App";
-
-      if (type === 'registration') {
-        const { data } = await supabase.from("users").select("telegram_id").is("phone", null);
-        users = data || [];
-        message = "⏳ *Time is running out!* Finish your registration now to claim your *3 free credits* and start winning. Most users win their first bet within 24 hours! ⚽🔥";
-        ctaLabel = "🚀 Finish Registration";
-      } else if (type === 'subscription') {
-        const { data } = await supabase.from("users").select("telegram_id").eq("plan", "free");
-        users = data || [];
-        message = "💎 *You're missing out* on the Elite AI insights! Weekly subscribers are reporting *92% accuracy* today. Unlock your Pro edge now before the big games start! 🚀";
-        ctaLabel = "💎 Upgrade Now";
-      } else if (type === 'inactive') {
-        const daysAgo = targetDays || 5;
-        const inactiveDate = new Date();
-        inactiveDate.setDate(inactiveDate.getDate() - daysAgo);
-        const { data } = await supabase.from("users").select("telegram_id").lt("last_active", inactiveDate.toISOString());
-        users = data || [];
-        message = "🏟️ *The stadium is full, where are you?* Big matches are starting soon and our AI just identified *3 High-Confidence locks*. Don't let these profits slip away! 💸🔥";
-        ctaLabel = "🎫 Get My Picks";
-      }
-
-      let count = 0;
-      const twentyFourHoursAgo = new Date(Date.now() - 24 * 60 * 60 * 1000).toISOString();
-      
-      for (const u of users) {
-        try {
-          // RATE LIMITING: Check if user was notified in the last 24 hours
-          const { data: recentNotification } = await supabase
-            .from("notification_logs")
-            .select("id")
-            .eq("telegram_id", u.telegram_id)
-            .eq("message_type", type)
-            .gte("sent_at", twentyFourHoursAgo)
-            .single();
-
-          if (recentNotification) {
-            console.log(`Skipping user ${u.telegram_id}: Already notified in last 24h`);
-            continue; // Skip this user to prevent message exhaustion
-          }
-
-          await bot.telegram.sendMessage(u.telegram_id, message, {
-            parse_mode: 'Markdown',
-            ...Markup.inlineKeyboard([[Markup.button.webApp(ctaLabel, appUrl)]])
-          });
-          
-          // Log the notification for rate limiting
-          await supabase.from("notification_logs").insert({
-            telegram_id: u.telegram_id,
-            message_type: type,
-            message_content: message.substring(0, 200),
-            sent_at: new Date().toISOString(),
-            success: true
-          });
-          
-          count++;
-          
-          // Add delay every 25 messages to prevent Telegram API rate limiting
-          if (count % 25 === 0) {
-            await new Promise(r => setTimeout(r, 1000));
-          }
-        } catch (err: any) {
-          console.error(`Failed to send message to user ${u.telegram_id}:`, err.message);
-          
-          // Log failed notification
-          await supabase.from("notification_logs").insert({
-            telegram_id: u.telegram_id,
-            message_type: type,
-            message_content: message.substring(0, 200),
-            sent_at: new Date().toISOString(),
-            success: false,
-            error_message: err.message
-          });
-        }
-      }
-
-      return c.json({ success: true, processed: count, skipped: users.length - count });
-    } catch (e: any) {
-      console.error("Retention automation error:", e.message);
-      return c.json({ error: e.message }, 500);
-    }
+    return c.json({ error: "Retention automation is disabled." }, 410);
   });
 
   // n8n Automation: Daily Top Picks Flow
   app.post("/api/automation/daily-picks", async (c) => {
-    const authHeader = c.req.header("Authorization");
-    if (authHeader !== `Bearer ${process.env.AUTOMATION_SECRET}`) {
-      return c.json({ error: "Unauthorized" }, 401);
-    }
-
-    try {
-      // 1. Fetch Matches (using existing logic or direct ESPN call)
-      const res = await axios.get(`https://site.api.espn.com/apis/site/v2/sports/soccer/all/scoreboard`);
-      const matches = res.data.events?.slice(0, 5) || [];
-
-      // 2. Send to Analyst Agent (Simplified for automation)
-      const { multiAgentService } = await import("../src/services/multiAgentService.js");
-      const analyses = await Promise.all(matches.map(m => multiAgentService.analyzeMatch(m)));
-
-      // 3. Send to Marketing Agent for Telegram Message
-      const marketingMessage = await multiAgentService.generateMarketingMessage(analyses);
-
-      // 4. Broadcast to all Telegram users
-      const { data: users } = await supabase.from("users").select("telegram_id").not("telegram_id", "is", null);
-      
-      if (bot && users) {
-        for (const user of users) {
-          await bot.telegram.sendMessage(user.telegram_id, marketingMessage || "New predictions are in!", {
-            parse_mode: "Markdown",
-            ...Markup.inlineKeyboard([[Markup.button.webApp("🔥 View Analysis", `${appUrl}`)]])
-          });
-        }
-      }
-
-      return c.json({ success: true, messageCount: users?.length || 0 });
-    } catch (e: any) {
-      console.error("Daily picks automation failed:", e.message);
-      return c.json({ error: e.message }, 500);
-    }
+    return c.json({ error: "Daily marketing automation is disabled." }, 410);
   });
 
   // Note: Duplicate /api/automation/retention endpoint removed - see line ~1007 for the single definition
@@ -2133,75 +2040,10 @@ ${ad.subtitle}`;
     }
   };
 
-  const runDailyFeaturedMatchFomo = async () => {
-    try {
-      if (!bot) return;
-
-      const todayKey = new Date().toISOString().slice(0, 10);
-      const checkpointKey = `automation_featured_fomo_${todayKey}`;
-      const { data: checkpoint } = await supabase.from("api_cache").select("data").eq("endpoint", checkpointKey).maybeSingle();
-      if (checkpoint?.data?.sent) return;
-
-      const matches = await getUpcomingMatches();
-      const featured = matches?.[0];
-      if (!featured) return;
-
-      const featuredLabel = `${featured.teams?.home?.name || "Home"} vs ${featured.teams?.away?.name || "Away"}`;
-      const kickoff = featured?.fixture?.date ? new Date(featured.fixture.date).toLocaleString() : "today";
-      const creativeAngles = [
-        "urgent and elite",
-        "sharp and data-first",
-        "bold and hype-driven",
-        "exclusive and premium",
-      ];
-      const angle = creativeAngles[Math.floor(Math.random() * creativeAngles.length)];
-
-      const { multiAgentService } = await import("../src/services/multiAgentService.js");
-      const messageForFree = await multiAgentService.generateMarketingMessage([
-        { match: featuredLabel, kickoff, audience: "free", angle, cta: "Unlock your edge" },
-      ]);
-      const messageForSubs = await multiAgentService.generateMarketingMessage([
-        { match: featuredLabel, kickoff, audience: "subscribed", angle, cta: "Open today’s top picks" },
-      ]);
-
-      const [{ data: freeUsers }, { data: subUsers }] = await Promise.all([
-        supabase.from("users").select("telegram_id").eq("plan", "free").not("telegram_id", "is", null),
-        supabase.from("users").select("telegram_id").neq("plan", "free").not("telegram_id", "is", null),
-      ]);
-
-      let sentCount = 0;
-      for (const user of freeUsers || []) {
-        try {
-          await bot.telegram.sendMessage(user.telegram_id, messageForFree || `⚽ Featured match today: ${featuredLabel}`,
-            { ...Markup.inlineKeyboard([[Markup.button.webApp("Upgrade & Analyze", appUrl)]]) });
-          sentCount += 1;
-        } catch {}
-      }
-
-      for (const user of subUsers || []) {
-        try {
-          await bot.telegram.sendMessage(user.telegram_id, messageForSubs || `⚽ Featured match today: ${featuredLabel}`,
-            { ...Markup.inlineKeyboard([[Markup.button.webApp("View Featured Match", appUrl)]]) });
-          sentCount += 1;
-        } catch {}
-      }
-
-      await supabase.from("api_cache").upsert({
-        endpoint: checkpointKey,
-        data: { sent: true, sentCount, featuredLabel, at: new Date().toISOString() },
-        updated_at: new Date().toISOString(),
-      }, { onConflict: "endpoint" });
-    } catch (error) {
-      console.error("Featured FOMO automation failed:", error);
-    }
-  };
-
   // Run once on startup, then on interval
   await ensureBootstrapAdminRole();
   refreshLiveCache();
-  runDailyFeaturedMatchFomo();
   setInterval(refreshLiveCache, CACHE_INTERVAL);
-  setInterval(runDailyFeaturedMatchFomo, 60 * 60 * 1000);
 
   console.log(`Server running on http://localhost:${PORT}`);
   serve({

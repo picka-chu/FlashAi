@@ -11,7 +11,6 @@ import { useTelegram } from "./hooks/useTelegram";
 import { useUserStore } from "./store/useUserStore";
 import { supabase } from "./lib/supabase";
 import { motion, AnimatePresence } from "motion/react";
-import { useMarketingBot } from "./hooks/useMarketingBot";
 
 import { init, retrieveLaunchParams } from '@telegram-apps/sdk-react';
 
@@ -21,8 +20,6 @@ export default function App() {
   const { setUser, isLoading, setLoading } = useUserStore();
   
   const [lp, setLp] = useState<any>(null);
-
-  useMarketingBot();
 
   useEffect(() => {
     try {
