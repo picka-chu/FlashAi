@@ -188,6 +188,19 @@ function getTelegramUserFromInitData(initData: string): any {
   }
 }
 
+async function getTelegramProfilePhotoUrl(telegramId: number, bot: Telegraf | null): Promise<string | null> {
+  if (!bot) return null;
+  try {
+    const photos = await bot.telegram.getUserProfilePhotos(telegramId, 0, 1);
+    const fileId = photos?.photos?.[0]?.[0]?.file_id;
+    if (!fileId) return null;
+    const fileLink = await bot.telegram.getFileLink(fileId);
+    return String(fileLink || "");
+  } catch {
+    return null;
+  }
+}
+
 type HistoryStatus = "pending" | "won" | "lost";
 
 type UserHistoryItem = {
@@ -767,6 +780,9 @@ async function startServer() {
       const { images } = await c.req.json();
       const tgUser = initData ? getTelegramUserFromInitData(initData) : null;
       if (!tgUser) return c.json({ error: "User not identified" }, 401);
+      if (!Array.isArray(images) || images.length === 0) {
+        return c.json({ error: "At least one image is required." }, 400);
+      }
 
       const telegramId = tgUser.id;
 
@@ -784,6 +800,21 @@ async function startServer() {
       }
 
       const credits = await syncUserCredits(user);
+      const plan = user.plan || "free";
+      const maxImagesByPlan: Record<string, number> = {
+        free: 1,
+        weekly: 2,
+        monthly: 5,
+        admin: 10,
+      };
+      const maxImages = maxImagesByPlan[plan] ?? 1;
+      if (images.length > maxImages) {
+        return c.json({
+          error: `Your ${plan} plan allows up to ${maxImages} bet slip image(s) per analysis.`,
+          maxImages,
+          plan,
+        }, 400);
+      }
 
       const cost = 3; // OCR remains more expensive
       if (credits < cost) {
@@ -957,10 +988,12 @@ async function startServer() {
 
         isAdminUser = Boolean(isBootstrapAdmin || existingUser?.role === "admin");
         
+        const profilePhoto = await getTelegramProfilePhotoUrl(telegramId, bot);
         await supabase.from("users").upsert({
           telegram_id: telegramId,
           name: ctx.from.first_name + (ctx.from.last_name ? ` ${ctx.from.last_name}` : ""),
           username: ctx.from.username || "",
+          photo_url: profilePhoto || null,
           referrer_id: startPayload && !isNaN(Number(startPayload)) && Number(startPayload) !== telegramId ? Number(startPayload) : null,
           role: isAdminUser ? 'admin' : 'user',
           last_active: new Date().toISOString()
@@ -1018,10 +1051,12 @@ async function startServer() {
         const signupCreditsToApply = isNewRegistration ? signupCredits : (existingUser?.credits || 0);
 
         // 2. Perform registration/update with atomic credit handling
+        const profilePhoto = await getTelegramProfilePhotoUrl(telegramId, bot);
         const registrationPayload = {
           telegram_id: telegramId,
           name: fullName,
           username: ctx.from.username || "",
+          photo_url: profilePhoto || null,
           phone,
           credits: signupCreditsToApply,
           plan: existingUser?.plan || 'free',
@@ -1046,6 +1081,7 @@ async function startServer() {
                 telegram_id: telegramId,
                 name: fullName,
                 username: ctx.from.username || "",
+                photo_url: profilePhoto || null,
                 credits: signupCreditsToApply,
                 plan: existingUser?.plan || 'free',
                 last_active: new Date().toISOString()
@@ -1219,6 +1255,7 @@ async function startServer() {
           telegram_id: tgUser.id,
           name: `${tgUser.first_name || ""}${tgUser.last_name ? ` ${tgUser.last_name}` : ""}`.trim() || tgUser.username || "User",
           username: tgUser.username || "",
+          photo_url: tgUser.photo_url || null,
           role: isBootstrapAdmin ? "admin" : "user",
           plan: isBootstrapAdmin ? "admin" : "free",
           credits: isBootstrapAdmin ? 999 : 3,
@@ -1230,6 +1267,12 @@ async function startServer() {
       if (existing && isBootstrapAdmin && existing.role !== "admin") {
         await supabase.from("users")
           .update({ role: "admin", plan: "admin", last_active: new Date().toISOString() })
+          .eq("telegram_id", tgUser.id);
+      }
+
+      if (existing && tgUser.photo_url && existing.photo_url !== tgUser.photo_url) {
+        await supabase.from("users")
+          .update({ photo_url: tgUser.photo_url, last_active: new Date().toISOString() })
           .eq("telegram_id", tgUser.id);
       }
 
@@ -1396,11 +1439,12 @@ async function startServer() {
 
       const name = String(body?.name || "").trim();
       const username = String(body?.username || "").trim();
+      const photo_url = body?.photo_url ? String(body.photo_url).trim() : null;
       if (!name) return c.json({ error: "Name is required" }, 400);
 
       const { data, error } = await supabase
         .from("users")
-        .upsert({ telegram_id: telegramId, name, username, last_active: new Date().toISOString() }, { onConflict: "telegram_id" })
+        .upsert({ telegram_id: telegramId, name, username, photo_url, last_active: new Date().toISOString() }, { onConflict: "telegram_id" })
         .select("id,telegram_id,name,username,phone,credits,plan,role,photo_url")
         .single();
 
@@ -1633,6 +1677,18 @@ async function startServer() {
 
       if (!message) {
         return c.json({ error: "Message is required." }, 400);
+      }
+
+      const tgUser = initData ? getTelegramUserFromInitData(initData) : null;
+      if (!tgUser?.id) return c.json({ error: "User not identified." }, 401);
+      const { data: user } = await supabase
+        .from("users")
+        .select("plan")
+        .eq("telegram_id", tgUser.id)
+        .maybeSingle();
+      const plan = user?.plan || "free";
+      if (plan === "free") {
+        return c.json({ error: "AI chat is available on paid plans. Please upgrade to continue." }, 403);
       }
 
       const reply = await generateSupportReply(message, history, faqs);

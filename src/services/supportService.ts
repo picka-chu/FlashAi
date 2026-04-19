@@ -59,7 +59,8 @@ export const supportService = {
     });
 
     if (!response.ok) {
-      throw new Error('Failed to get support response');
+      const payload = await response.json().catch(() => ({}));
+      throw new Error(payload?.error || 'Failed to get support response');
     }
 
     const data = await response.json();

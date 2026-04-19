@@ -378,6 +378,7 @@ const globalCache = new ApiCacheManager(DEFAULT_CACHE_CONFIG);
 const analysisCache = new ApiCacheManager(ANALYSIS_CACHE_CONFIG);
 const predictionCache = new ApiCacheManager(PREDICTION_CACHE_CONFIG);
 const apiKeyManager = new ApiKeyManager();
+const inFlightRequests = new Map<string, Promise<any>>();
 
 // Export singleton instances
 export { globalCache, analysisCache, predictionCache, apiKeyManager };
@@ -423,6 +424,8 @@ export async function executeWithRetry<T>(
     metadata,
   } = options;
 
+  const inFlightKey = cacheKey ? `retry:${cacheKey}` : null;
+
   // Check cache first
   if (cache && cacheKey) {
     const cached = cache.get<T>(cacheKey);
@@ -432,59 +435,70 @@ export async function executeWithRetry<T>(
     }
   }
 
-  let lastError: any = null;
-  let attempt = 0;
-
-  while (attempt < maxRetries) {
-    const keyInfo = apiKeyManager.getNextKey();
-    
-    if (!keyInfo) {
-      throw new Error('No API keys available');
-    }
-
-    try {
-      const result = await operation(keyInfo.key, keyInfo.index);
-      
-      // Report success
-      apiKeyManager.reportSuccess(keyInfo.index);
-      
-      // Cache result if cache provided
-      if (cache && cacheKey) {
-        cache.set(cacheKey, result, {
-          ...metadata,
-          apiKeyIndex: keyInfo.index,
-        }, customTtl);
-      }
-      
-      return result;
-    } catch (error: any) {
-      lastError = error;
-      attempt++;
-      
-      const isRateLimit = isRetryableGeminiError(error);
-      
-      // Report failure
-      apiKeyManager.reportFailure(keyInfo.index, isRateLimit);
-      
-      if (isRateLimit && attempt < maxRetries) {
-        console.log(`🔄 Rate limit hit, rotating to next key (attempt ${attempt}/${maxRetries})`);
-        // Continue to next iteration with new key
-        continue;
-      }
-      
-      if (!isRetryableGeminiError(error)) {
-        // Non-retryable error, throw immediately
-        console.error('❌ Non-retryable error:', error.message);
-        throw error;
-      }
-      
-      // Wait before retry (exponential backoff)
-      const delay = Math.min(1000 * Math.pow(2, attempt), 5000);
-      await new Promise(resolve => setTimeout(resolve, delay));
-    }
+  // De-duplicate concurrent identical requests to save API quota.
+  if (inFlightKey && inFlightRequests.has(inFlightKey)) {
+    return inFlightRequests.get(inFlightKey) as Promise<T>;
   }
 
-  throw new Error(`All retries failed. Last error: ${lastError?.message || 'Unknown error'}`);
+  const runner = (async () => {
+    let lastError: any = null;
+    let attempt = 0;
+
+    while (attempt < maxRetries) {
+      const keyInfo = apiKeyManager.getNextKey();
+      
+      if (!keyInfo) {
+        throw new Error('No API keys available');
+      }
+
+      try {
+        const result = await operation(keyInfo.key, keyInfo.index);
+        
+        // Report success
+        apiKeyManager.reportSuccess(keyInfo.index);
+        
+        // Cache result if cache provided
+        if (cache && cacheKey) {
+          cache.set(cacheKey, result, {
+            ...metadata,
+            apiKeyIndex: keyInfo.index,
+          }, customTtl);
+        }
+        
+        return result;
+      } catch (error: any) {
+        lastError = error;
+        attempt++;
+        
+        const isRateLimit = isRetryableGeminiError(error);
+        
+        // Report failure
+        apiKeyManager.reportFailure(keyInfo.index, isRateLimit);
+        
+        if (isRateLimit && attempt < maxRetries) {
+          console.log(`🔄 Rate limit hit, rotating to next key (attempt ${attempt}/${maxRetries})`);
+          continue;
+        }
+        
+        if (!isRetryableGeminiError(error)) {
+          console.error('❌ Non-retryable error:', error.message);
+          throw error;
+        }
+        
+        const delay = Math.min(1000 * Math.pow(2, attempt), 5000);
+        await new Promise(resolve => setTimeout(resolve, delay));
+      }
+    }
+
+    throw new Error(`All retries failed. Last error: ${lastError?.message || 'Unknown error'}`);
+  })();
+
+  if (inFlightKey) {
+    inFlightRequests.set(inFlightKey, runner);
+    runner.finally(() => inFlightRequests.delete(inFlightKey));
+  }
+
+  return runner;
 }
 
 /**

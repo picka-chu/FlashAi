@@ -129,6 +129,18 @@ export const Analyze: React.FC = () => {
   const handleImageUpload = async (e: React.ChangeEvent<HTMLInputElement>) => {
     const files = e.target.files;
     if (!files) return;
+    const maxImagesByPlan: Record<string, number> = {
+      free: 1,
+      weekly: 2,
+      monthly: 5,
+      admin: 10,
+    };
+    const plan = user?.plan || 'free';
+    const maxImages = maxImagesByPlan[plan] ?? 1;
+    if (images.length >= maxImages) {
+      setError(`Your ${plan} plan allows up to ${maxImages} image(s).`);
+      return;
+    }
     
     const newImages = await Promise.all(
       Array.from(files as FileList).map((file: File) => {
@@ -142,7 +154,7 @@ export const Analyze: React.FC = () => {
       })
     );
     
-    setImages(prev => [...prev, ...newImages]);
+    setImages(prev => [...prev, ...newImages].slice(0, maxImages));
   };
 
   const removeImage = (index: number) => {
