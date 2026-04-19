@@ -218,7 +218,11 @@ export const Home: React.FC<HomeProps> = ({ onTabChange }) => {
     if (endpoint.includes('/api/user/history')) return 'Viewed history';
     if (endpoint.includes('/api/user/profile')) return 'Profile updated';
     if (endpoint.includes('/api/tasks/claim')) return 'Task reward claimed';
-    return `${method || 'GET'} ${endpoint || 'activity'}`;
+    const clean = String(endpoint || '')
+      .replace('/api/', '')
+      .replaceAll('/', ' ')
+      .trim();
+    return clean ? clean.replace(/\b\w/g, (c) => c.toUpperCase()) : 'App activity';
   };
 
   // Auto-scroll for Top Picks

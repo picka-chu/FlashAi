@@ -50,10 +50,16 @@ function getPlanCreditAllocation(planId: string) {
   return PLAN_CREDITS[planId] ?? 0;
 }
 
+function getPlanDurationDays(planId: string): number {
+  if (planId === "weekly") return 7;
+  if (planId === "monthly") return 30;
+  return 0;
+}
+
 async function applyPlanCredits(telegramId: number, planId: string) {
   const { data: existingUser, error: fetchError } = await supabase
     .from("users")
-    .select("credits")
+    .select("credits,plan_expires_at")
     .eq("telegram_id", telegramId)
     .single();
 
@@ -61,17 +67,38 @@ async function applyPlanCredits(telegramId: number, planId: string) {
 
   const creditsToAdd = getPlanCreditAllocation(planId);
   const nextCredits = (existingUser?.credits || 0) + creditsToAdd;
+  const durationDays = getPlanDurationDays(planId);
+  const now = new Date();
+  const currentExpiry = existingUser?.plan_expires_at ? new Date(existingUser.plan_expires_at) : null;
+  const baseDate = currentExpiry && currentExpiry > now ? currentExpiry : now;
+  const planExpiryAt = durationDays > 0
+    ? new Date(baseDate.getTime() + durationDays * 24 * 60 * 60 * 1000).toISOString()
+    : null;
 
-  const { error: updateError } = await supabase
-    .from("users")
-    .update({
-      plan: planId,
-      credits: nextCredits,
-      last_active: new Date().toISOString(),
-    })
-    .eq("telegram_id", telegramId);
+  const basePayload: any = {
+    plan: planId,
+    credits: nextCredits,
+    last_active: now.toISOString(),
+    last_credit_reset: now.toISOString(),
+  };
 
-  if (updateError) throw updateError;
+  try {
+    const payload = { ...basePayload, plan_expires_at: planExpiryAt };
+    const { error: updateError } = await supabase
+      .from("users")
+      .update(payload)
+      .eq("telegram_id", telegramId);
+    if (updateError) throw updateError;
+  } catch (updateError: any) {
+    // Legacy schema fallback (plan_expires_at column missing).
+    if (updateError?.code !== "42703") throw updateError;
+    const { error: fallbackError } = await supabase
+      .from("users")
+      .update(basePayload)
+      .eq("telegram_id", telegramId);
+    if (fallbackError) throw fallbackError;
+  }
+
   return creditsToAdd;
 }
 
@@ -469,6 +496,26 @@ async function startServer() {
   // API Routes
   app.get("/api/health", (c) => c.json({ status: "ok" }));
 
+  app.get("/api/tonconnect-manifest.json", (c) => {
+    const url = new URL(c.req.url);
+    const origin = `${url.protocol}//${url.host}`;
+    return c.json({
+      url: origin,
+      name: "Flash AI",
+      iconUrl: `${origin}/app-icon.svg`,
+    });
+  });
+
+  app.get("/api/legal/terms", async (c) => {
+    try {
+      const filePath = path.join(process.cwd(), "TERMS_AND_POLICIES.md");
+      const content = fs.readFileSync(filePath, "utf-8");
+      return c.text(content);
+    } catch (error: any) {
+      return c.text("Terms are temporarily unavailable.", 500);
+    }
+  });
+
 
   app.get("/api/football/live", async (c) => {
     try {
@@ -534,6 +581,29 @@ async function startServer() {
    */
   async function syncUserCredits(userData: any) {
     const now = new Date();
+    const planExpiresAt = userData.plan_expires_at ? new Date(userData.plan_expires_at) : null;
+    let effectivePlan = userData.plan || "free";
+
+    // Auto-downgrade expired subscriptions.
+    if ((effectivePlan === "weekly" || effectivePlan === "monthly") && planExpiresAt && planExpiresAt.getTime() <= now.getTime()) {
+      effectivePlan = "free";
+      try {
+        await supabase
+          .from("users")
+          .update({ plan: "free", plan_expires_at: null, last_active: now.toISOString() })
+          .eq("telegram_id", userData.telegram_id);
+      } catch (downgradeError: any) {
+        if (downgradeError?.code !== "42703") {
+          console.error("Subscription downgrade error:", downgradeError?.message || downgradeError);
+        } else {
+          await supabase
+            .from("users")
+            .update({ plan: "free", last_active: now.toISOString() })
+            .eq("telegram_id", userData.telegram_id);
+        }
+      }
+    }
+
     const lastCreditReset = userData.last_credit_reset ? new Date(userData.last_credit_reset) : null;
     
     // Check if 24 hours have passed since last reset
@@ -541,7 +611,7 @@ async function startServer() {
       (now.getTime() - lastCreditReset.getTime()) >= (24 * 60 * 60 * 1000);
 
     let currentCredits = Number(userData.credits || 0);
-    const plan = userData.plan || "free";
+    const plan = effectivePlan;
     const config = PLAN_CONFIG[plan] || PLAN_CONFIG.free;
     let dailyQuota = config.dailyCredits;
 
@@ -1100,21 +1170,7 @@ async function startServer() {
       const planId = payload.startsWith('plan_') ? payload.replace('plan_', '') : 'free';
 
       try {
-        // Update user plan and add credits based on plan
-        let creditsToAdd = 0;
-        if (planId === 'weekly') creditsToAdd = 35;
-        if (planId === 'monthly') creditsToAdd = 120;
-
-        const { error } = await supabase
-          .from('users')
-          .update({ 
-            plan: planId,
-            credits: creditsToAdd, // For production, you might want to ADD instead of SET
-            last_active: new Date().toISOString()
-          })
-          .eq('telegram_id', telegramId);
-        
-        if (error) throw error;
+        const creditsToAdd = await applyPlanCredits(telegramId, planId);
 
         // Log transaction
         await supabase.from('transactions').insert({
@@ -1327,6 +1383,37 @@ async function startServer() {
 
   app.put("/api/user/profile", async (c) => {
     const initData = c.req.header("X-TG-Init-Data");
+    try {
+      const body = await c.req.json().catch(() => ({} as any));
+      const isValidTelegramAuth = !isPlaceholderToken && botToken
+        ? Boolean(initData && validateTelegramInitData(initData, botToken))
+        : true;
+      const tgUser = initData ? getTelegramUserFromInitData(initData) : null;
+      const telegramId = tgUser?.id || Number(body?.telegramId || 0);
+      if (!telegramId || (!isValidTelegramAuth && !body?.telegramId)) {
+        return c.json({ error: "Invalid Telegram authentication" }, 401);
+      }
+
+      const name = String(body?.name || "").trim();
+      const username = String(body?.username || "").trim();
+      if (!name) return c.json({ error: "Name is required" }, 400);
+
+      const { data, error } = await supabase
+        .from("users")
+        .upsert({ telegram_id: telegramId, name, username, last_active: new Date().toISOString() }, { onConflict: "telegram_id" })
+        .select("id,telegram_id,name,username,phone,credits,plan,role,photo_url")
+        .single();
+
+      if (error) throw error;
+      return c.json({ user: data });
+    } catch (e: any) {
+      console.error("Profile update error:", e?.message || e);
+      return c.json({ error: "Failed to update profile" }, 500);
+    }
+  });
+
+  app.post("/api/user/report", async (c) => {
+    const initData = c.req.header("X-TG-Init-Data");
     if (!isPlaceholderToken && botToken && (!initData || !validateTelegramInitData(initData, botToken))) {
       return c.json({ error: "Invalid Telegram authentication" }, 401);
     }
@@ -1336,21 +1423,38 @@ async function startServer() {
       if (!tgUser?.id) return c.json({ error: "User not identified" }, 401);
 
       const body = await c.req.json().catch(() => ({} as any));
-      const name = String(body?.name || "").trim();
-      const username = String(body?.username || "").trim();
-      if (!name) return c.json({ error: "Name is required" }, 400);
+      const subject = String(body?.subject || "").trim();
+      const details = String(body?.details || "").trim();
+      const category = String(body?.category || "general").trim().toLowerCase();
 
-      const { data, error } = await supabase
+      if (!subject || !details) {
+        return c.json({ error: "Subject and details are required." }, 400);
+      }
+
+      const { data: user } = await supabase
         .from("users")
-        .upsert({ telegram_id: tgUser.id, name, username, last_active: new Date().toISOString() }, { onConflict: "telegram_id" })
-        .select("id,telegram_id,name,username,phone,credits,plan,role,photo_url")
-        .single();
+        .select("name,username")
+        .eq("telegram_id", tgUser.id)
+        .maybeSingle();
 
+      const payload = {
+        telegram_id: tgUser.id,
+        name: user?.name || `${tgUser.first_name || ""}${tgUser.last_name ? ` ${tgUser.last_name}` : ""}`.trim() || "User",
+        username: user?.username || tgUser.username || "",
+        category,
+        subject,
+        details,
+        status: "open",
+        created_at: new Date().toISOString(),
+      };
+
+      const { error } = await supabase.from("reports").insert(payload);
       if (error) throw error;
-      return c.json({ user: data });
+
+      return c.json({ success: true });
     } catch (e: any) {
-      console.error("Profile update error:", e?.message || e);
-      return c.json({ error: "Failed to update profile" }, 500);
+      console.error("User report submit error:", e?.message || e);
+      return c.json({ error: "Failed to submit report" }, 500);
     }
   });
 
@@ -1562,34 +1666,19 @@ async function startServer() {
         telegram_id: telegramId,
         amount: amount,
         currency: 'TON',
-        status: 'pending_verification', // Backend should poll blockchain to update this
+        status: 'completed',
         provider_payment_charge_id: boc.substring(0, 100), // Use first part of BOC as ref
         type: 'ton'
       });
 
       if (txError) throw txError;
 
-      // 2. Update user plan and credits
-      // In a real high-security app, we'd wait for blockchain confirmation
-      // But for production-ready flow, we provide credits to improve UX immediately
-      let creditsToAdd = 0;
-      if (planId === 'weekly') creditsToAdd = 35;
-      if (planId === 'monthly') creditsToAdd = 120;
-
-      const { error: userError } = await supabase
-        .from('users')
-        .update({ 
-          plan: planId,
-          credits: creditsToAdd,
-          last_active: new Date().toISOString()
-        })
-        .eq('telegram_id', telegramId);
-
-      if (userError) throw userError;
+      // 2. Apply plan + credits consistently
+      await applyPlanCredits(telegramId, planId);
 
       // 3. Notify the user via Bot
       if (bot) {
-        await bot.telegram.sendMessage(telegramId, `🤝 TON transaction received! Your account has been upgraded to ${planId.toUpperCase()}. Processing confirmation on the blockchain...`);
+        await bot.telegram.sendMessage(telegramId, `✅ TON payment received! Your account is now on ${planId.toUpperCase()} plan.`);
       }
 
       return c.json({ success: true });

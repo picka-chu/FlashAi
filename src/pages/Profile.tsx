@@ -136,6 +136,7 @@ export const Profile: React.FC = () => {
   const [reportDetails, setReportDetails] = useState('');
   const [isSubmittingReport, setIsSubmittingReport] = useState(false);
   const [isSavingProfile, setIsSavingProfile] = useState(false);
+  const [isViewingLegal, setIsViewingLegal] = useState(false);
   const chatEndRef = useRef<HTMLDivElement>(null);
 
   useEffect(() => {
@@ -155,11 +156,13 @@ export const Profile: React.FC = () => {
 
   useEffect(() => {
     if (tg?.BackButton) {
-      if (isEditing || isViewingSubscriptions || isViewingReferral || isViewingSupport || isPaymentSheetOpen || isReportingIssue) {
+      if (isEditing || isViewingSubscriptions || isViewingReferral || isViewingSupport || isPaymentSheetOpen || isReportingIssue || isViewingLegal) {
         tg.BackButton.show();
         const handleBack = () => {
           if (isPaymentSheetOpen) {
             setIsPaymentSheetOpen(false);
+          } else if (isViewingLegal) {
+            setIsViewingLegal(false);
           } else if (isReportingIssue) {
             setIsReportingIssue(false);
           } else {
@@ -178,7 +181,22 @@ export const Profile: React.FC = () => {
         tg.BackButton.hide();
       }
     }
-  }, [isEditing, isViewingSubscriptions, isViewingReferral, isViewingSupport, isPaymentSheetOpen, isReportingIssue, tg]);
+  }, [isEditing, isViewingSubscriptions, isViewingReferral, isViewingSupport, isPaymentSheetOpen, isReportingIssue, isViewingLegal, tg]);
+
+  const refreshAuthedProfile = async () => {
+    const effectiveInitData = initData || (window as any)?.Telegram?.WebApp?.initData || '';
+    if (!effectiveInitData) return;
+    const res = await fetch('/api/auth/me', { headers: { 'X-TG-Init-Data': effectiveInitData } });
+    const payload = await res.json().catch(() => ({}));
+    if (!res.ok || !payload?.user || !user) return;
+    setUser({
+      ...user,
+      ...payload.user,
+      role: payload.user.role || user.role,
+      plan: payload.user.plan || user.plan,
+      credits: Number(payload.user.credits ?? user.credits),
+    });
+  };
 
   const submitReport = async () => {
     if (!reportSubject.trim() || !reportDetails.trim()) {
@@ -260,7 +278,7 @@ export const Profile: React.FC = () => {
           'Content-Type': 'application/json',
           'X-TG-Init-Data': effectiveInitData
         },
-        body: JSON.stringify({ name: editName.trim(), username: editUsername.trim() })
+        body: JSON.stringify({ telegramId: user.telegram_id, name: editName.trim(), username: editUsername.trim() })
       });
 
       const data = await response.json();
@@ -291,6 +309,12 @@ export const Profile: React.FC = () => {
 
   const handleTonPayment = async () => {
     hapticFeedback('medium');
+    if (!selectedPlanForPayment || !user) return;
+    const tonReceiver = import.meta.env.VITE_TON_RECEIVER_ADDRESS || '';
+    if (!tonReceiver) {
+      showAlert('TON payments are temporarily unavailable. Missing receiver configuration.');
+      return;
+    }
     
     if (!tonConnectUI.connected) {
       showAlert('Redirecting to connect your TON wallet...');
@@ -305,7 +329,7 @@ export const Profile: React.FC = () => {
         validUntil: Math.floor(Date.now() / 1000) + 60, // 60 sec
         messages: [
           {
-            address: "UQB1vS8u8a4S6X2m7S7_K3X-QO-V6aX7L-u1tS7K-aX7-a-z", // Your admin wallet address
+            address: tonReceiver,
             amount: (selectedPlanForPayment.tonPrice * 1e9).toString(), // nanoTON
             payload: btoa(`plan:${selectedPlanForPayment.id}:user:${user.telegram_id}`) // Memo for tracking
           },
@@ -320,7 +344,7 @@ export const Profile: React.FC = () => {
         method: 'POST',
         headers: {
           'Content-Type': 'application/json',
-          'X-TG-Init-Data': initData
+          'X-TG-Init-Data': initData || (window as any)?.Telegram?.WebApp?.initData || ''
         },
         body: JSON.stringify({
           telegramId: user.telegram_id,
@@ -332,19 +356,21 @@ export const Profile: React.FC = () => {
 
       if (verifyRes.ok) {
         hapticFeedback('success');
-        showAlert(`Congratulations! You have successfully upgraded to ${selectedPlanForPayment.name}. Credits have been added.`);
-        setUser({ ...user, plan: selectedPlanForPayment.id as any });
+        await refreshAuthedProfile();
+        showAlert(`Congratulations! You have successfully upgraded to ${selectedPlanForPayment.name}.`);
       } else {
-        throw new Error('Verification failed');
+        const verifyData = await verifyRes.json().catch(() => ({}));
+        throw new Error(verifyData.error || 'Verification failed');
       }
     } catch (e: any) {
       console.error('TON Payment error:', e);
-      showAlert('TON payment failed or canceled.');
+      showAlert(`TON payment failed: ${e?.message || 'Canceled or failed.'}`);
     }
   };
 
   const handleStarsPayment = async () => {
     hapticFeedback('medium');
+    if (!selectedPlanForPayment || !user) return;
     setIsPaymentSheetOpen(false);
     
     if (!tg || !user) {
@@ -377,8 +403,7 @@ export const Profile: React.FC = () => {
           if (status === 'paid') {
             hapticFeedback('success');
             showAlert(`Congratulations! You have successfully upgraded to ${selectedPlanForPayment.name}`);
-            // Force refresh user data
-            setUser({ ...user, plan: selectedPlanForPayment.id as any });
+            refreshAuthedProfile();
           } else if (status === 'cancelled') {
             showAlert('Payment cancelled.');
           } else {
@@ -816,8 +841,9 @@ export const Profile: React.FC = () => {
 
   if (isViewingSubscriptions) {
     return (
-      <div className="fixed inset-0 z-[100] bg-black flex flex-col overflow-hidden">
-        <div className="flex-1 overflow-y-auto no-scrollbar px-6 py-8 space-y-8">
+      <>
+        <div className="fixed inset-0 z-[100] bg-black flex flex-col overflow-hidden">
+          <div className="flex-1 overflow-y-auto no-scrollbar px-6 py-8 space-y-8">
           <div className="text-center space-y-2">
             <h1 className="text-3xl font-black text-white tracking-tight">Upgrade Plan</h1>
             <p className="text-zinc-500 text-sm font-bold">Choose the best plan for your success</p>
@@ -951,6 +977,9 @@ export const Profile: React.FC = () => {
                   <p className="text-[10px] font-bold text-zinc-500 text-center leading-relaxed">
                     By clicking Continue, you agree to our Terms of Service. Payments via TON require a connected wallet.
                   </p>
+                  <button onClick={() => setIsViewingLegal(true)} className="w-full mt-3 py-2 rounded-xl bg-zinc-800 text-[10px] font-black uppercase text-zinc-300">
+                    View Terms & Privacy
+                  </button>
                 </div>
 
                 <button 
@@ -962,8 +991,25 @@ export const Profile: React.FC = () => {
               </motion.div>
             </>
           )}
+          </AnimatePresence>
+        </div>
+
+        <AnimatePresence>
+          {isViewingLegal && (
+            <>
+              <motion.div initial={{ opacity: 0 }} animate={{ opacity: 1 }} exit={{ opacity: 0 }} className="fixed inset-0 bg-black/80 z-[220]" onClick={() => setIsViewingLegal(false)} />
+              <motion.div initial={{ y: '100%' }} animate={{ y: 0 }} exit={{ y: '100%' }} className="fixed bottom-0 left-0 right-0 z-[221] bg-zinc-950 border-t border-zinc-800 rounded-t-[32px] p-6 max-h-[82vh] overflow-y-auto no-scrollbar space-y-4">
+                <h3 className="text-lg font-black text-white">Terms & Privacy Policy</h3>
+                <p className="text-xs text-zinc-400 font-semibold leading-relaxed">Flash AI provides AI-assisted football insights for informational purposes only. We do not guarantee outcomes or winnings. Users are responsible for lawful use and responsible betting behavior.</p>
+                <p className="text-xs text-zinc-400 font-semibold leading-relaxed">Subscriptions (Weekly/Monthly) unlock premium access for fixed durations. Renewals and billing are processed by Telegram Stars / TON providers. Abuse, fraud, or chargeback abuse can result in suspension.</p>
+                <p className="text-xs text-zinc-400 font-semibold leading-relaxed">We process account identifiers (Telegram ID), profile metadata, usage logs, transactions, and support reports to operate the service, fraud protection, and customer support. We do not sell personal data.</p>
+                <p className="text-xs text-zinc-400 font-semibold leading-relaxed">By continuing to use Flash AI, you acknowledge these terms and our privacy practices.</p>
+                <button onClick={() => setIsViewingLegal(false)} className="w-full py-3 rounded-2xl bg-[#ccff00] text-black text-xs font-black uppercase tracking-widest">Close</button>
+              </motion.div>
+            </>
+          )}
         </AnimatePresence>
-      </div>
+      </>
     );
   }
 

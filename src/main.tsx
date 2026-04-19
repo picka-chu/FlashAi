@@ -4,7 +4,7 @@ import {TonConnectUIProvider} from '@tonconnect/ui-react';
 import App from './App.tsx';
 import './index.css';
 
-const manifestUrl = 'https://flash-ai-bet.example.com/tonconnect-manifest.json';
+const manifestUrl = `${window.location.origin}/api/tonconnect-manifest.json`;
 
 createRoot(document.getElementById('root')!).render(
   <StrictMode>
