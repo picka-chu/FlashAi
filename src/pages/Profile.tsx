@@ -1024,9 +1024,10 @@ export const Profile: React.FC = () => {
               <motion.div initial={{ opacity: 0 }} animate={{ opacity: 1 }} exit={{ opacity: 0 }} className="fixed inset-0 bg-black/80 z-[220]" onClick={() => setIsViewingLegal(false)} />
               <motion.div initial={{ y: '100%' }} animate={{ y: 0 }} exit={{ y: '100%' }} className="fixed bottom-0 left-0 right-0 z-[221] bg-zinc-950 border-t border-zinc-800 rounded-t-[32px] p-6 max-h-[82vh] overflow-y-auto no-scrollbar space-y-4">
                 <h3 className="text-lg font-black text-white">Terms & Privacy Policy</h3>
-                <pre className="whitespace-pre-wrap text-[11px] leading-relaxed text-zinc-300 font-medium bg-zinc-900/50 border border-zinc-800 rounded-2xl p-4">
-                  {legalContent || 'Loading terms...'}
-                </pre>
+                <p className="text-xs text-zinc-400 font-semibold leading-relaxed">Flash AI provides AI-assisted football insights for informational purposes only. We do not guarantee outcomes or winnings. Users are responsible for lawful use and responsible betting behavior.</p>
+                <p className="text-xs text-zinc-400 font-semibold leading-relaxed">Subscriptions (Weekly/Monthly) unlock premium access for fixed durations. Renewals and billing are processed by Telegram Stars / TON providers. Abuse, fraud, or chargeback abuse can result in suspension.</p>
+                <p className="text-xs text-zinc-400 font-semibold leading-relaxed">We process account identifiers (Telegram ID), profile metadata, usage logs, transactions, and support reports to operate the service, fraud protection, and customer support. We do not sell personal data.</p>
+                <p className="text-xs text-zinc-400 font-semibold leading-relaxed">By continuing to use Flash AI, you acknowledge these terms and our privacy practices.</p>
                 <button onClick={() => setIsViewingLegal(false)} className="w-full py-3 rounded-2xl bg-[#ccff00] text-black text-xs font-black uppercase tracking-widest">Close</button>
               </motion.div>
             </>

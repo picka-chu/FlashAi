@@ -1502,6 +1502,52 @@ async function startServer() {
     }
   });
 
+  app.post("/api/user/report", async (c) => {
+    const initData = c.req.header("X-TG-Init-Data");
+    if (!isPlaceholderToken && botToken && (!initData || !validateTelegramInitData(initData, botToken))) {
+      return c.json({ error: "Invalid Telegram authentication" }, 401);
+    }
+
+    try {
+      const tgUser = initData ? getTelegramUserFromInitData(initData) : null;
+      if (!tgUser?.id) return c.json({ error: "User not identified" }, 401);
+
+      const body = await c.req.json().catch(() => ({} as any));
+      const subject = String(body?.subject || "").trim();
+      const details = String(body?.details || "").trim();
+      const category = String(body?.category || "general").trim().toLowerCase();
+
+      if (!subject || !details) {
+        return c.json({ error: "Subject and details are required." }, 400);
+      }
+
+      const { data: user } = await supabase
+        .from("users")
+        .select("name,username")
+        .eq("telegram_id", tgUser.id)
+        .maybeSingle();
+
+      const payload = {
+        telegram_id: tgUser.id,
+        name: user?.name || `${tgUser.first_name || ""}${tgUser.last_name ? ` ${tgUser.last_name}` : ""}`.trim() || "User",
+        username: user?.username || tgUser.username || "",
+        category,
+        subject,
+        details,
+        status: "open",
+        created_at: new Date().toISOString(),
+      };
+
+      const { error } = await supabase.from("reports").insert(payload);
+      if (error) throw error;
+
+      return c.json({ success: true });
+    } catch (e: any) {
+      console.error("User report submit error:", e?.message || e);
+      return c.json({ error: "Failed to submit report" }, 500);
+    }
+  });
+
   // Create Stars Invoice Endpoint
   app.post("/api/payments/create-stars-invoice", async (c) => {
     // Validate Telegram Init Data
