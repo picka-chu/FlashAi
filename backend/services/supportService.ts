@@ -1,8 +1,6 @@
 import { GoogleGenAI } from '@google/genai';
 import { 
-  apiKeyManager, 
   analysisCache,
-  executeWithRetry,
   isRetryableGeminiError 
 } from '../../src/services/apiCacheService';
 
@@ -58,11 +56,24 @@ ${faqContext}
 `;
 
   const cacheKey = `support_${Buffer.from(message).toString('base64').substring(0, 32)}`;
-  
-  return executeWithRetry(async (apiKey, keyIndex) => {
-    const models = ['gemini-2.5-flash', 'gemini-2.0-flash', 'gemini-2.0-flash-lite'];
-    let lastError: any = null;
 
+  const cached = analysisCache.get<string>(cacheKey);
+  if (cached?.data) return cached.data;
+
+  const supportKeys = [
+    process.env.GEMINI_SUPPORT_KEY,
+    process.env.GEMINI_SUPPORT_KEY_1,
+  ].filter(Boolean) as string[];
+
+  if (!supportKeys.length) {
+    console.error('Support key pool is empty. Configure GEMINI_SUPPORT_KEY and GEMINI_SUPPORT_KEY_1.');
+    return 'Sorry, support is temporarily unavailable. Please try again later.';
+  }
+
+  const models = ['gemini-2.5-flash'];
+  let lastError: any = null;
+
+  for (const apiKey of supportKeys) {
     for (const model of models) {
       try {
         const ai = new GoogleGenAI({ apiKey });
@@ -77,26 +88,27 @@ ${faqContext}
             temperature: 0.5,
           },
         });
-        if (response.text) return response.text;
+
+        if (response.text) {
+          analysisCache.set(
+            cacheKey,
+            response.text,
+            { model, apiKeyIndex: 0, type: 'support_chat' } as any,
+            30 * 60 * 1000
+          );
+          return response.text;
+        }
       } catch (error: any) {
         lastError = error;
-        // Continue to next model if retryable error
         if (!isRetryableGeminiError(error)) {
           throw error;
         }
       }
     }
+  }
 
-    throw lastError || new Error('All models failed');
-  }, {
-    cache: analysisCache,
-    cacheKey,
-    metadata: { type: 'support_chat' },
-    customTtl: 30 * 60 * 1000, // 30 minutes for support responses
-  }).catch((err) => {
-    console.error('Support AI fallback exhausted:', err?.message || err);
-    return 'Sorry, I could not generate a response right now.';
-  });
+  console.error('Support AI fallback exhausted:', lastError?.message || lastError);
+  return 'Sorry, I could not generate a response right now.';
 }
 
 export function getDefaultFaqs() {

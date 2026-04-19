@@ -47,7 +47,7 @@ const PLANS = [
     icon: Zap,
     color: 'text-zinc-400',
     bgColor: 'bg-zinc-900',
-    features: ['5 Daily credits', '1 Bet slip analysis', 'No AI chat after analysis']
+    features: ['3 Daily credits', '1 Bet slip analysis', 'No AI chat after analysis']
   },
   {
     id: 'weekly',
@@ -85,6 +85,7 @@ export const Profile: React.FC = () => {
   const [isViewingSubscriptions, setIsViewingSubscriptions] = useState(false);
   const [isViewingReferral, setIsViewingReferral] = useState(false);
   const [isViewingSupport, setIsViewingSupport] = useState(false);
+  const [isReportingIssue, setIsReportingIssue] = useState(false);
   const [referralTab, setReferralTab] = useState<'referral' | 'earn'>('referral');
   const [supportTab, setSupportTab] = useState<'chat' | 'faq'>('chat');
   const [editName, setEditName] = useState(user?.name || 'Alex Volkov');
@@ -130,6 +131,11 @@ export const Profile: React.FC = () => {
   const [chatHistory, setChatHistory] = useState<{ role: 'user' | 'model', parts: string }[]>([]);
   const [isChatLoading, setIsChatLoading] = useState(false);
   const [faqs, setFaqs] = useState<FAQ[]>([]);
+  const [reportCategory, setReportCategory] = useState('general');
+  const [reportSubject, setReportSubject] = useState('');
+  const [reportDetails, setReportDetails] = useState('');
+  const [isSubmittingReport, setIsSubmittingReport] = useState(false);
+  const [isSavingProfile, setIsSavingProfile] = useState(false);
   const chatEndRef = useRef<HTMLDivElement>(null);
 
   useEffect(() => {
@@ -149,11 +155,13 @@ export const Profile: React.FC = () => {
 
   useEffect(() => {
     if (tg?.BackButton) {
-      if (isEditing || isViewingSubscriptions || isViewingReferral || isViewingSupport || isPaymentSheetOpen) {
+      if (isEditing || isViewingSubscriptions || isViewingReferral || isViewingSupport || isPaymentSheetOpen || isReportingIssue) {
         tg.BackButton.show();
         const handleBack = () => {
           if (isPaymentSheetOpen) {
             setIsPaymentSheetOpen(false);
+          } else if (isReportingIssue) {
+            setIsReportingIssue(false);
           } else {
             setIsEditing(false);
             setIsViewingSubscriptions(false);
@@ -170,7 +178,43 @@ export const Profile: React.FC = () => {
         tg.BackButton.hide();
       }
     }
-  }, [isEditing, isViewingSubscriptions, isViewingReferral, isViewingSupport, isPaymentSheetOpen, tg]);
+  }, [isEditing, isViewingSubscriptions, isViewingReferral, isViewingSupport, isPaymentSheetOpen, isReportingIssue, tg]);
+
+  const submitReport = async () => {
+    if (!reportSubject.trim() || !reportDetails.trim()) {
+      showAlert('Please fill in both subject and details.');
+      return;
+    }
+    setIsSubmittingReport(true);
+    try {
+      const res = await fetch('/api/user/report', {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          'X-TG-Init-Data': initData || '',
+        },
+        body: JSON.stringify({
+          category: reportCategory,
+          subject: reportSubject,
+          details: reportDetails,
+        }),
+      });
+      const data = await res.json().catch(() => ({}));
+      if (!res.ok) {
+        showAlert(data.error || 'Failed to submit report.');
+        return;
+      }
+      setReportSubject('');
+      setReportDetails('');
+      setReportCategory('general');
+      setIsReportingIssue(false);
+      showAlert('Report submitted successfully. Admin has been notified.');
+    } catch (error) {
+      showAlert('Failed to submit report. Please try again.');
+    } finally {
+      setIsSubmittingReport(false);
+    }
+  };
 
   const handleAction = (name: string) => {
     hapticFeedback('light');
@@ -202,15 +246,21 @@ export const Profile: React.FC = () => {
   const handleSaveProfile = async () => {
     hapticFeedback('success');
     if (!user) return;
+    if (!editName.trim()) {
+      showAlert('Name is required.');
+      return;
+    }
 
     try {
+      setIsSavingProfile(true);
+      const effectiveInitData = initData || (window as any)?.Telegram?.WebApp?.initData || '';
       const response = await fetch('/api/user/profile', {
         method: 'PUT',
         headers: {
           'Content-Type': 'application/json',
-          'X-TG-Init-Data': initData || ''
+          'X-TG-Init-Data': effectiveInitData
         },
-        body: JSON.stringify({ name: editName, username: editUsername })
+        body: JSON.stringify({ name: editName.trim(), username: editUsername.trim() })
       });
 
       const data = await response.json();
@@ -228,6 +278,8 @@ export const Profile: React.FC = () => {
       showAlert('Profile updated successfully!');
     } catch (e) {
       showAlert('Failed to save profile. Please try again.');
+    } finally {
+      setIsSavingProfile(false);
     }
   };
 
@@ -539,13 +591,55 @@ export const Profile: React.FC = () => {
                     </button>
                   </div>
                   <button 
-                    onClick={() => showAlert('Report feature coming soon!')}
+                    onClick={() => setIsReportingIssue(true)}
                     className="w-full py-3 rounded-xl border border-red-500/20 bg-red-500/5 text-red-500 text-[10px] font-black tracking-widest flex items-center justify-center gap-2"
                   >
                     <AlertCircle className="w-3 h-3" />
                     Report a problem
                   </button>
                 </div>
+
+                {isReportingIssue && (
+                  <div className="fixed inset-0 z-[120] bg-black/90 p-6 flex items-end">
+                    <div className="w-full bg-zinc-950 border border-zinc-800 rounded-3xl p-5 space-y-4">
+                      <div className="flex items-center justify-between">
+                        <h3 className="text-sm font-black text-white uppercase tracking-wider">Submit report</h3>
+                        <button onClick={() => setIsReportingIssue(false)} className="w-8 h-8 rounded-xl bg-zinc-800 flex items-center justify-center">
+                          <X className="w-4 h-4 text-zinc-300" />
+                        </button>
+                      </div>
+                      <select
+                        value={reportCategory}
+                        onChange={(e) => setReportCategory(e.target.value)}
+                        className="w-full bg-zinc-900 border border-zinc-800 rounded-2xl px-4 py-3 text-sm font-bold text-white"
+                      >
+                        <option value="general">General issue</option>
+                        <option value="payment">Payment issue</option>
+                        <option value="analysis">Analysis issue</option>
+                        <option value="bug">Bug report</option>
+                      </select>
+                      <input
+                        value={reportSubject}
+                        onChange={(e) => setReportSubject(e.target.value)}
+                        placeholder="Short subject"
+                        className="w-full bg-zinc-900 border border-zinc-800 rounded-2xl px-4 py-3 text-sm font-bold text-white placeholder:text-zinc-600"
+                      />
+                      <textarea
+                        value={reportDetails}
+                        onChange={(e) => setReportDetails(e.target.value)}
+                        placeholder="Describe the issue in detail..."
+                        className="w-full h-28 bg-zinc-900 border border-zinc-800 rounded-2xl px-4 py-3 text-sm font-bold text-white placeholder:text-zinc-600"
+                      />
+                      <button
+                        onClick={submitReport}
+                        disabled={isSubmittingReport}
+                        className="w-full py-3 rounded-2xl bg-red-500 text-white text-xs font-black uppercase tracking-widest disabled:opacity-50"
+                      >
+                        {isSubmittingReport ? 'Submitting...' : 'Submit report'}
+                      </button>
+                    </div>
+                  </div>
+                )}
               </motion.div>
             ) : (
               <motion.div 
@@ -927,9 +1021,10 @@ export const Profile: React.FC = () => {
         <div className="p-6 bg-black border-t border-zinc-900">
           <button 
             onClick={handleSaveProfile}
+            disabled={isSavingProfile}
             className="w-full bg-[#ccff00] text-black font-black text-sm tracking-widest py-4 rounded-2xl shadow-[0_0_20px_rgba(204,255,0,0.2)] active:scale-[0.98] transition-all"
           >
-            Save changes
+            {isSavingProfile ? 'Saving...' : 'Save changes'}
           </button>
         </div>
       </div>

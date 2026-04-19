@@ -20,7 +20,7 @@ export const INITIAL_FAQS: FAQ[] = [
   },
   {
     question: 'What are the differences between the plans?',
-    answer: 'Free plan gives 5 daily credits and 1 analysis. Weekly ($3.99) gives 35 daily credits and 3 analyses. Monthly ($11.99) gives 120 daily credits, 10 analyses, and unlimited AI chat with deep data gathering.',
+    answer: 'Free plan gives 3 daily credits and 1 analysis. Weekly ($3.99) gives 35 daily credits and 3 analyses. Monthly ($11.99) gives 120 daily credits, 10 analyses, and unlimited AI chat with deep data gathering.',
     category: 'subscription',
   },
   {

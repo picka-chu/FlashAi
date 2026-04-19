@@ -231,7 +231,8 @@ class ApiCacheManager {
 
 /**
  * Circular API Key Manager
- * Rotates through 9 API keys to distribute load and avoid rate limits
+ * Rotates through analysis keys (GEMINI_API_KEY + GEMINI_API_KEY_1..7)
+ * to distribute load and avoid rate limits.
  */
 class ApiKeyManager {
   private keys: string[] = [];
@@ -243,34 +244,24 @@ class ApiKeyManager {
   }
 
   /**
-   * Initialize all 9 API keys from environment variables
+   * Initialize analysis API keys from environment variables.
    */
   private initializeKeys(): void {
-    // Collect all possible Gemini API keys (9 total)
+    // Analysis / football workloads (primary heavy-token usage pool)
     const potentialKeys = [
-      // Primary prediction keys (3)
-      process.env.GEMINI_PREDICTION_KEY_1,
-      process.env.GEMINI_PREDICTION_KEY_2,
-      process.env.GEMINI_PREDICTION_KEY_3,
-      
-      // Agent keys (2)
-      process.env.GEMINI_AGENT_KEY_1,
-      process.env.GEMINI_AGENT_KEY_2,
-      
-      // General API keys (4)
+      process.env.GEMINI_API_KEY,
       process.env.GEMINI_API_KEY_1,
       process.env.GEMINI_API_KEY_2,
       process.env.GEMINI_API_KEY_3,
       process.env.GEMINI_API_KEY_4,
       process.env.GEMINI_API_KEY_5,
-      
-      // Fallback main key
-      process.env.GEMINI_API_KEY,
+      process.env.GEMINI_API_KEY_6,
+      process.env.GEMINI_API_KEY_7,
     ].filter(Boolean) as string[];
 
     // Deduplicate while preserving order
     const uniqueKeys = [...new Set(potentialKeys)];
-    this.keys = uniqueKeys.slice(0, 9); // Max 9 keys
+    this.keys = uniqueKeys.slice(0, 8); // GEMINI_API_KEY + _1.._7
     
     // Initialize health tracking for each key
     this.keys.forEach((_, index) => {
@@ -281,7 +272,7 @@ class ApiKeyManager {
       });
     });
 
-    console.log(`✅ Initialized ${this.keys.length} Gemini API keys for circular rotation`);
+    console.log(`✅ Initialized ${this.keys.length} analysis Gemini API keys for circular rotation`);
   }
 
   /**
