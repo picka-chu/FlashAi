@@ -39,7 +39,7 @@ import {
 } from 'recharts';
 import { useTelegram } from '../hooks/useTelegram';
 
-type AdminTab = 'dashboard' | 'analytics' | 'tasks' | 'ads' | 'users' | 'notifications';
+type AdminTab = 'dashboard' | 'analytics' | 'tasks' | 'ads' | 'users' | 'notifications' | 'reports';
 
 export const Admin: React.FC = () => {
   const [activeTab, setActiveTab] = useState<AdminTab>('dashboard');
@@ -69,6 +69,8 @@ export const Admin: React.FC = () => {
   });
   const [isBroadcasting, setIsBroadcasting] = useState(false);
   const [isSendingNotification, setIsSendingNotification] = useState(false);
+  const [reports, setReports] = useState<any[]>([]);
+  const [reportStatusFilter, setReportStatusFilter] = useState<'all' | 'open' | 'reviewing' | 'resolved'>('all');
   const [users, setUsers] = useState<any[]>([]);
   const [userSearch, setUserSearch] = useState('');
   const [notifyMessage, setNotifyMessage] = useState('');
@@ -90,6 +92,7 @@ export const Admin: React.FC = () => {
     fetchTasks();
     fetchAds();
     fetchUsers();
+    fetchReports(reportStatusFilter);
   }, [initData]);
 
   const fetchUsers = async (q = '') => {
@@ -247,21 +250,38 @@ export const Admin: React.FC = () => {
     }
   };
 
-  const triggerAutomation = async (type: string) => {
+  const fetchReports = async (status: 'all' | 'open' | 'reviewing' | 'resolved' = 'all') => {
     try {
-      const res = await fetch('/api/admin/automation/retention', {
+      const res = await fetch(`/api/admin/reports?status=${status}`, {
+        headers: { 'X-TG-Init-Data': initData }
+      });
+      if (!res.ok) {
+        setReports([]);
+        return;
+      }
+      const data = await res.json();
+      setReports(Array.isArray(data) ? data : []);
+    } catch (e) {
+      setReports([]);
+    }
+  };
+
+  const updateReportStatus = async (id: string, status: 'open' | 'reviewing' | 'resolved') => {
+    try {
+      const res = await fetch(`/api/admin/reports/${id}/status`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json', 'X-TG-Init-Data': initData },
-        body: JSON.stringify({ type })
+        body: JSON.stringify({ status })
       });
       const data = await res.json().catch(() => ({}));
-      if (res.ok) {
-        showAlert(`Automation triggered. Sent to ${data.sentCount ?? 0} users.`);
-      } else {
-        showAlert(data.error || 'Failed to trigger automation');
+      if (!res.ok) {
+        showAlert(data.error || 'Failed to update report');
+        return;
       }
+      fetchReports(reportStatusFilter);
+      showAlert(`Report moved to ${status}.`);
     } catch (e) {
-      showAlert('Failed to trigger');
+      showAlert('Failed to update report.');
     }
   };
 
@@ -384,7 +404,7 @@ export const Admin: React.FC = () => {
 
         {/* Tab Switcher */}
         <div className="flex gap-2 p-1 bg-zinc-900/50 rounded-2xl overflow-x-auto no-scrollbar">
-          {(['dashboard', 'analytics', 'tasks', 'ads', 'users', 'notifications'] as AdminTab[]).map(tab => (
+          {(['dashboard', 'analytics', 'tasks', 'ads', 'users', 'notifications', 'reports'] as AdminTab[]).map(tab => (
             <button
               key={tab}
               onClick={() => { hapticFeedback('light'); setActiveTab(tab); }}
@@ -698,42 +718,11 @@ export const Admin: React.FC = () => {
                 ))}
               </div>
 
-              {/* Automation Triggers */}
-              <div className="pt-8 space-y-4">
-                 <h4 className="text-[10px] font-black text-white/40 uppercase tracking-[4px]">Smart Retention Loops</h4>
-                 <div className="grid grid-cols-1 gap-3">
-                    <button 
-                      onClick={() => triggerAutomation('registration')}
-                      className="p-5 bg-zinc-900 border border-zinc-800 rounded-3xl flex items-center justify-between group active:scale-95 transition-all"
-                    >
-                       <div className="flex items-center gap-4">
-                          <div className="w-10 h-10 rounded-2xl bg-orange-500/10 flex items-center justify-center text-orange-500">
-                             <Clock className="w-5 h-5" />
-                          </div>
-                          <div className="text-left">
-                             <p className="text-[11px] font-black text-white uppercase tracking-wider">Unfinished Signups</p>
-                             <p className="text-[9px] font-bold text-zinc-600 uppercase">Trigger FOMO Registration Nudge</p>
-                          </div>
-                       </div>
-                       <ChevronRight className="w-4 h-4 text-zinc-800 group-hover:text-white" />
-                    </button>
-
-                    <button 
-                      onClick={() => triggerAutomation('inactive')}
-                      className="p-5 bg-zinc-900 border border-zinc-800 rounded-3xl flex items-center justify-between group active:scale-95 transition-all"
-                    >
-                       <div className="flex items-center gap-4">
-                          <div className="w-10 h-10 rounded-2xl bg-red-500/10 flex items-center justify-center text-red-500">
-                             <Activity className="w-5 h-5" />
-                          </div>
-                          <div className="text-left">
-                             <p className="text-[11px] font-black text-white uppercase tracking-wider">Inactive Users</p>
-                             <p className="text-[9px] font-bold text-zinc-600 uppercase">Trigger Global Comeback Alert</p>
-                          </div>
-                       </div>
-                       <ChevronRight className="w-4 h-4 text-zinc-800 group-hover:text-white" />
-                    </button>
-                 </div>
+              <div className="pt-8">
+                <div className="p-5 bg-zinc-900 border border-zinc-800 rounded-3xl">
+                  <h4 className="text-[10px] font-black text-white/40 uppercase tracking-[4px]">Automation</h4>
+                  <p className="text-xs font-bold text-zinc-500 mt-2">FOMO/marketing automations are disabled. Use Notifications for manual broadcasts.</p>
+                </div>
               </div>
 
                {/* Add Ad Modal */}
@@ -956,6 +945,66 @@ export const Admin: React.FC = () => {
                 <button disabled={isSendingNotification} onClick={sendPushNotification} className="w-full py-4 rounded-2xl bg-[#ccff00] text-black font-black uppercase tracking-widest text-xs disabled:opacity-50">
                   {isSendingNotification ? 'Sending...' : 'Push Notification'}
                 </button>
+              </div>
+            </motion.div>
+          )}
+
+          {activeTab === 'reports' && (
+            <motion.div
+              key="reports"
+              initial={{ opacity: 0, y: 10 }}
+              animate={{ opacity: 1, y: 0 }}
+              exit={{ opacity: 0, y: -10 }}
+              className="space-y-5"
+            >
+              <div className="bg-zinc-900/50 border border-zinc-800 rounded-3xl p-5 space-y-4">
+                <h3 className="text-sm font-black text-white uppercase tracking-wider">User Reports</h3>
+                <div className="flex gap-2 items-center">
+                  <select
+                    value={reportStatusFilter}
+                    onChange={(e) => {
+                      const status = e.target.value as 'all' | 'open' | 'reviewing' | 'resolved';
+                      setReportStatusFilter(status);
+                      fetchReports(status);
+                    }}
+                    className="flex-1 bg-zinc-800 rounded-2xl p-3 text-white text-xs font-bold focus:outline-none"
+                  >
+                    <option value="all">All reports</option>
+                    <option value="open">Open</option>
+                    <option value="reviewing">Reviewing</option>
+                    <option value="resolved">Resolved</option>
+                  </select>
+                  <button onClick={() => fetchReports(reportStatusFilter)} className="px-4 py-3 rounded-2xl bg-[#ccff00] text-black text-xs font-black uppercase">
+                    Refresh
+                  </button>
+                </div>
+              </div>
+
+              <div className="space-y-3">
+                {reports.map((report) => (
+                  <div key={report.id} className="bg-zinc-900/50 border border-zinc-800 rounded-3xl p-4 space-y-3">
+                    <div className="flex items-start justify-between gap-3">
+                      <div>
+                        <p className="text-sm font-black text-white">{report.subject}</p>
+                        <p className="text-[10px] font-bold text-zinc-500 uppercase tracking-widest mt-1">
+                          {report.category} • {report.name || 'Unknown'} • ID {report.telegram_id}
+                        </p>
+                      </div>
+                      <span className="px-2 py-1 rounded-lg bg-zinc-800 text-[10px] font-black uppercase text-zinc-300">{report.status}</span>
+                    </div>
+                    <p className="text-xs font-semibold text-zinc-300 whitespace-pre-wrap">{report.details}</p>
+                    <div className="grid grid-cols-3 gap-2">
+                      <button onClick={() => updateReportStatus(report.id, 'open')} className="py-2 rounded-xl bg-zinc-800 text-[10px] font-black uppercase text-zinc-300">Open</button>
+                      <button onClick={() => updateReportStatus(report.id, 'reviewing')} className="py-2 rounded-xl bg-blue-500/10 text-[10px] font-black uppercase text-blue-300">Reviewing</button>
+                      <button onClick={() => updateReportStatus(report.id, 'resolved')} className="py-2 rounded-xl bg-green-500/10 text-[10px] font-black uppercase text-green-300">Resolved</button>
+                    </div>
+                  </div>
+                ))}
+                {reports.length === 0 && (
+                  <div className="p-6 bg-zinc-900/50 border border-zinc-800 rounded-3xl text-center">
+                    <p className="text-xs font-bold text-zinc-500">No reports found for this filter.</p>
+                  </div>
+                )}
               </div>
             </motion.div>
           )}
