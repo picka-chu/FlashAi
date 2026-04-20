@@ -7,9 +7,9 @@ import {
   isRetryableGeminiError 
 } from "./apiCacheService";
 
-const AGENT_MODELS = ["gemini-1.5-pro"];
-const SEARCH_MODELS = ["gemini-1.5-pro"];
-const VISION_MODELS = ["gemini-1.5-pro"];
+const AGENT_MODELS = ["gemini-2.0-flash"];
+const SEARCH_MODELS = ["gemini-2.0-flash"];
+const VISION_MODELS = ["gemini-2.0-flash"];
 
 export enum AgentType {
   ANALYST = "analyst",
