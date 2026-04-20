@@ -481,27 +481,47 @@ export const Profile: React.FC = () => {
     
     // Use Telegram's native way if possible, or fallback to navigator
     try {
-      // Standard clipboard API
-      if (navigator.clipboard && window.isSecureContext) {
-        await navigator.clipboard.writeText(link);
+      if (tg?.ready) {
+        // Use Telegram WebApp API to copy to clipboard if available
+        // Some versions of Telegram support this via a specific method or just standard API
+        // But for reliability in TMA, we try both
+        if (navigator.clipboard) {
+          await navigator.clipboard.writeText(link);
+          showAlert('Referral link copied to clipboard!');
+          hapticFeedback('success');
+          return;
+        }
+      }
+
+      // Fallback for all environments
+      const textArea = document.createElement('textarea');
+      textArea.value = link;
+      textArea.style.position = 'fixed';
+      textArea.style.left = '-9999px';
+      textArea.style.top = '0';
+      textArea.style.opacity = '0';
+      document.body.appendChild(textArea);
+      textArea.focus();
+      textArea.select();
+      
+      const successful = document.execCommand('copy');
+      document.body.removeChild(textArea);
+      
+      if (successful) {
         showAlert('Referral link copied to clipboard!');
+        hapticFeedback('success');
       } else {
-        // Fallback
-        const textArea = document.createElement('textarea');
-        textArea.value = link;
-        textArea.style.position = 'fixed';
-        textArea.style.left = '-9999px';
-        textArea.style.top = '0';
-        document.body.appendChild(textArea);
-        textArea.focus();
-        textArea.select();
-        document.execCommand('copy');
-        document.body.removeChild(textArea);
-        showAlert('Referral link copied to clipboard!');
+        throw new Error('execCommand copy failed');
       }
     } catch (err) {
       console.error('Copy failed:', err);
-      showAlert('Copy failed. Please copy manually.');
+      // Final fallback: try to use Telegram's share if copy fails
+      if (tg?.openTelegramLink) {
+        showAlert('Copy failed. Opening share menu...');
+        shareReferralLink();
+      } else {
+        showAlert('Copy failed. Please copy manually.');
+      }
     }
   };
 
@@ -972,7 +992,14 @@ export const Profile: React.FC = () => {
                       </div>
                     </div>
                     <div className="text-right">
-                      <p className="text-2xl font-black text-white">{plan.price}</p>
+                      {plan.id === 'free' ? (
+                        <p className="text-2xl font-black text-white">{plan.price}</p>
+                      ) : (
+                        <div className="flex flex-col items-end">
+                          <p className="text-2xl font-black text-[#ccff00]">{plan.tonPrice} TON</p>
+                          <p className="text-[10px] font-bold text-zinc-500 mt-1">{plan.starsPrice} Stars</p>
+                        </div>
+                      )}
                     </div>
                   </div>
 

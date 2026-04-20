@@ -302,16 +302,56 @@ function evaluatePredictionMarket(market: string, homeGoals: number, awayGoals: 
   const total = homeGoals + awayGoals;
 
   if (!mk) return "pending";
-  if (mk.includes("home") && mk.includes("win")) return homeGoals > awayGoals ? "won" : "lost";
-  if (mk.includes("away") && mk.includes("win")) return awayGoals > homeGoals ? "won" : "lost";
-  if (mk.includes("draw")) return homeGoals === awayGoals ? "won" : "lost";
-  if (mk.includes("over 2.5") || mk.includes("over2.5")) return total > 2.5 ? "won" : "lost";
-  if (mk.includes("under 2.5") || mk.includes("under2.5")) return total < 2.5 ? "won" : "lost";
-  if (mk.includes("btts") && (mk.includes("yes") || mk.includes("- yes"))) return homeGoals > 0 && awayGoals > 0 ? "won" : "lost";
-  if (mk.includes("btts") && (mk.includes("no") || mk.includes("- no"))) return homeGoals === 0 || awayGoals === 0 ? "won" : "lost";
-  if (mk.includes("1x")) return homeGoals >= awayGoals ? "won" : "lost";
-  if (mk.includes("x2")) return awayGoals >= homeGoals ? "won" : "lost";
-  if (mk.includes("12")) return homeGoals !== awayGoals ? "won" : "lost";
+  
+  // Professional Grade Matching Logic
+  // 1. Full Match Results (1X2)
+  if (mk === "1" || mk === "home win" || (mk.includes("home") && mk.includes("win") && !mk.includes("draw"))) {
+    return homeGoals > awayGoals ? "won" : "lost";
+  }
+  if (mk === "2" || mk === "away win" || (mk.includes("away") && mk.includes("win") && !mk.includes("draw"))) {
+    return awayGoals > homeGoals ? "won" : "lost";
+  }
+  if (mk === "x" || mk === "draw" || mk.includes("draw")) {
+    return homeGoals === awayGoals ? "won" : "lost";
+  }
+
+  // 2. Double Chance
+  if (mk === "1x" || mk === "home or draw" || (mk.includes("1") && mk.includes("x") && mk.length <= 3)) {
+    return homeGoals >= awayGoals ? "won" : "lost";
+  }
+  if (mk === "x2" || mk === "away or draw" || (mk.includes("x") && mk.includes("2") && mk.length <= 3)) {
+    return awayGoals >= homeGoals ? "won" : "lost";
+  }
+  if (mk === "12" || mk === "home or away" || (mk.includes("1") && mk.includes("2") && mk.length <= 3)) {
+    return homeGoals !== awayGoals ? "won" : "lost";
+  }
+
+  // 3. Over/Under Goals (Professional Support for any value)
+  const overMatch = mk.match(/over\s*(\d+\.?\d*)/);
+  if (overMatch) {
+    const threshold = parseFloat(overMatch[1]);
+    return total > threshold ? "won" : "lost";
+  }
+  const underMatch = mk.match(/under\s*(\d+\.?\d*)/);
+  if (underMatch) {
+    const threshold = parseFloat(underMatch[1]);
+    return total < threshold ? "won" : "lost";
+  }
+
+  // 4. Both Teams to Score (BTTS)
+  if (mk.includes("btts") || mk.includes("both teams to score")) {
+    const isYes = mk.includes("yes") || mk.includes("true") || (!mk.includes("no") && !mk.includes("false"));
+    const bttsHappened = homeGoals > 0 && awayGoals > 0;
+    return isYes === bttsHappened ? "won" : "lost";
+  }
+
+  // 5. Exact Score (e.g. "2-1")
+  const scoreMatch = mk.match(/(\d+)\s*-\s*(\d+)/);
+  if (scoreMatch) {
+    const h = parseInt(scoreMatch[1]);
+    const a = parseInt(scoreMatch[2]);
+    return (homeGoals === h && awayGoals === a) ? "won" : "lost";
+  }
 
   return "pending";
 }
@@ -1105,57 +1145,55 @@ async function startServer() {
 
         // 3. Handle Referral Reward - ATOMIC operation to prevent race conditions
         if (isNewRegistration && existingUser?.referrer_id && !referralAlreadyRewarded) {
-           // Use RPC call or atomic increment to prevent race conditions
-           const rewardAmount = 50; // 50 credits for referring a friend
+           const rewardAmount = 50; 
            
            try {
-             // Atomic increment using Supabase RPC (create this function in your DB)
-             // Fallback to regular update if RPC doesn't exist
+             // 1. Mark the NEW user as rewarded FIRST (The "Ticket" is used)
+             const { error: markError } = await supabase.from("users")
+               .update({ referral_rewarded: true })
+               .eq("telegram_id", telegramId);
+             
+             if (markError) throw markError;
+
+             // 2. Credit the REFERRER
              const { error: rewardError } = await supabase.rpc('add_credits_to_user', {
                user_telegram_id: existingUser.referrer_id,
                credits_amount: rewardAmount
              });
              
              if (rewardError) {
-               // Fallback: Direct update (less safe but works)
-               try {
-                 await supabase.rpc('increment_user_credits', {
-                   target_telegram_id: existingUser.referrer_id,
-                   amount: rewardAmount
-                 });
-               } catch {
-                 // Final fallback: Regular update
-                 const { data: referrerData } = await supabase
-                   .from("users")
-                   .select("credits")
-                   .eq("telegram_id", existingUser.referrer_id)
-                   .single();
-                 
-                 if (referrerData) {
-                   await supabase.from("users")
-                     .update({ 
-                       credits: (referrerData.credits || 0) + rewardAmount,
-                       referral_rewarded: true // Mark as rewarded
-                     })
-                     .eq("telegram_id", existingUser.referrer_id);
-                 }
-               }
+               // Fallback: Use direct increment if RPC differs
+               await supabase.rpc('increment_user_credits', {
+                 target_telegram_id: existingUser.referrer_id,
+                 amount: rewardAmount
+               }).catch(() => {}); 
              }
-             
-             // Mark the new user's referral as rewarded to prevent double-processing
-             await supabase.from("users")
-               .update({ referral_rewarded: true })
-               .eq("telegram_id", telegramId);
 
-             // Notify Referrer
-             try {
-               await bot.telegram.sendMessage(existingUser.referrer_id, `👥 A friend joined Flash AI using your link! You've been rewarded with ${rewardAmount} credits. 🔥`);
-             } catch (e) {
-               console.error("Failed to notify referrer:", e);
+             // 3. Production Tracking (Referrals table)
+             await supabase.from("referrals").upsert({
+               referrer_telegram_id: existingUser.referrer_id,
+               referred_telegram_id: telegramId,
+               reward_given: true,
+               reward_amount: rewardAmount,
+               created_at: new Date().toISOString()
+             }, { onConflict: 'referred_telegram_id' }).catch(() => {});
+
+             // 4. Audit Trail (Transactions table)
+             await supabase.from("transactions").insert({
+               telegram_id: existingUser.referrer_id,
+               amount: rewardAmount,
+               currency: 'CREDITS',
+               status: 'completed',
+               type: 'referral_reward',
+               provider_payment_charge_id: `ref_${telegramId}`
+             }).catch(() => {});
+
+             // 5. Notify Referrer
+             if (bot) {
+               bot.telegram.sendMessage(existingUser.referrer_id, `👥 A friend joined Flash AI using your link! You've been rewarded with ${rewardAmount} credits. 🔥`).catch(() => {});
              }
            } catch (rewardErr) {
              console.error("Referral reward error:", rewardErr);
-             // Don't fail registration if reward fails
            }
         }
 

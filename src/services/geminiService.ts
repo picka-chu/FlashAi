@@ -11,9 +11,7 @@ import {
 } from "./apiCacheService";
 
 const PREDICTION_MODELS = [
-  "gemini-2.5-flash",
-  "gemini-1.5-flash",
-  "gemini-1.5-flash-8b",
+  "gemini-1.5-pro",
 ];
 
 function parseJsonFromText(text: string) {
@@ -145,7 +143,7 @@ export async function fetchMatchH2H(home: string, away: string): Promise<any> {
       }
     `;
     const result = await ai.models.generateContent({
-      model: "gemini-2.5-flash",
+      model: "gemini-1.5-pro",
       contents: [{ role: "user", parts: [{ text: prompt }] }],
     });
     return parseJsonFromText(result.text);
@@ -181,7 +179,7 @@ export async function fetchLiveMatchesFallback(): Promise<any[]> {
     `;
 
     const result = await ai.models.generateContent({
-      model: "gemini-2.5-flash",
+      model: "gemini-1.5-pro",
       contents: [{ role: "user", parts: [{ text: prompt }] }],
       config: { tools: [{ googleSearch: {} }] as any }
     });
