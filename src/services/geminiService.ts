@@ -11,7 +11,7 @@ import {
 } from "./apiCacheService";
 
 const PREDICTION_MODELS = [
-  "gemini-1.5-pro",
+  "gemini-3.0-flash-lite",
 ];
 
 function parseJsonFromText(text: string) {
