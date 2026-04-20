@@ -403,6 +403,21 @@ export function isRetryableGeminiError(error: any): boolean {
   );
 }
 
+function extractErrorMessage(error: any): string {
+  if (!error) return "Unknown error";
+  if (typeof error?.message === "string" && error.message.trim()) {
+    return error.message;
+  }
+  if (typeof error?.error?.message === "string" && error.error.message.trim()) {
+    return error.error.message;
+  }
+  try {
+    return JSON.stringify(error);
+  } catch {
+    return String(error);
+  }
+}
+
 /**
  * Execute API call with automatic retry and key rotation
  */
@@ -490,7 +505,7 @@ export async function executeWithRetry<T>(
       }
     }
 
-    throw new Error(`All retries failed. Last error: ${lastError?.message || 'Unknown error'}`);
+    throw new Error(`All retries failed. Last error: ${extractErrorMessage(lastError)}`);
   })();
 
   if (inFlightKey) {

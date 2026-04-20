@@ -1306,7 +1306,9 @@ async function startServer() {
     }
 
     try {
-      const { telegramId } = await c.req.json();
+      const body = await c.req.json().catch(() => ({} as any));
+      const authUser = initData ? getTelegramUserFromInitData(initData) : null;
+      const telegramId = authUser?.id || Number(body?.telegramId || 0);
       if (!bot || !telegramId) return c.json({ error: "Missing bot or telegramId" }, 400);
 
       await bot.telegram.sendMessage(telegramId, "To unlock AI analysis and features, please complete your registration by sharing your contact:", {
@@ -1432,9 +1434,13 @@ async function startServer() {
         ? Boolean(initData && validateTelegramInitData(initData, botToken))
         : true;
       const tgUser = initData ? getTelegramUserFromInitData(initData) : null;
-      const telegramId = tgUser?.id || Number(body?.telegramId || 0);
-      if (!telegramId || (!isValidTelegramAuth && !body?.telegramId)) {
+      const bodyTelegramId = Number(body?.telegramId || 0);
+      const telegramId = tgUser?.id || bodyTelegramId;
+      if (!telegramId || (!isValidTelegramAuth && !bodyTelegramId)) {
         return c.json({ error: "Invalid Telegram authentication" }, 401);
+      }
+      if (tgUser?.id && bodyTelegramId && tgUser.id !== bodyTelegramId) {
+        return c.json({ error: "Telegram identity mismatch" }, 403);
       }
 
       const name = String(body?.name || "").trim();
@@ -1712,14 +1718,19 @@ async function startServer() {
 
     try {
       const { telegramId, planId, boc, amount } = await c.req.json();
+      const tgUser = initData ? getTelegramUserFromInitData(initData) : null;
+      const effectiveTelegramId = tgUser?.id || Number(telegramId || 0);
       
-      if (!telegramId || !planId || !boc) {
+      if (!effectiveTelegramId || !planId || !boc) {
         return c.json({ error: "Missing required parameters" }, 400);
+      }
+      if (tgUser?.id && Number(telegramId || 0) && tgUser.id !== Number(telegramId || 0)) {
+        return c.json({ error: "Telegram identity mismatch" }, 403);
       }
 
       // 1. Log the transaction in the database
       const { error: txError } = await supabase.from('transactions').insert({
-        telegram_id: telegramId,
+        telegram_id: effectiveTelegramId,
         amount: amount,
         currency: 'TON',
         status: 'completed',
@@ -1730,11 +1741,11 @@ async function startServer() {
       if (txError) throw txError;
 
       // 2. Apply plan + credits consistently
-      await applyPlanCredits(telegramId, planId);
+      await applyPlanCredits(effectiveTelegramId, planId);
 
       // 3. Notify the user via Bot
       if (bot) {
-        await bot.telegram.sendMessage(telegramId, `✅ TON payment received! Your account is now on ${planId.toUpperCase()} plan.`);
+        await bot.telegram.sendMessage(effectiveTelegramId, `✅ TON payment received! Your account is now on ${planId.toUpperCase()} plan.`);
       }
 
       return c.json({ success: true });
