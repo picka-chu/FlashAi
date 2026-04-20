@@ -51,9 +51,9 @@ const PLANS = [
   {
     id: 'weekly',
     name: 'Weekly',
-    price: '$3.99',
-    starsPrice: 150,
-    tonPrice: 0.5,
+    price: '$5.99',
+    starsPrice: 250,
+    tonPrice: 1.5,
     period: 'per week',
     icon: ShieldCheck,
     color: 'text-[#ccff00]',
@@ -64,9 +64,9 @@ const PLANS = [
   {
     id: 'monthly',
     name: 'Monthly',
-    price: '$11.99',
-    starsPrice: 400,
-    tonPrice: 1.5,
+    price: '$14.99',
+    starsPrice: 600,
+    tonPrice: 3.5,
     period: 'per month',
     icon: Crown,
     color: 'text-amber-400',
@@ -328,8 +328,10 @@ export const Profile: React.FC = () => {
       });
       await refreshAuthedProfile();
       setIsEditing(false);
+      hapticFeedback('success');
       showAlert('Profile updated successfully!');
     } catch (e) {
+      console.error('Save profile error:', e);
       showAlert('Failed to save profile. Please try again.');
     } finally {
       setIsSavingProfile(false);
@@ -474,31 +476,49 @@ export const Profile: React.FC = () => {
       showAlert('Referral link is not ready yet.');
       return;
     }
+    
     hapticFeedback('success');
-    const copyWithFallback = async () => {
-      try {
-        if (navigator.clipboard?.writeText) {
-          await navigator.clipboard.writeText(link);
-          showAlert('Referral link copied to clipboard!');
-          return;
-        }
-
+    
+    // Use Telegram's native way if possible, or fallback to navigator
+    try {
+      // Standard clipboard API
+      if (navigator.clipboard && window.isSecureContext) {
+        await navigator.clipboard.writeText(link);
+        showAlert('Referral link copied to clipboard!');
+      } else {
+        // Fallback
         const textArea = document.createElement('textarea');
         textArea.value = link;
         textArea.style.position = 'fixed';
-        textArea.style.opacity = '0';
+        textArea.style.left = '-9999px';
+        textArea.style.top = '0';
         document.body.appendChild(textArea);
         textArea.focus();
         textArea.select();
         document.execCommand('copy');
         document.body.removeChild(textArea);
         showAlert('Referral link copied to clipboard!');
-      } catch {
-        showAlert('Copy failed. Please copy manually.');
       }
-    };
+    } catch (err) {
+      console.error('Copy failed:', err);
+      showAlert('Copy failed. Please copy manually.');
+    }
+  };
 
-    copyWithFallback();
+  const shareReferralLink = () => {
+    const fallbackRefId = user?.telegram_id || user?.id;
+    const link = referralStats.referralLink || `https://t.me/Deepflashaibot?start=${fallbackRefId}`;
+    const text = `Join Flash AI and get high-confidence football predictions! 🚀⚽️`;
+    
+    hapticFeedback('medium');
+    
+    if (tg?.shareToStory) {
+      // If we want to share to story, but user asked for forwarding
+    }
+    
+    // Telegram's way to share/forward link
+    const shareUrl = `https://t.me/share/url?url=${encodeURIComponent(link)}&text=${encodeURIComponent(text)}`;
+    tg.openTelegramLink(shareUrl);
   };
 
   const handleTaskAction = async (task: any) => {
@@ -524,8 +544,15 @@ export const Profile: React.FC = () => {
   const claimTaskReward = async (task: any) => {
     if (!user) return;
     
+    // Create an immersive verification experience
+    const loadingToast = showAlert(`Verifying completion: ${task.title}...`, { 
+      // Some UI libraries allow non-blocking or persistent alerts, 
+      // but here we use the existing showAlert and rely on backend speed.
+    });
+    
+    hapticFeedback('light');
+
     try {
-      showAlert(`Verifying task: ${task.title}...`);
       const response = await fetch('/api/tasks/claim', {
         method: 'POST',
         headers: { 
@@ -543,16 +570,27 @@ export const Profile: React.FC = () => {
 
       if (response.ok) {
         hapticFeedback('success');
-        showAlert(`Reward claimed! +${task.reward} credits added to your balance.`);
+        // Immersive success feedback
+        showAlert(`✨ Excellent! Task verified.\n+${task.reward} credits have been added to your balance.`);
+        
         if (user) {
           setUser({ ...user, credits: data.newCredits });
         }
+        
+        // Refresh tasks list to show completed state if UI supports it
+        fetch('/api/common/tasks')
+          .then(r => r.json())
+          .then(data => {
+             if (data && data.length > 0) setDynamicTasks(data);
+          });
       } else {
-        showAlert(data.error || 'Failed to claim reward. Make sure you completed the task!');
+        hapticFeedback('error');
+        showAlert(data.error || 'Verification failed. Please make sure you completed the task correctly!');
       }
     } catch (err) {
       console.error("Task claim error:", err);
-      showAlert('Failed to process reward claim.');
+      hapticFeedback('error');
+      showAlert('Connection error. Please try again in a moment.');
     }
   };
 
@@ -800,12 +838,22 @@ export const Profile: React.FC = () => {
                     <code className="text-[10px] sm:text-xs font-mono text-zinc-400 truncate flex-1 block px-2">
                       {referralStats.referralLink || `https://t.me/Deepflashaibot?start=${user?.telegram_id || ''}`}
                     </code>
-                    <button 
-                      onClick={copyReferralLink}
-                      className="shrink-0 w-12 h-12 bg-[#ccff00] rounded-2xl flex items-center justify-center active:scale-90 transition-all shadow-[0_0_15px_rgba(204,255,0,0.2)]"
-                    >
-                      <Copy className="w-5 h-5 text-black" />
-                    </button>
+                    <div className="flex gap-2">
+                      <button 
+                        onClick={copyReferralLink}
+                        className="shrink-0 w-12 h-12 bg-zinc-800 border border-zinc-700 rounded-2xl flex items-center justify-center active:scale-90 transition-all"
+                        title="Copy Link"
+                      >
+                        <Copy className="w-5 h-5 text-white" />
+                      </button>
+                      <button 
+                        onClick={shareReferralLink}
+                        className="shrink-0 w-12 h-12 bg-[#ccff00] rounded-2xl flex items-center justify-center active:scale-90 transition-all shadow-[0_0_15px_rgba(204,255,0,0.2)]"
+                        title="Share Link"
+                      >
+                        <Share2 className="w-5 h-5 text-black" />
+                      </button>
+                    </div>
                   </div>
                 </div>
 

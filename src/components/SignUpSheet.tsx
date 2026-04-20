@@ -1,6 +1,6 @@
 import React from 'react';
 import { motion, AnimatePresence } from 'motion/react';
-import { X, UserPlus, Phone, ShieldCheck, Zap, ArrowRight } from 'lucide-react';
+import { X, ShieldCheck, Zap, ArrowRight, Sparkles, MessageSquare } from 'lucide-react';
 import { useTelegram } from '../hooks/useTelegram';
 
 interface SignUpSheetProps {
@@ -51,72 +51,91 @@ export const SignUpSheet: React.FC<SignUpSheetProps> = ({ isOpen, onClose }) => 
             animate={{ opacity: 1 }}
             exit={{ opacity: 0 }}
             onClick={onClose}
-            className="fixed inset-0 bg-black/80 backdrop-blur-sm z-[1000]"
+            className="fixed inset-0 bg-black/80 backdrop-blur-md z-[1000]"
           />
           <motion.div 
             initial={{ y: '100%' }}
             animate={{ y: 0 }}
             exit={{ y: '100%' }}
             transition={{ type: 'spring', damping: 25, stiffness: 200 }}
-            className="fixed bottom-0 left-0 right-0 bg-zinc-900 border-t border-zinc-800 rounded-t-[40px] z-[1001] px-6 pt-8 pb-12 space-y-8"
+            className="fixed bottom-0 left-0 right-0 bg-zinc-950 border-t border-zinc-800/50 rounded-t-[40px] z-[1001] overflow-hidden"
           >
-            <div className="flex items-center justify-between mb-2">
-              <div className="space-y-1">
-                <h3 className="text-xl font-black text-white">Join the elite squad</h3>
-                <p className="text-xs font-bold text-zinc-500 tracking-widest uppercase">One step to unlock everything</p>
+            {/* Top Glow Ornament */}
+            <div className="absolute top-0 left-1/2 -translate-x-1/2 w-32 h-1 bg-[#ccff00] rounded-full opacity-20 blur-sm" />
+            
+            <div className="px-6 pt-10 pb-12 space-y-8 relative">
+              <div className="flex items-center justify-between">
+                <div className="space-y-1">
+                  <div className="inline-flex items-center gap-2 px-3 py-1 rounded-full bg-[#ccff00]/10 border border-[#ccff00]/20 mb-1">
+                    <Sparkles className="w-3 h-3 text-[#ccff00]" />
+                    <span className="text-[10px] font-black text-[#ccff00] uppercase tracking-widest">Early Access</span>
+                  </div>
+                  <h3 className="text-2xl font-black text-white leading-tight">Join the elite squad</h3>
+                  <p className="text-xs font-bold text-zinc-500 tracking-wide">Unlock the full power of Flash AI</p>
+                </div>
+                <button 
+                  onClick={onClose}
+                  className="w-10 h-10 bg-zinc-900 border border-zinc-800 rounded-full flex items-center justify-center active:scale-90 transition-all"
+                >
+                  <X className="w-5 h-5 text-zinc-400" />
+                </button>
               </div>
-              <button 
-                onClick={onClose}
-                className="w-10 h-10 bg-zinc-800 rounded-full flex items-center justify-center active:scale-90 transition-all"
-              >
-                <X className="w-5 h-5 text-white" />
-              </button>
-            </div>
 
-            <div className="space-y-6">
-              {/* Features List */}
               <div className="space-y-4">
-                <div className="flex items-start gap-4 p-4 rounded-2xl bg-zinc-800/30 border border-zinc-800/50">
-                  <div className="w-10 h-10 rounded-xl bg-[#ccff00]/10 flex items-center justify-center shrink-0">
-                    <Zap className="w-5 h-5 text-[#ccff00]" />
+                {/* Features List */}
+                <div className="grid grid-cols-1 gap-3">
+                  <div className="flex items-center gap-4 p-5 rounded-[28px] bg-zinc-900/50 border border-zinc-800/50 group transition-all hover:border-[#ccff00]/30">
+                    <div className="w-12 h-12 rounded-2xl bg-[#ccff00]/10 flex items-center justify-center shrink-0 group-hover:scale-110 transition-transform">
+                      <Zap className="w-6 h-6 text-[#ccff00]" />
+                    </div>
+                    <div>
+                      <p className="text-sm font-black text-white">Free Daily Credits</p>
+                      <p className="text-[11px] font-bold text-zinc-500 leading-snug">Get bonus points every single day for match analysis</p>
+                    </div>
                   </div>
-                  <div>
-                    <p className="text-sm font-black text-white">3 Free credits daily</p>
-                    <p className="text-[10px] font-bold text-zinc-500">Daily reset for your first 7 days</p>
+                  
+                  <div className="flex items-center gap-4 p-5 rounded-[28px] bg-zinc-900/50 border border-zinc-800/50 group transition-all hover:border-blue-500/30">
+                    <div className="w-12 h-12 rounded-2xl bg-blue-500/10 flex items-center justify-center shrink-0 group-hover:scale-110 transition-transform">
+                      <ShieldCheck className="w-6 h-6 text-blue-400" />
+                    </div>
+                    <div>
+                      <p className="text-sm font-black text-white">Expert Predictions</p>
+                      <p className="text-[11px] font-bold text-zinc-500 leading-snug">Access high-confidence AI match insights & data</p>
+                    </div>
+                  </div>
+
+                  <div className="flex items-center gap-4 p-5 rounded-[28px] bg-zinc-900/50 border border-zinc-800/50 group transition-all hover:border-purple-500/30">
+                    <div className="w-12 h-12 rounded-2xl bg-purple-500/10 flex items-center justify-center shrink-0 group-hover:scale-110 transition-transform">
+                      <MessageSquare className="w-6 h-6 text-purple-400" />
+                    </div>
+                    <div>
+                      <p className="text-sm font-black text-white">AI Assistant</p>
+                      <p className="text-[11px] font-bold text-zinc-500 leading-snug">Chat with our bot for deep-dive football analytics</p>
+                    </div>
                   </div>
                 </div>
-                <div className="flex items-start gap-4 p-4 rounded-2xl bg-zinc-800/30 border border-zinc-800/50">
-                  <div className="w-10 h-10 rounded-xl bg-blue-500/10 flex items-center justify-center shrink-0">
-                    <ShieldCheck className="w-5 h-5 text-blue-400" />
-                  </div>
-                  <div>
-                    <p className="text-sm font-black text-white">Expert Predictions</p>
-                    <p className="text-[10px] font-bold text-zinc-500">Access to all high-confidence AI match analyses</p>
-                  </div>
+
+                {/* Bot Interaction Info */}
+                <div className="bg-[#ccff00]/5 border border-[#ccff00]/10 rounded-[24px] p-4 text-center">
+                  <p className="text-[11px] font-bold text-zinc-400 leading-relaxed">
+                    Registration requires sharing your <span className="text-[#ccff00]">phone number</span> via Telegram to prevent abuse and ensure fair credit distribution.
+                  </p>
+                </div>
+
+                <div className="pt-2">
+                  <button 
+                    onClick={handleSignUp}
+                    className="group relative w-full bg-[#ccff00] text-black font-black text-sm tracking-[0.1em] py-5 rounded-[24px] shadow-[0_10px_30px_rgba(204,255,0,0.2)] active:scale-[0.98] transition-all flex items-center justify-center gap-3 overflow-hidden"
+                  >
+                    <div className="absolute inset-0 bg-white/20 translate-x-[-100%] group-hover:translate-x-[100%] transition-transform duration-700 ease-in-out" />
+                    SIGN UP VIA TELEGRAM
+                    <ArrowRight className="w-5 h-5 group-hover:translate-x-1 transition-transform" />
+                  </button>
+                  <p className="text-[10px] font-bold text-zinc-600 text-center mt-4 tracking-tight uppercase">
+                    One-tap registration • Secure & Private
+                  </p>
                 </div>
               </div>
-
-              {/* Bot Interaction Info */}
-              <div className="bg-[#ccff00]/5 border border-[#ccff00]/10 rounded-2xl p-4 flex items-center gap-3">
-                <div className="w-8 h-8 rounded-full bg-[#ccff00] flex items-center justify-center">
-                   <Phone className="w-4 h-4 text-black" />
-                </div>
-                <p className="text-[10px] font-black text-white leading-relaxed">
-                  Clicking sign up will minimize the app and ask you to share your contact in the bot chat.
-                </p>
-              </div>
-
-              <button 
-                onClick={handleSignUp}
-                className="group relative w-full bg-[#ccff00] text-black font-black text-sm tracking-widest py-5 rounded-2xl shadow-[0_0_30px_rgba(204,255,0,0.2)] active:scale-[0.98] transition-all flex items-center justify-center gap-2"
-              >
-                Sign up via Telegram
-                <ArrowRight className="w-4 h-4 group-hover:translate-x-1 transition-transform" />
-              </button>
-
-              <p className="text-[10px] font-bold text-zinc-600 text-center px-4">
-                Registration requires sharing your phone number to prevent bot abuse and ensure fair point distribution.
-              </p>
             </div>
           </motion.div>
         </>

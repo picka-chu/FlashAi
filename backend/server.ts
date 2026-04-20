@@ -1604,19 +1604,35 @@ async function startServer() {
       }
 
       // 2. Perform verification for specific tasks
-      if (taskId === 'tg_channel' && bot) {
-        try {
-          const channelId = "@flash_ai_signals";
-          const member = await bot.telegram.getChatMember(channelId, telegramId);
-          const validStatuses = ['member', 'administrator', 'creator'];
-          
-          if (!validStatuses.includes(member.status)) {
-            return c.json({ error: "Please join the channel first!" }, 400);
+      const { data: taskData } = await supabase.from('tasks').select('*').eq('id', taskId).single();
+      
+      if (taskData && bot) {
+        // Check if task URL points to a Telegram channel/group
+        const tgUrlPattern = /t\.me\/([a-zA-Z0-9_]{5,})/;
+        const match = taskData.url?.match(tgUrlPattern);
+        
+        if (match && match[1]) {
+          const channelUsername = `@${match[1]}`;
+          try {
+            const member = await bot.telegram.getChatMember(channelUsername, telegramId);
+            const validStatuses = ['member', 'administrator', 'creator'];
+            
+            if (!validStatuses.includes(member.status)) {
+              return c.json({ 
+                error: "Verification failed. Please join the channel before claiming!",
+                details: "You are not a member of the required channel." 
+              }, 400);
+            }
+          } catch (e: any) {
+            console.error(`Task verification error for ${channelUsername}:`, e.message);
+            // If bot is not admin, it might fail with "Chat not found" or "Member not found"
+            // We only block if we are SURE they are not in it, or if the bot has access and says no.
+            if (e.message?.includes('member not found') || e.message?.includes('user not found')) {
+              return c.json({ error: "Please join the channel first!" }, 400);
+            }
+            // If it's a different error (like bot not in chat), we might allow it or log it
+            console.warn("Could not verify membership due to bot permissions or chat settings.");
           }
-        } catch (e) {
-          console.error("Task verification error:", e);
-          // If we can't verify (e.g. bot not in channel), we might want to skip or fail
-          return c.json({ error: "Could not verify channel membership. Make sure you joined!" }, 400);
         }
       }
 
