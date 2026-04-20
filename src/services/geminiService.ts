@@ -12,6 +12,8 @@ import {
 
 const PREDICTION_MODELS = [
   "gemini-2.5-flash",
+  "gemini-1.5-flash",
+  "gemini-1.5-flash-8b",
 ];
 
 function parseJsonFromText(text: string) {

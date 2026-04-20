@@ -18,7 +18,6 @@ import {
   ShieldAlert,
   Dices,
   Target,
-  Flame,
   ChevronRight,
   UserPlus
 } from 'lucide-react';
@@ -100,7 +99,7 @@ export const Analyze: React.FC = () => {
             if (response.status === 402) {
               setCreditMeta({ required: Number(data.required || 1), current: Number(data.current || 0) });
               if (user?.plan === 'free') setShowInsufficientSheet(true);
-              setError(`Insufficient credits. You need ${data.required} but have ${data.current}.`);
+              setError(data.error || `Insufficient credits. You need ${data.required} but have ${data.current}.`);
             } else if (response.status === 403) {
               setError(data.error || 'Please complete signup first.');
               setIsSignUpOpen(true);
@@ -202,10 +201,12 @@ export const Analyze: React.FC = () => {
           if (response.status === 402) {
             setCreditMeta({ required: Number(data.required || 1), current: Number(data.current || 0) });
             if (user?.plan === 'free') setShowInsufficientSheet(true);
-            setError(`Insufficient credits. Required: ${data.required}, Current: ${data.current}`);
+            setError(data.error || `Insufficient credits. Required: ${data.required}, Current: ${data.current}`);
           } else if (response.status === 403) {
             setError(data.error || 'Please complete signup first.');
             setIsSignUpOpen(true);
+          } else if (response.status === 429) {
+            setError(data.error || 'Too many requests. Please wait and try again.');
           } else {
             setError(data.error || "Analysis failed.");
           }
@@ -473,10 +474,6 @@ export const Analyze: React.FC = () => {
                           </div>
                           <p className="text-xs text-zinc-400 leading-relaxed font-medium">{pred.reasoning}</p>
                           
-                          <button className="w-full mt-4 py-3 rounded-xl bg-white/5 hover:bg-white/10 border border-white/10 text-xs font-black text-white transition-colors flex items-center justify-center gap-2">
-                            <Flame className="w-3 h-3 text-red-500" />
-                            Add to bet slip
-                          </button>
                         </motion.div>
                       ))}
 

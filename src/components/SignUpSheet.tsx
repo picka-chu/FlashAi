@@ -30,8 +30,10 @@ export const SignUpSheet: React.FC<SignUpSheetProps> = ({ isOpen, onClose }) => 
       });
 
       if (response.ok) {
-        // Close the web app to let user share contact in the bot
-        tg.close();
+        onClose();
+        const botUsername = (import.meta.env.VITE_TELEGRAM_BOT_USERNAME || 'Deepflashaibot').replace('@', '');
+        const signupLink = `https://t.me/${botUsername}?start=signup`;
+        tg.openTelegramLink?.(signupLink);
       } else {
         console.error("Failed to request signup");
       }
@@ -79,8 +81,8 @@ export const SignUpSheet: React.FC<SignUpSheetProps> = ({ isOpen, onClose }) => 
                     <Zap className="w-5 h-5 text-[#ccff00]" />
                   </div>
                   <div>
-                    <p className="text-sm font-black text-white">5 Free Credits</p>
-                    <p className="text-[10px] font-bold text-zinc-500">Instant reward upon successful sign up</p>
+                    <p className="text-sm font-black text-white">3 Free credits daily</p>
+                    <p className="text-[10px] font-bold text-zinc-500">Daily reset for your first 7 days</p>
                   </div>
                 </div>
                 <div className="flex items-start gap-4 p-4 rounded-2xl bg-zinc-800/30 border border-zinc-800/50">
