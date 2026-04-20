@@ -40,11 +40,13 @@ function parseJsonFromText(text: string) {
   }
 }
 
+/**
+ * BACKEND ONLY: Performs deep match analysis using Gemini with Search.
+ */
 export async function analyzeMatchWithSearch(matchString: string): Promise<PredictionResult> {
   const cacheKey = predictionCache.generateKey('match_analysis', { matchString });
   
   return executeWithRetry(async (apiKey, keyIndex) => {
-    // Try each model with the selected key
     for (const model of PREDICTION_MODELS) {
       try {
         const ai = new GoogleGenAI({ apiKey });
@@ -61,18 +63,8 @@ export async function analyzeMatchWithSearch(matchString: string): Promise<Predi
             ],
             "overallReasoning": "string (detailed overall match analysis)",
             "teamData": {
-              "home": {
-                "name": "string",
-                "form": "string (e.g., WWDWL)",
-                "injuries": ["string"],
-                "keyStats": ["string"]
-              },
-              "away": {
-                "name": "string",
-                "form": "string",
-                "injuries": ["string"],
-                "keyStats": ["string"]
-              }
+              "home": { "name": "string", "form": "string", "injuries": ["string"], "keyStats": ["string"] },
+              "away": { "name": "string", "form": "string", "injuries": ["string"], "keyStats": ["string"] }
             }
           }
         `;
@@ -80,9 +72,7 @@ export async function analyzeMatchWithSearch(matchString: string): Promise<Predi
         const result = await ai.models.generateContent({
           model,
           contents: [{ role: "user", parts: [{ text: prompt }] }],
-          config: { 
-            tools: [{ googleSearch: {} }] as any
-          }
+          config: { tools: [{ googleSearch: {} }] as any }
         });
 
         const parsed = parseJsonFromText(result.text || "");
@@ -102,10 +92,7 @@ export async function analyzeMatchWithSearch(matchString: string): Promise<Predi
           }
         };
       } catch (error: any) {
-        if (!isRetryableGeminiError(error)) {
-          throw error;
-        }
-        // Continue to next model
+        if (!isRetryableGeminiError(error)) throw error;
       }
     }
     throw new Error("All models failed");
@@ -124,12 +111,26 @@ export async function fetchMatchDataFallback(matchName: string): Promise<MatchDa
   return multiAgentService.fetchMatchDataFallback(matchName);
 }
 
+/**
+ * FRONTEND SECURE: Fetches H2H data via backend proxy to avoid exposing API keys.
+ */
 export async function fetchMatchH2H(home: string, away: string): Promise<any> {
+  // If running in browser, use backend proxy
+  if (typeof window !== 'undefined') {
+    try {
+      const response = await fetch(`/api/football/h2h?home=${encodeURIComponent(home)}&away=${encodeURIComponent(away)}`);
+      if (!response.ok) throw new Error('Backend H2H fetch failed');
+      return await response.json();
+    } catch (e) {
+      console.error("Frontend H2H fetch error:", e);
+      return null;
+    }
+  }
+
+  // BACKEND ONLY: Direct Gemini call
   const cacheKey = predictionCache.generateKey('h2h', { home, away });
-  
   return executeWithRetry(async (apiKey, keyIndex) => {
     const ai = new GoogleGenAI({ apiKey });
-
     const prompt = `
       Provide head-to-head statistics for the football match: ${home} vs ${away}.
       Include the last 5 results (W/D/L for ${home}), average goals, and a hype score (1-100).
@@ -143,7 +144,6 @@ export async function fetchMatchH2H(home: string, away: string): Promise<any> {
         "watchingCount": 8400
       }
     `;
-
     const result = await ai.models.generateContent({
       model: "gemini-2.5-flash",
       contents: [{ role: "user", parts: [{ text: prompt }] }],
@@ -156,12 +156,14 @@ export async function fetchMatchH2H(home: string, away: string): Promise<any> {
   });
 }
 
+/**
+ * BACKEND ONLY: Fetches live matches using Gemini Search.
+ */
 export async function fetchLiveMatchesFallback(): Promise<any[]> {
   const cacheKey = predictionCache.generateKey('live_matches', { date: new Date().toDateString() });
   
   return executeWithRetry(async (apiKey, keyIndex) => {
     const ai = new GoogleGenAI({ apiKey });
-
     const prompt = `
       You are a real-time football score reporter. 
       Find the major live football matches happening right now (or recently finished today).
@@ -170,15 +172,8 @@ export async function fetchLiveMatchesFallback(): Promise<any[]> {
       Return ONLY a JSON array of objects with this structure:
       [
         {
-          "fixture": {
-            "id": "gemini_live_1",
-            "date": "2026-04-14T...",
-            "status": { "short": "LIVE", "elapsed": 75 }
-          },
-          "teams": {
-            "home": { "name": "Team A", "id": 0 },
-            "away": { "name": "Team B", "id": 0 }
-          },
+          "fixture": { "id": "gemini_live_1", "date": "2026-04-14T...", "status": { "short": "LIVE", "elapsed": 75 } },
+          "teams": { "home": { "name": "Team A", "id": 0 }, "away": { "name": "Team B", "id": 0 } },
           "goals": { "home": 2, "away": 1 },
           "league": { "name": "Premier League" }
         }
@@ -188,18 +183,14 @@ export async function fetchLiveMatchesFallback(): Promise<any[]> {
     const result = await ai.models.generateContent({
       model: "gemini-2.5-flash",
       contents: [{ role: "user", parts: [{ text: prompt }] }],
-      config: { 
-        tools: [{ googleSearch: {} }] as any
-      }
+      config: { tools: [{ googleSearch: {} }] as any }
     });
 
-    const text = result.text;
-    if (!text) return [];
-    return parseJsonFromText(text) || [];
+    return parseJsonFromText(result.text || "") || [];
   }, {
     cache: predictionCache,
     cacheKey,
-    customTtl: 5 * 60 * 1000, // 5 minutes for live data
+    customTtl: 5 * 60 * 1000,
     maxRetries: 2
   }).catch(() => []);
 }

@@ -272,7 +272,13 @@ class ApiKeyManager {
       });
     });
 
-    console.log(`✅ Initialized ${this.keys.length} analysis Gemini API keys for circular rotation`);
+    if (this.keys.length > 0) {
+      console.log(`✅ Initialized ${this.keys.length} analysis Gemini API keys for circular rotation`);
+    } else if (typeof window !== 'undefined') {
+      console.warn("⚠️ No Gemini API keys found in frontend. This is expected for production security.");
+    } else {
+      console.error("❌ CRITICAL: No Gemini API keys found in backend environment.");
+    }
   }
 
   /**

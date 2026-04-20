@@ -7,9 +7,8 @@ export default defineConfig(({mode}) => {
   const env = loadEnv(mode, '.', '');
   return {
     plugins: [react(), tailwindcss()],
-    define: {
-      'process.env.GEMINI_API_KEY': JSON.stringify(env.GEMINI_API_KEY),
-    },
+    // Removed GEMINI_API_KEY exposure for production security.
+    // All AI calls must be routed through the backend.
     resolve: {
       alias: {
         '@': path.resolve(__dirname, '.'),

@@ -22,20 +22,15 @@ const supabaseServiceKey =
   process.env.SUPABASE_SERVICE_ROLE ||
   process.env.SUPABASE_SERVICE_KEY;
 const supabaseAnonKey = process.env.SUPABASE_ANON_KEY;
-const supabaseKey = supabaseServiceKey || supabaseAnonKey;
+const supabaseKey = supabaseServiceKey;
 const bootstrapAdminId = process.env.ADMIN_TELEGRAM_ID ? Number(process.env.ADMIN_TELEGRAM_ID) : null;
 
-if (!supabaseUrl || !supabaseKey || supabaseUrl === "YOUR_SUPABASE_URL" || supabaseKey === "YOUR_SUPABASE_ANON_KEY") {
-  throw new Error("Missing required Supabase configuration. Set SUPABASE_URL and SUPABASE_SERVICE_ROLE_KEY.");
+if (!supabaseUrl || !supabaseKey || supabaseUrl === "YOUR_SUPABASE_URL" || supabaseKey === "YOUR_SUPABASE_SERVICE_ROLE_KEY") {
+  throw new Error("CRITICAL: Missing required Supabase configuration. Set SUPABASE_URL and SUPABASE_SERVICE_ROLE_KEY for production.");
 }
 
 const supabase = createClient(supabaseUrl, supabaseKey);
-
-if (!supabaseServiceKey) {
-  console.warn("⚠️ SUPABASE_SERVICE_ROLE_KEY is not set. Backend will use anon key and may hit RLS errors on write operations.");
-} else {
-  console.log("✅ Supabase service role key detected for backend writes.");
-}
+console.log("✅ Supabase service role key initialized for backend operations.");
 
 const PLAN_CREDITS: Record<string, number> = {
   free: 0,
@@ -218,78 +213,61 @@ type UserHistoryItem = {
 };
 
 async function getUserHistory(telegramId: number): Promise<UserHistoryItem[]> {
-  try {
-    const { data, error } = await supabase
-      .from("user_history")
-      .select("id,fixture_id,match,home,away,prediction_market,confidence,reasoning,status,created_at,resolved_at")
-      .eq("telegram_id", telegramId)
-      .order("created_at", { ascending: false })
-      .limit(100);
+  const { data, error } = await supabase
+    .from("user_history")
+    .select("id,fixture_id,match,home,away,prediction_market,confidence,reasoning,status,created_at,resolved_at")
+    .eq("telegram_id", telegramId)
+    .order("created_at", { ascending: false })
+    .limit(100);
 
-    if (error) throw error;
-    return (data || []).map((row: any) => ({
-      id: row.id,
-      fixtureId: row.fixture_id || null,
-      match: row.match,
-      home: row.home,
-      away: row.away,
-      predictionMarket: row.prediction_market,
-      confidence: Number(row.confidence || 0),
-      reasoning: row.reasoning || "",
-      status: row.status || "pending",
-      created_at: row.created_at,
-      resolved_at: row.resolved_at || null,
-    }));
-  } catch (tableError: any) {
-    // Legacy fallback: history stored in api_cache blob.
-    if (tableError?.code && tableError.code !== "42P01") {
-      throw tableError;
-    }
-    const cacheKey = `user_history_${telegramId}`;
-    const { data } = await supabase
-      .from("api_cache")
-      .select("data")
-      .eq("endpoint", cacheKey)
-      .single();
-
-    const raw = data?.data;
-    return Array.isArray(raw) ? raw : [];
+  if (error) {
+    console.error("Failed to fetch user history:", error.message);
+    return [];
   }
+
+  return (data || []).map((row: any) => ({
+    id: row.id,
+    fixtureId: row.fixture_id || null,
+    match: row.match,
+    home: row.home,
+    away: row.away,
+    predictionMarket: row.prediction_market,
+    confidence: Number(row.confidence || 0),
+    reasoning: row.reasoning || "",
+    status: row.status || "pending",
+    created_at: row.created_at,
+    resolved_at: row.resolved_at || null,
+  }));
 }
 
 async function setUserHistory(telegramId: number, history: UserHistoryItem[]) {
   const trimmed = history.slice(0, 100);
-  try {
-    await supabase.from("user_history").delete().eq("telegram_id", telegramId);
-    if (trimmed.length > 0) {
-      const rows = trimmed.map((item) => ({
-        id: item.id,
-        telegram_id: telegramId,
-        fixture_id: item.fixtureId || null,
-        match: item.match,
-        home: item.home,
-        away: item.away,
-        prediction_market: item.predictionMarket,
-        confidence: Number(item.confidence || 0),
-        reasoning: item.reasoning || "",
-        status: item.status || "pending",
-        created_at: item.created_at || new Date().toISOString(),
-        resolved_at: item.resolved_at || null,
-      }));
-      const { error } = await supabase.from("user_history").insert(rows);
-      if (error) throw error;
+  
+  // Delete old history for this user
+  const { error: deleteError } = await supabase.from("user_history").delete().eq("telegram_id", telegramId);
+  if (deleteError) {
+    console.error("Failed to delete old user history:", deleteError.message);
+  }
+
+  if (trimmed.length > 0) {
+    const rows = trimmed.map((item) => ({
+      id: item.id,
+      telegram_id: telegramId,
+      fixture_id: item.fixtureId || null,
+      match: item.match,
+      home: item.home,
+      away: item.away,
+      prediction_market: item.predictionMarket,
+      confidence: Number(item.confidence || 0),
+      reasoning: item.reasoning || "",
+      status: item.status || "pending",
+      created_at: item.created_at || new Date().toISOString(),
+      resolved_at: item.resolved_at || null,
+    }));
+    const { error: insertError } = await supabase.from("user_history").insert(rows);
+    if (insertError) {
+      console.error("Failed to insert user history:", insertError.message);
     }
-  } catch (tableError: any) {
-    // Legacy fallback: history stored in api_cache blob.
-    if (tableError?.code && tableError.code !== "42P01") {
-      throw tableError;
-    }
-    const cacheKey = `user_history_${telegramId}`;
-    await supabase.from("api_cache").upsert({
-      endpoint: cacheKey,
-      data: trimmed,
-      updated_at: new Date().toISOString(),
-    }, { onConflict: "endpoint" });
   }
 }
 
@@ -511,7 +489,7 @@ async function startServer() {
 
   app.get("/api/tonconnect-manifest.json", (c) => {
     const url = new URL(c.req.url);
-    const origin = `${url.protocol}//${url.host}`;
+    const origin = process.env.APP_URL || `${url.protocol}//${url.host}`;
     return c.json({
       url: origin,
       name: "Flash AI",
@@ -579,6 +557,21 @@ async function startServer() {
     }
   });
 
+  app.get("/api/football/h2h", async (c) => {
+    try {
+      const home = c.req.query("home");
+      const away = c.req.query("away");
+      if (!home || !away) return c.json({ error: "Missing home or away team" }, 400);
+      
+      const { fetchMatchH2H } = await import("../src/services/geminiService.js");
+      const data = await fetchMatchH2H(home, away);
+      return c.json(data);
+    } catch (error: any) {
+      console.error("Football H2H API error:", error?.message || error);
+      return c.json({ error: "Failed to fetch H2H data" }, 500);
+    }
+  });
+
   // --- PLAN LIMITS CONFIG ---
   const PLAN_CONFIG: Record<string, { dailyCredits: number; name: string }> = {
     free: { dailyCredits: 3, name: "Free" },
@@ -600,20 +593,13 @@ async function startServer() {
     // Auto-downgrade expired subscriptions.
     if ((effectivePlan === "weekly" || effectivePlan === "monthly") && planExpiresAt && planExpiresAt.getTime() <= now.getTime()) {
       effectivePlan = "free";
-      try {
-        await supabase
-          .from("users")
-          .update({ plan: "free", plan_expires_at: null, last_active: now.toISOString() })
-          .eq("telegram_id", userData.telegram_id);
-      } catch (downgradeError: any) {
-        if (downgradeError?.code !== "42703") {
-          console.error("Subscription downgrade error:", downgradeError?.message || downgradeError);
-        } else {
-          await supabase
-            .from("users")
-            .update({ plan: "free", last_active: now.toISOString() })
-            .eq("telegram_id", userData.telegram_id);
-        }
+      const { error: downgradeError } = await supabase
+        .from("users")
+        .update({ plan: "free", plan_expires_at: null, last_active: now.toISOString() })
+        .eq("telegram_id", userData.telegram_id);
+      
+      if (downgradeError) {
+        console.error("Subscription downgrade error:", downgradeError.message);
       }
     }
 
@@ -644,7 +630,7 @@ async function startServer() {
         currentCredits = dailyQuota;
       }
       
-      await supabase
+      const { error: resetError } = await supabase
         .from("users")
         .update({
           credits: currentCredits,
@@ -653,7 +639,9 @@ async function startServer() {
         })
         .eq("telegram_id", userData.telegram_id);
 
-      await supabase.from("users").update({ credits: currentCredits }).eq("telegram_id", userData.telegram_id);
+      if (resetError) {
+        console.error("Daily credit reset error:", resetError.message);
+      }
     }
     
     return currentCredits;
@@ -743,11 +731,9 @@ async function startServer() {
         .eq("telegram_id", telegramId);
 
       if (updateError) {
-        if (updateError.code === "42703" && String(updateError.message || "").includes("updated_at")) {
-          console.warn("Credit deduction skipped due to DB trigger/schema mismatch (missing users.updated_at).");
-        } else {
-          console.error("Credit deduction error:", updateError);
-        }
+        console.error("CRITICAL: Credit deduction error:", updateError);
+        // In production, we might want to fail the request if credits can't be deducted,
+        // but for now we'll log it as a critical error since the schema is consolidated.
       }
 
       return c.json({ result, newCredits: credits - cost });
@@ -832,13 +818,17 @@ async function startServer() {
       const result = await analyzeBetSlip(images);
 
       // 3. Deduct Credits
-      await supabase
+      const { error: updateError } = await supabase
         .from("users")
         .update({ 
           credits: credits - cost,
           last_active: new Date().toISOString()
         })
         .eq("telegram_id", telegramId);
+
+      if (updateError) {
+        console.error("CRITICAL: Betslip credit deduction error:", updateError);
+      }
 
       return c.json({ result, newCredits: credits - cost });
     } catch (e: any) {
