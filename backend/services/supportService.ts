@@ -70,7 +70,7 @@ ${faqContext}
     return 'Sorry, support is temporarily unavailable. Please try again later.';
   }
 
-  const models = ['gemini-1.5-pro'];
+  const models = ['gemini-2.0-flash'];
   let lastError: any = null;
 
   for (const apiKey of supportKeys) {
