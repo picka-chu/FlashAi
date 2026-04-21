@@ -33,7 +33,7 @@ function parseJsonFromText(text: string) {
     }
     return JSON.parse(text.replace(/```json\n?|```/g, "").trim());
   } catch (e) {
-    console.error("Parse error:", text);
+    console.error("Parse error: Could not parse JSON from text. Raw text:", text);
     return null;
   }
 }
@@ -224,7 +224,7 @@ export async function fetchLiveMatchesFallback(): Promise<any[]> {
       Find the major live football matches happening right now (or recently finished today).
       Use Google Search to find real-time scores for top leagues (Premier League, La Liga, Champions League, etc.).
       
-      Return ONLY a JSON array of objects with this structure:
+      Return ONLY a JSON array of objects with this structure. Do NOT include any other text or explanation outside the JSON array.
       [
         {
           "fixture": { "id": "gemini_live_1", "date": "2026-04-14T...", "status": { "short": "LIVE", "elapsed": 75 } },
@@ -238,7 +238,7 @@ export async function fetchLiveMatchesFallback(): Promise<any[]> {
     const result = await ai.models.generateContent({
       model: "gemini-2.5-flash-lite",
       contents: [{ role: "user", parts: [{ text: prompt }] }],
-      config: { tools: [{ googleSearch: {} }] as any }
+      config: { tools: [{ googleSearch: {} }] as any, responseMimeType: "application/json" }
     });
 
     const parsed = parseJsonFromText(result.text || "");
