@@ -1,1 +1,54 @@
-Nothing should be ignored based on the provided file changes. The only modified file is `backend/server.ts`, which is a source code file and should not be added to .gitignore.
+```gitignore
+# Dependencies
+node_modules/
+.pnpm-store/
+.npm/
+.yarn/
+
+# Build outputs
+dist/
+build/
+.out/
+.bundle/
+
+# TypeScript/JavaScript specific
+*.js.map
+*.ts.map
+*.jsx.map
+*.tsx.map
+
+# Logs
+*.log
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+
+# Environment variables
+.env
+.env.local
+.env.development.local
+.env.test.local
+.env.production.local
+.env.*
+
+# IDE specific
+.vscode/
+.idea/
+*.swp
+*.swo
+
+# OS generated files
+.DS_Store
+Thumbs.db
+
+# Coverage
+coverage/
+.nyc_output/
+istanbul/
+.jest/
+
+# Temporary files
+*.tmp
+*.temp
+.DS_Store
+```
