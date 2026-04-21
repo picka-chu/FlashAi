@@ -667,7 +667,8 @@ export const Home: React.FC<HomeProps> = ({ onTabChange }) => {
           </div>
         </section>
 
-        {/* Recent Activities Section */}
+        {/* Recent Activities Section - Only for registered users */}
+        {user?.phone && (
         <section className="space-y-4">
           <div className="flex items-center justify-between">
             <h3 className="text-sm font-black text-white tracking-wider">Recent activities</h3>
@@ -697,6 +698,7 @@ export const Home: React.FC<HomeProps> = ({ onTabChange }) => {
             ))}
           </div>
         </section>
+        )}
       </>
     )}
   </div>
