@@ -674,9 +674,13 @@ async function startServer() {
     }
 
     if (shouldReset) {
-      // Refill only up to allowed quota, preserving any bonus credits above quota.
-      if (dailyQuota > 0 && currentCredits < dailyQuota) {
-        currentCredits = dailyQuota;
+      // Reset credits to daily quota, but preserve any bonus credits above quota.
+      if (dailyQuota > 0) {
+        // Only reset if below quota, otherwise keep existing (bonus) credits
+        if (currentCredits < dailyQuota) {
+          currentCredits = dailyQuota;
+        }
+        // If currentCredits >= dailyQuota, keep them (user has bonus/rollover credits)
       }
       
       const { error: resetError } = await supabase
