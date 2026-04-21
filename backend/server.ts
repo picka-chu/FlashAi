@@ -524,6 +524,15 @@ async function startServer() {
     }
   });
 
+  // Security Headers Middleware
+  app.use("*", async (c, next) => {
+    c.header("X-Frame-Options", "DENY");
+    c.header("X-Content-Type-Options", "nosniff");
+    c.header("Referrer-Policy", "strict-origin-when-cross-origin");
+    c.header("Permissions-Policy", "geolocation=(), microphone=(), camera=()");
+    await next();
+  });
+
   // API Routes
   app.get("/api/health", (c) => c.json({ status: "ok" }));
 

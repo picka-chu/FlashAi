@@ -1,6 +1,6 @@
 import React from 'react';
 import { motion, AnimatePresence } from 'motion/react';
-import { X, ShieldCheck, Zap, ArrowRight, Sparkles, MessageSquare } from 'lucide-react';
+import { X, ShieldCheck, Zap, ArrowRight, Sparkles, MessageSquare, FileText } from 'lucide-react';
 import { useTelegram } from '../hooks/useTelegram';
 
 interface SignUpSheetProps {
@@ -40,6 +40,12 @@ export const SignUpSheet: React.FC<SignUpSheetProps> = ({ isOpen, onClose }) => 
     } catch (err) {
       console.error("Sign up request error:", err);
     }
+  };
+
+  const openLegalDocument = (type: 'privacy' | 'terms') => {
+    hapticFeedback('light');
+    const botUsername = (import.meta.env.VITE_TELEGRAM_BOT_USERNAME || 'FlashAiBot').replace('@', '');
+    tg?.openTelegramLink?.(`https://t.me/${botUsername}`);
   };
 
   return (
@@ -134,6 +140,25 @@ export const SignUpSheet: React.FC<SignUpSheetProps> = ({ isOpen, onClose }) => 
                   <p className="text-[10px] font-bold text-zinc-600 text-center mt-4 tracking-tight uppercase">
                     One-tap registration • Secure & Private
                   </p>
+                  
+                  {/* Legal Links */}
+                  <div className="flex items-center justify-center gap-4 mt-4 pt-4 border-t border-zinc-800">
+                    <button 
+                      onClick={() => openLegalDocument('privacy')}
+                      className="flex items-center gap-1.5 text-[10px] font-bold text-zinc-500 hover:text-[#ccff00] transition-colors"
+                    >
+                      <FileText className="w-3 h-3" />
+                      Privacy Policy
+                    </button>
+                    <span className="text-zinc-700">•</span>
+                    <button 
+                      onClick={() => openLegalDocument('terms')}
+                      className="flex items-center gap-1.5 text-[10px] font-bold text-zinc-500 hover:text-[#ccff00] transition-colors"
+                    >
+                      <FileText className="w-3 h-3" />
+                      Terms of Service
+                    </button>
+                  </div>
                 </div>
               </div>
             </div>
