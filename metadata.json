@@ -1,5 +1,9 @@
 {
   "name": "Flash AI",
   "description": "AI-powered football match predictor Telegram Mini App",
-  "requestFramePermissions": []
+  "requestFramePermissions": [],
+  "categories": ["sports", "entertainment", "utilities"],
+  "supportUrl": "https://t.me/FlashAiBot",
+  "privacyPolicyUrl": "https://t.me/FlashAiBot",
+  "termsOfServiceUrl": "https://t.me/FlashAiBot"
 }
