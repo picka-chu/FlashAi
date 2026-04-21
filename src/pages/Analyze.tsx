@@ -27,7 +27,7 @@ import { BetSlipAnalysis, PredictionResult } from '../types/prediction';
 import { useTelegram } from '../hooks/useTelegram';
 import { SignUpSheet } from '../components/SignUpSheet';
 
-export const Analyze: React.FC = () => {
+export const Analyze: React.FC<{ onTabChange?: (tab: string) => void }> = ({ onTabChange }) => {
   const [isSignUpOpen, setIsSignUpOpen] = useState(false);
   const [input, setInput] = useState('');
   const [isFocused, setIsFocused] = useState(false);
@@ -848,8 +848,10 @@ export const Analyze: React.FC = () => {
 
               <button
                 onClick={() => {
-                  const upgradeUrl = `${window.location.origin}${window.location.pathname}?tab=profile`;
-                  tg?.openLink?.(upgradeUrl);
+                  hapticFeedback('medium');
+                  if (onTabChange) {
+                    onTabChange('profile');
+                  }
                   setShowInsufficientSheet(false);
                 }}
                 className="w-full py-4 rounded-2xl bg-[#ccff00] text-black font-black uppercase tracking-widest text-xs"
