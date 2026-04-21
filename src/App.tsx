@@ -124,7 +124,7 @@ export default function App() {
     switch (activeTab) {
       case "home": return <Home onTabChange={setActiveTab} />;
       case "matches": return <Matches onTabChange={setActiveTab} />;
-      case "analyze": return <Analyze />;
+      case "analyze": return <Analyze onTabChange={setActiveTab} />;
       case "history": return <History />;
       case "profile": return <Profile />;
       case "admin": return <Admin />;
