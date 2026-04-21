@@ -11,6 +11,7 @@ import fs from "fs";
 import crypto from "crypto";
 import { getLiveMatches, getMatchDetails, getUpcomingMatches, searchMatches } from "./services/footballService";
 import { generateSupportReply, getDefaultFaqs } from "./services/supportService";
+import CreditResetScheduler from "./tasks/creditResetScheduler.js";
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
@@ -622,10 +623,11 @@ async function startServer() {
   });
 
   // --- PLAN LIMITS CONFIG ---
+  // Updated to match frontend UI promises and professional tier structure
   const PLAN_CONFIG: Record<string, { dailyCredits: number; name: string }> = {
     free: { dailyCredits: 3, name: "Free" },
-    weekly: { dailyCredits: 15, name: "Pro Weekly" },
-    monthly: { dailyCredits: 50, name: "Elite Monthly" },
+    weekly: { dailyCredits: 35, name: "Pro Weekly" },
+    monthly: { dailyCredits: 120, name: "Elite Monthly" },
     admin: { dailyCredits: 999, name: "Administrator" }
   };
 
@@ -2341,6 +2343,17 @@ ${ad.subtitle}`;
   await ensureBootstrapAdminRole();
   refreshLiveCache();
   setInterval(refreshLiveCache, CACHE_INTERVAL);
+
+  // Initialize Credit Reset Scheduler
+  console.log("Initializing Credit Reset Scheduler...");
+  const creditResetScheduler = new CreditResetScheduler({
+    supabaseUrl: supabaseUrl!,
+    supabaseKey: supabaseKey!,
+    timezone: process.env.TIMEZONE || "UTC",
+    autoStart: true,
+    checkInterval: 60000 // Check every minute
+  });
+  console.log("✅ Credit Reset Scheduler initialized and running");
 
   console.log(`Server running on http://localhost:${PORT}`);
   serve({
