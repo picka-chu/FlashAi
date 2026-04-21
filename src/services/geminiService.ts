@@ -155,12 +155,69 @@ export async function fetchMatchH2H(home: string, away: string): Promise<any> {
 }
 
 /**
- * BACKEND ONLY: Fetches live matches using Gemini Search.
+ * BACKEND ONLY: Fetches live matches using ESPN API (reliable real-time data).
+ * Gemini is used only for analysis/reasoning, not for fetching live scores.
  */
 export async function fetchLiveMatchesFallback(): Promise<any[]> {
   const cacheKey = predictionCache.generateKey('live_matches', { date: new Date().toDateString() });
   
+  // Try ESPN API first for reliable real-time data
+  const fetchFromESPN = async (): Promise<any[]> => {
+    try {
+      const axios = await import('axios');
+      const today = new Date();
+      const dateStr = today.toISOString().split('T')[0].replace(/-/g, '');
+      const url = `https://site.api.espn.com/apis/site/v2/sports/soccer/all/scoreboard?dates=${dateStr}`;
+      
+      const response = await axios.default.get(url);
+      const events = Array.isArray(response.data?.events) ? response.data.events : [];
+      
+      return events
+        .filter((event: any) => {
+          const state = event?.competitions?.[0]?.status?.type?.state;
+          return state === 'in' || state === 'pre'; // Only live or upcoming
+        })
+        .map((event: any) => {
+          const comp = event.competitions[0];
+          const competitors = comp.competitors || [];
+          const home = competitors.find((c: any) => c.homeAway === 'home');
+          const away = competitors.find((c: any) => c.homeAway === 'away');
+          const status = comp.status || {};
+          
+          return {
+            fixture: {
+              id: `espn_${event.id}_${event.league?.slug || 'soccer'}`,
+              date: event.date,
+              status: {
+                short: status.type?.state === 'in' ? 'LIVE' : 'NS',
+                elapsed: status.displayClock || 0
+              }
+            },
+            teams: {
+              home: { name: home?.team?.displayName || 'Home', id: home?.team?.id || 0 },
+              away: { name: away?.team?.displayName || 'Away', id: away?.team?.id || 0 }
+            },
+            goals: {
+              home: Number(home?.score ?? 0),
+              away: Number(away?.score ?? 0)
+            },
+            league: { name: event.league?.name || event.league?.abbreviation || 'Unknown League' }
+          };
+        });
+    } catch (error) {
+      console.error('ESPN live matches fetch error:', error);
+      return [];
+    }
+  };
+
   return executeWithRetry(async (apiKey, keyIndex) => {
+    // First try ESPN for reliable data
+    const espnData = await fetchFromESPN();
+    if (espnData && espnData.length > 0) {
+      return espnData;
+    }
+
+    // Fallback to Gemini only if ESPN returns nothing (rare case)
     const ai = new GoogleGenAI({ apiKey });
     const prompt = `
       You are a real-time football score reporter. 
@@ -184,7 +241,8 @@ export async function fetchLiveMatchesFallback(): Promise<any[]> {
       config: { tools: [{ googleSearch: {} }] as any }
     });
 
-    return parseJsonFromText(result.text || "") || [];
+    const parsed = parseJsonFromText(result.text || "");
+    return parsed || [];
   }, {
     cache: predictionCache,
     cacheKey,
