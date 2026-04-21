@@ -7,9 +7,9 @@ import {
   isRetryableGeminiError 
 } from "./apiCacheService";
 
-const AGENT_MODELS = ["gemini-3-flash-preview"];
-const SEARCH_MODELS = ["gemini-3-flash-preview"];
-const VISION_MODELS = ["gemini-3-flash-preview"];
+const AGENT_MODELS = ["gemini-2.5-flash-lite"];
+const SEARCH_MODELS = ["gemini-2.5-flash-lite"];
+const VISION_MODELS = ["gemini-2.5-flash-lite"];
 
 export enum AgentType {
   ANALYST = "analyst",
@@ -485,7 +485,7 @@ class MultiAgentService {
       const prompt = `Analyze match ${matchId} and provide prediction`;
       
       const result = await ai.models.generateContent({
-        model: "gemini-3-flash-preview",
+        model: "gemini-2.5-flash-lite",
         contents: [{ role: "user", parts: [{ text: prompt }] }]
       });
 

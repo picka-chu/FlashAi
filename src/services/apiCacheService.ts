@@ -351,10 +351,10 @@ class ApiKeyManager {
       health.failures += 1;
       health.lastFailure = Date.now();
       
-      // Set cooldown based on failure type and count
-      const baseCooldown = isRateLimit ? 60 * 1000 : 10 * 1000; // 1min for rate limit, 10s for other errors
-      const exponentialCooldown = baseCooldown * Math.pow(2, Math.min(health.failures - 1, 5));
-      health.cooldownUntil = Date.now() + Math.min(exponentialCooldown, 5 * 60 * 1000); // Max 5 min cooldown
+      // Set cooldown based on failure type and count - Professional Rate Limiting
+      const baseCooldown = isRateLimit ? 30 * 1000 : 5 * 1000; // 30s for rate limit, 5s for other errors
+      const exponentialCooldown = baseCooldown * Math.pow(1.5, Math.min(health.failures - 1, 8));
+      health.cooldownUntil = Date.now() + Math.min(exponentialCooldown, 2 * 60 * 1000); // Max 2 min cooldown for professional tier
       
       console.warn(`⚠️ API key ${index + 1} marked unhealthy. Failures: ${health.failures}, Cooldown until: ${new Date(health.cooldownUntil).toISOString()}`);
     }
@@ -470,6 +470,12 @@ export async function executeWithRetry<T>(
       
       if (!keyInfo) {
         throw new Error('No API keys available');
+      }
+
+      // Professional Jitter: Small random delay to prevent synchronized retries
+      if (attempt > 0) {
+        const jitter = Math.random() * 1000;
+        await new Promise(resolve => setTimeout(resolve, jitter));
       }
 
       try {
