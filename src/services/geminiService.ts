@@ -73,8 +73,19 @@ export async function analyzeMatchWithSearch(matchString: string): Promise<Predi
           config: { tools: [{ googleSearch: {} }] as any }
         });
 
-        const parsed = parseJsonFromText(result.text || "");
-        if (!parsed || !parsed.predictions) throw new Error("Failed to parse prediction data");
+        const rawText = result.text || "";
+        console.log("Raw Gemini response:", rawText.substring(0, 500));
+        
+        const parsed = parseJsonFromText(rawText);
+        console.log("Parsed result:", parsed ? Object.keys(parsed) : "null");
+        
+        if (!parsed) {
+          throw new Error(`Failed to parse JSON from Gemini response. Raw text: ${rawText.substring(0, 200)}`);
+        }
+        
+        if (!parsed.predictions || !Array.isArray(parsed.predictions)) {
+          throw new Error(`Invalid prediction data structure. Missing 'predictions' array. Parsed keys: ${parsed ? Object.keys(parsed).join(', ') : 'none'}. Raw text: ${rawText.substring(0, 200)}`);
+        }
 
         const topPredictions = parsed.predictions
           .sort((a: any, b: any) => b.confidence - a.confidence)
