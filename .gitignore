@@ -17,51 +17,39 @@ env/
 venv/
 .venv/
 .ENV
-.env
-.env.*
-.pytest_cache/
-.mypy_cache/
-.coverage
-coverage/
+.ENV.local
 
 # Logs
 *.log
 
-# OS generated files
-.DS_Store
-.DS_Store?
-._*
-.Spotlight-V100
-.Trashes
-ehthumbs.db
-Thumbs.db
+# Environment variables
+.env
+.env.local
+*.env
 
-# Editor files
+# IDE
 .vscode/
 .idea/
 *.swp
 *.swo
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Coverage
+coverage/
+htmlcov/
+.coverage
+
+# Temporary files
 *.tmp
+*.temp
 
-# Environment specific
-.env.local
-.env.*
-
-# Compiled files
-*.class
-*.o
-*.obj
-*.so
-*.dll
-*.exe
-*.out
-*.a
-*.lib
-
-# Archives
+# Compressed files
 *.zip
-*.tar
 *.gz
+*.tar
 *.tgz
 *.bz2
 *.xz
@@ -81,19 +69,4 @@ Thumbs.db
 *.tar.bz2
 *.tar.xz
 *.tar.zst
-
-# Testing
-coverage/
-htmlcov/
-
-# Gradle
-.gradle/
-
-# Temporary files
-*.tmp
-*~
 ```
-
-Wait, I need to reconsider. The only modified file is 'src/pages/Analyze.tsx' which is a TypeScript React component file. This appears to be source code, not build artifacts or dependencies.
-
-Output: (empty)
