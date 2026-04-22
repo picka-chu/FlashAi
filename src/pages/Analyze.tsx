@@ -504,7 +504,7 @@ export const Analyze: React.FC<{ onTabChange?: (tab: string) => void }> = ({ onT
                                 <div>
                                   <span className="text-[8px] font-black text-zinc-500">Form</span>
                                   <div className="flex gap-1 mt-1">
-                                    {team.form.split('').map((res: string, idx: number) => (
+                                    {team.form && team.form !== 'N/A' ? team.form.split('').map((res: string, idx: number) => (
                                       <span key={idx} className={`w-4 h-4 rounded-sm flex items-center justify-center text-[8px] font-black ${
                                         res === 'W' ? 'bg-green-500/20 text-green-400' :
                                         res === 'D' ? 'bg-zinc-500/20 text-zinc-400' :
@@ -512,7 +512,9 @@ export const Analyze: React.FC<{ onTabChange?: (tab: string) => void }> = ({ onT
                                       }`}>
                                         {res}
                                       </span>
-                                    ))}
+                                    )) : (
+                                      <span className="text-[8px] font-black text-zinc-600">—</span>
+                                    )}
                                   </div>
                                 </div>
                                 {team.injuries.length > 0 && (
