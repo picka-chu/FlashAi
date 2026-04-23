@@ -13,10 +13,14 @@ CREATE TABLE IF NOT EXISTS public.user_history (
   prediction_market TEXT NOT NULL,
   confidence NUMERIC(5,2) NOT NULL DEFAULT 0,
   reasoning TEXT,
+  analysis_payload JSONB,
   status TEXT NOT NULL DEFAULT 'pending' CHECK (status IN ('pending', 'won', 'lost')),
   created_at TIMESTAMPTZ NOT NULL DEFAULT now(),
   resolved_at TIMESTAMPTZ
 );
+
+ALTER TABLE public.user_history
+  ADD COLUMN IF NOT EXISTS analysis_payload JSONB;
 
 CREATE INDEX IF NOT EXISTS idx_user_history_telegram_id_created_at
   ON public.user_history (telegram_id, created_at DESC);

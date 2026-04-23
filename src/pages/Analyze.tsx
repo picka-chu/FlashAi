@@ -344,18 +344,18 @@ export const Analyze: React.FC<{ onTabChange?: (tab: string) => void }> = ({ onT
                   </button>
                   <Sparkles className="w-4 h-4 text-[#ccff00]/30" />
                 </div>
-                <div className="flex items-center justify-between gap-4">
-                  <div className="flex-1 flex flex-col items-center">
-                    <div className="w-10 h-10 rounded-xl bg-gradient-to-br from-zinc-800 to-zinc-900 border border-zinc-700/30 flex items-center justify-center shadow-lg mb-2 overflow-hidden">
+                <div className="grid grid-cols-[1fr_auto_1fr] items-center gap-3">
+                  <div className="min-w-0 flex flex-col items-center justify-center">
+                    <div className="w-12 h-12 rounded-xl bg-gradient-to-br from-zinc-800 to-zinc-900 border border-zinc-700/30 flex items-center justify-center shadow-lg mb-2 overflow-hidden shrink-0">
                       {selectedMatch.homeLogo ? (
-                        <img src={selectedMatch.homeLogo} alt={selectedMatch.homeShort} className="w-6 h-6 object-contain" referrerPolicy="no-referrer" />
+                        <img src={selectedMatch.homeLogo} alt={selectedMatch.homeShort} className="w-8 h-8 object-contain" referrerPolicy="no-referrer" />
                       ) : (
                         <span className="text-xs font-black text-white">{selectedMatch.homeShort}</span>
                       )}
                     </div>
-                    <p className="text-sm font-black text-white truncate w-full text-center">{selectedMatch.home}</p>
+                    <p className="text-sm font-black text-white leading-tight text-center line-clamp-2 min-h-10">{selectedMatch.home}</p>
                   </div>
-                  <div className="flex flex-col items-center">
+                  <div className="flex flex-col items-center shrink-0 px-1">
                     {selectedMatch.score ? (
                       <span className="text-xl font-black text-[#ccff00] tracking-tighter">{selectedMatch.score}</span>
                     ) : (
@@ -363,15 +363,15 @@ export const Analyze: React.FC<{ onTabChange?: (tab: string) => void }> = ({ onT
                     )}
                     <span className="text-[8px] font-black text-zinc-500 mt-1">{selectedMatch.minute || selectedMatch.time}</span>
                   </div>
-                  <div className="flex-1 flex flex-col items-center">
-                    <div className="w-10 h-10 rounded-xl bg-gradient-to-br from-zinc-800 to-zinc-900 border border-zinc-700/30 flex items-center justify-center shadow-lg mb-2 overflow-hidden">
+                  <div className="min-w-0 flex flex-col items-center justify-center">
+                    <div className="w-12 h-12 rounded-xl bg-gradient-to-br from-zinc-800 to-zinc-900 border border-zinc-700/30 flex items-center justify-center shadow-lg mb-2 overflow-hidden shrink-0">
                       {selectedMatch.awayLogo ? (
-                        <img src={selectedMatch.awayLogo} alt={selectedMatch.awayShort} className="w-6 h-6 object-contain" referrerPolicy="no-referrer" />
+                        <img src={selectedMatch.awayLogo} alt={selectedMatch.awayShort} className="w-8 h-8 object-contain" referrerPolicy="no-referrer" />
                       ) : (
                         <span className="text-xs font-black text-white">{selectedMatch.awayShort}</span>
                       )}
                     </div>
-                    <p className="text-sm font-black text-white truncate w-full text-center">{selectedMatch.away}</p>
+                    <p className="text-sm font-black text-white leading-tight text-center line-clamp-2 min-h-10">{selectedMatch.away}</p>
                   </div>
                 </div>
               </div>

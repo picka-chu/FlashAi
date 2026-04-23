@@ -215,18 +215,36 @@ type UserHistoryItem = {
   predictionMarket: string;
   confidence: number;
   reasoning: string;
+  analysisPayload?: any;
   status: HistoryStatus;
   created_at: string;
   resolved_at?: string | null;
 };
 
 async function getUserHistory(telegramId: number): Promise<UserHistoryItem[]> {
-  const { data, error } = await supabase
+  let data: any[] | null = null;
+  let error: any = null;
+
+  const withPayload = await supabase
     .from("user_history")
-    .select("id,fixture_id,match,home,away,prediction_market,confidence,reasoning,status,created_at,resolved_at")
+    .select("id,fixture_id,match,home,away,prediction_market,confidence,reasoning,analysis_payload,status,created_at,resolved_at")
     .eq("telegram_id", telegramId)
     .order("created_at", { ascending: false })
     .limit(100);
+
+  data = withPayload.data;
+  error = withPayload.error;
+
+  if (error && String(error.message || "").toLowerCase().includes("analysis_payload")) {
+    const legacy = await supabase
+      .from("user_history")
+      .select("id,fixture_id,match,home,away,prediction_market,confidence,reasoning,status,created_at,resolved_at")
+      .eq("telegram_id", telegramId)
+      .order("created_at", { ascending: false })
+      .limit(100);
+    data = legacy.data;
+    error = legacy.error;
+  }
 
   if (error) {
     console.error("Failed to fetch user history:", error.message);
@@ -242,6 +260,7 @@ async function getUserHistory(telegramId: number): Promise<UserHistoryItem[]> {
     predictionMarket: row.prediction_market,
     confidence: Number(row.confidence || 0),
     reasoning: row.reasoning || "",
+    analysisPayload: row.analysis_payload || null,
     status: row.status || "pending",
     created_at: row.created_at,
     resolved_at: row.resolved_at || null,
@@ -268,11 +287,19 @@ async function setUserHistory(telegramId: number, history: UserHistoryItem[]) {
       prediction_market: item.predictionMarket,
       confidence: Number(item.confidence || 0),
       reasoning: item.reasoning || "",
+      analysis_payload: item.analysisPayload || null,
       status: item.status || "pending",
       created_at: item.created_at || new Date().toISOString(),
       resolved_at: item.resolved_at || null,
     }));
-    const { error: insertError } = await supabase.from("user_history").insert(rows);
+
+    let { error: insertError } = await supabase.from("user_history").insert(rows);
+    if (insertError && String(insertError.message || "").toLowerCase().includes("analysis_payload")) {
+      const legacyRows = rows.map(({ analysis_payload, ...row }) => row);
+      const legacyInsert = await supabase.from("user_history").insert(legacyRows);
+      insertError = legacyInsert.error;
+    }
+
     if (insertError) {
       console.error("Failed to insert user history:", insertError.message);
     }
@@ -863,6 +890,7 @@ async function startServer() {
         predictionMarket: topPrediction?.market || "Unknown Market",
         confidence: Number(topPrediction?.confidence || 0),
         reasoning: topPrediction?.reasoning || result?.overallReasoning || "",
+        analysisPayload: result || null,
         status: "pending",
         created_at: new Date().toISOString(),
       };

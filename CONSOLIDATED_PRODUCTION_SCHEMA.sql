@@ -59,6 +59,7 @@ CREATE TABLE IF NOT EXISTS public.user_history (
   prediction_market TEXT NOT NULL,
   confidence INTEGER NOT NULL DEFAULT 0,
   reasoning TEXT,
+  analysis_payload JSONB,
   status TEXT NOT NULL DEFAULT 'pending' CHECK (status IN ('pending', 'won', 'lost')),
   created_at TIMESTAMPTZ NOT NULL DEFAULT now(),
   resolved_at TIMESTAMPTZ
