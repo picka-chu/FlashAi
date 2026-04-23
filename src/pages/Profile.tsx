@@ -1206,6 +1206,132 @@ export const Profile: React.FC = () => {
               </button>
             </div>
           </div>
+      </div>
+    );
+  }
+
+  if (isViewingLegal) {
+    return (
+      <div className="fixed inset-0 z-[120] bg-black flex flex-col overflow-hidden">
+        <div className="sticky top-0 z-20 border-b border-zinc-800/70 bg-[#17212b]/95 backdrop-blur-sm">
+          <div className="h-14 px-4 flex items-center justify-between">
+            <button
+              onClick={() => setIsViewingLegal(false)}
+              className="w-9 h-9 rounded-full bg-white/10 flex items-center justify-center active:scale-95 transition-all"
+              aria-label="Back"
+            >
+              <ArrowLeft className="w-4 h-4 text-white" />
+            </button>
+            <p className="text-sm font-bold text-white">Terms & Policies</p>
+            <div className="w-9" />
+          </div>
+        </div>
+
+        <div className="flex-1 overflow-y-auto no-scrollbar px-5 py-5">
+          <div className="rounded-3xl border border-zinc-800 bg-zinc-900/70 p-4">
+            <pre className="text-[11px] text-zinc-300 font-semibold leading-relaxed whitespace-pre-wrap">
+              {legalContent || 'Loading terms and policies...'}
+            </pre>
+          </div>
+        </div>
+      </div>
+    );
+  }
+
+  if (isViewingPaymentMethods && selectedPlanForPayment) {
+    const selectedPlanUsdPrice = Number(selectedPlanForPayment.usdPrice || 0);
+    const selectedStarsPrice = getPriceInStars(selectedPlanUsdPrice);
+    const selectedTonPrice = getPriceInTon(selectedPlanUsdPrice);
+    return (
+      <div className="fixed inset-0 z-[100] bg-black flex flex-col overflow-hidden">
+          <div className="sticky top-0 z-20 border-b border-zinc-800/70 bg-[#17212b]/95 backdrop-blur-sm">
+            <div className="h-14 px-4 flex items-center justify-between">
+              <button
+                onClick={() => setIsViewingPaymentMethods(false)}
+                className="w-9 h-9 rounded-full bg-white/10 flex items-center justify-center active:scale-95 transition-all"
+                aria-label="Back"
+              >
+                <ArrowLeft className="w-4 h-4 text-white" />
+              </button>
+              <p className="text-sm font-bold text-white">Payment Method</p>
+              <div className="w-9" />
+            </div>
+          </div>
+
+          <div className="flex-1 overflow-y-auto no-scrollbar px-5 py-6 space-y-5">
+            <div className="rounded-3xl border border-zinc-800 bg-zinc-900/60 p-5">
+              <p className="text-[10px] uppercase tracking-[0.2em] font-black text-zinc-500">Selected plan</p>
+              <div className="mt-2 flex items-center justify-between gap-3">
+                <div>
+                  <p className="text-xl font-black text-white">{selectedPlanForPayment.name}</p>
+                  <p className="text-xs font-semibold text-zinc-500">{selectedPlanForPayment.period}</p>
+                </div>
+                <div className="text-right">
+                  <p className="text-base font-black text-white">${selectedPlanUsdPrice.toFixed(2)}</p>
+                  <p className="text-[11px] font-semibold text-zinc-400">{selectedStarsPrice} Stars • {selectedTonPrice} TON</p>
+                </div>
+              </div>
+            </div>
+
+            <div className="space-y-3">
+              <button
+                onClick={handleStarsPayment}
+                className="w-full bg-[#0088cc]/12 border border-[#0088cc]/30 rounded-3xl p-5 flex items-center justify-between group active:scale-[0.98] transition-all"
+              >
+                <div className="flex items-center gap-4">
+                  <div className="w-12 h-12 rounded-2xl bg-[#0088cc] flex items-center justify-center">
+                    <StarsIcon className="w-6 h-6 text-white" />
+                  </div>
+                  <div className="text-left">
+                    <p className="text-base font-black text-white">Telegram Stars</p>
+                    <p className="text-xs font-semibold text-zinc-400">{selectedStarsPrice} Stars • Fast in-app checkout</p>
+                  </div>
+                </div>
+                <ChevronRight className="w-5 h-5 text-[#0088cc]" />
+              </button>
+
+              <button
+                onClick={handleTonPayment}
+                className="w-full bg-[#0098EA]/12 border border-[#0098EA]/25 rounded-3xl p-5 flex items-center justify-between group active:scale-[0.98] transition-all"
+              >
+                <div className="flex items-center gap-4">
+                  <div className="w-12 h-12 rounded-2xl bg-gradient-to-br from-[#0098EA] to-[#0077B5] flex items-center justify-center">
+                    <Wallet className="w-6 h-6 text-white" />
+                  </div>
+                  <div className="text-left">
+                    <p className="text-base font-black text-white">TON Wallet</p>
+                    <p className="text-xs font-semibold text-zinc-400">{selectedTonPrice} TON • Pay securely on-chain</p>
+                  </div>
+                </div>
+                <ChevronRight className="w-5 h-5 text-[#0098EA]" />
+              </button>
+
+              <button
+                onClick={handleLemonSqueezyPayment}
+                className="w-full bg-[#FFC233]/10 border border-[#FFC233]/25 rounded-3xl p-5 flex items-center justify-between group active:scale-[0.98] transition-all"
+              >
+                <div className="flex items-center gap-4">
+                  <div className="w-12 h-12 rounded-2xl bg-[#FFC233] flex items-center justify-center">
+                    <CreditCard className="w-6 h-6 text-black" />
+                  </div>
+                  <div className="text-left">
+                    <p className="text-base font-black text-white">Bank Card</p>
+                    <p className="text-xs font-semibold text-zinc-400">${selectedPlanUsdPrice.toFixed(2)} • Powered by Lemon Squeezy</p>
+                  </div>
+                </div>
+                <ChevronRight className="w-5 h-5 text-[#FFC233]" />
+              </button>
+            </div>
+
+            <div className="rounded-2xl bg-zinc-900/70 border border-zinc-800 p-4 space-y-3">
+              <p className="text-[11px] font-semibold text-zinc-400 leading-relaxed">
+                We use encrypted providers for secure processing. By continuing, you agree to the Terms and Privacy Policy.
+              </p>
+              <button onClick={() => setIsViewingLegal(true)} className="w-full py-2.5 rounded-xl bg-zinc-800 text-[10px] font-black uppercase text-zinc-200 tracking-wider">
+                View Terms & Privacy
+              </button>
+            </div>
+          </div>
 
           {paymentProcessing.isLoading && (
             <div className="fixed inset-0 z-[140] bg-black/80 backdrop-blur-sm flex items-center justify-center px-6">
