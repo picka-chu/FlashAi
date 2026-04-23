@@ -145,6 +145,11 @@ export const Profile: React.FC = () => {
   const [isSavingProfile, setIsSavingProfile] = useState(false);
   const [isViewingLegal, setIsViewingLegal] = useState(false);
   const [legalContent, setLegalContent] = useState('');
+  const [paymentProcessing, setPaymentProcessing] = useState<{ isLoading: boolean; title: string; detail: string }>({
+    isLoading: false,
+    title: '',
+    detail: '',
+  });
   const chatEndRef = useRef<HTMLDivElement>(null);
 
   useEffect(() => {
@@ -363,12 +368,23 @@ export const Profile: React.FC = () => {
     }
     
     if (!tonConnectUI.connected) {
-      showAlert('Redirecting to connect your TON wallet...');
-      await tonConnectUI.openModal();
+      setPaymentProcessing({
+        isLoading: true,
+        title: 'Connecting wallet',
+        detail: 'Please connect your TON wallet to continue.',
+      });
+      await tonConnectUI.openModal().finally(() =>
+        setPaymentProcessing({ isLoading: false, title: '', detail: '' })
+      );
       return;
     }
 
     try {
+      setPaymentProcessing({
+        isLoading: true,
+        title: 'Processing TON payment',
+        detail: 'Sending transaction and verifying on-chain...',
+      });
       const transaction = {
         validUntil: Math.floor(Date.now() / 1000) + 60, // 60 sec
         messages: [
@@ -383,7 +399,6 @@ export const Profile: React.FC = () => {
       const result = await tonConnectUI.sendTransaction(transaction);
       
       // Verify with backend
-      showAlert('Verifying transaction on-chain...');
       const verifyRes = await fetch('/api/payments/verify-ton-payment', {
         method: 'POST',
         headers: {
@@ -409,6 +424,8 @@ export const Profile: React.FC = () => {
     } catch (e: any) {
       console.error('TON Payment error:', e);
       showAlert(`TON payment failed: ${e?.message || 'Canceled or failed.'}`);
+    } finally {
+      setPaymentProcessing({ isLoading: false, title: '', detail: '' });
     }
   };
 
@@ -423,7 +440,11 @@ export const Profile: React.FC = () => {
     }
 
     try {
-      showAlert(`Generating invoice for ${starsPrice} Stars...`);
+      setPaymentProcessing({
+        isLoading: true,
+        title: 'Preparing Stars invoice',
+        detail: `Creating invoice for ${starsPrice} Stars...`,
+      });
       
       const response = await fetch('/api/payments/create-stars-invoice', {
         method: 'POST',
@@ -443,7 +464,13 @@ export const Profile: React.FC = () => {
       const data = await response.json();
 
       if (data.invoiceLink) {
+        setPaymentProcessing({
+          isLoading: true,
+          title: 'Waiting for payment',
+          detail: 'Complete payment in Telegram to continue.',
+        });
         tg.openInvoice(data.invoiceLink, (status) => {
+          setPaymentProcessing({ isLoading: false, title: '', detail: '' });
           if (status === 'paid') {
             hapticFeedback('success');
             showAlert(`Congratulations! You have successfully upgraded to ${selectedPlanForPayment.name}`);
@@ -460,6 +487,8 @@ export const Profile: React.FC = () => {
     } catch (e: any) {
       console.error('Stars Payment error:', e);
       showAlert('Failed to initiate Stars payment: ' + (e.message || 'Unknown error'));
+    } finally {
+      setPaymentProcessing({ isLoading: false, title: '', detail: '' });
     }
   };
 
@@ -468,6 +497,11 @@ export const Profile: React.FC = () => {
     if (!selectedPlanForPayment || !user) return;
 
     try {
+      setPaymentProcessing({
+        isLoading: true,
+        title: 'Creating secure checkout',
+        detail: 'Please wait while we redirect you...',
+      });
       // Get Lemon Squeezy checkout URL from backend
       const response = await fetch('/api/payments/create-lemonsqueezy-checkout', {
         method: 'POST',
@@ -488,13 +522,14 @@ export const Profile: React.FC = () => {
       if (data.checkoutUrl) {
         // Open Lemon Squeezy checkout in browser/webview
         window.open(data.checkoutUrl, '_blank');
-        showAlert('Redirecting to secure checkout...');
       } else {
         throw new Error(data.error || 'Failed to create checkout session');
       }
     } catch (e: any) {
       console.error('Lemon Squeezy Payment error:', e);
       showAlert('Failed to initiate payment: ' + (e.message || 'Unknown error'));
+    } finally {
+      setPaymentProcessing({ isLoading: false, title: '', detail: '' });
     }
   };
 
@@ -1092,21 +1127,12 @@ export const Profile: React.FC = () => {
     const selectedTonPrice = getPriceInTon(selectedPlanUsdPrice);
     return (
       <div className="fixed inset-0 z-[100] bg-black flex flex-col overflow-hidden">
-          <div className="sticky top-0 z-20 border-b border-zinc-800/70 bg-[#17212b]/95 backdrop-blur-sm">
-            <div className="h-14 px-4 flex items-center justify-between">
-              <button
-                onClick={() => setIsViewingPaymentMethods(false)}
-                className="w-9 h-9 rounded-full bg-white/10 flex items-center justify-center active:scale-95 transition-all"
-                aria-label="Back"
-              >
-                <ArrowLeft className="w-4 h-4 text-white" />
-              </button>
-              <p className="text-sm font-bold text-white">Payment Method</p>
-              <div className="w-9" />
-            </div>
-          </div>
-
           <div className="flex-1 overflow-y-auto no-scrollbar px-5 py-6 space-y-5">
+            <div className="text-center space-y-1 pt-2">
+              <p className="text-lg font-black text-white">Payment Methods</p>
+              <p className="text-xs font-semibold text-zinc-500">Choose your preferred checkout option</p>
+            </div>
+
             <div className="rounded-3xl border border-zinc-800 bg-zinc-900/60 p-5">
               <p className="text-[10px] uppercase tracking-[0.2em] font-black text-zinc-500">Selected plan</p>
               <div className="mt-2 flex items-center justify-between gap-3">
@@ -1306,6 +1332,16 @@ export const Profile: React.FC = () => {
               </button>
             </div>
           </div>
+
+          {paymentProcessing.isLoading && (
+            <div className="fixed inset-0 z-[140] bg-black/80 backdrop-blur-sm flex items-center justify-center px-6">
+              <div className="w-full max-w-sm rounded-3xl bg-zinc-950 border border-zinc-800 p-6 text-center space-y-4">
+                <div className="mx-auto w-12 h-12 border-4 border-zinc-700 border-t-[#ccff00] rounded-full animate-spin" />
+                <p className="text-base font-black text-white">{paymentProcessing.title}</p>
+                <p className="text-xs font-semibold text-zinc-400 leading-relaxed">{paymentProcessing.detail}</p>
+              </div>
+            </div>
+          )}
       </div>
     );
   }
