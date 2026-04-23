@@ -1,4 +1,4 @@
-import React, { useState } from 'react';
+import React, { useEffect, useRef, useState } from 'react';
 import { motion, AnimatePresence } from 'motion/react';
 import { X, ShieldCheck, Zap, ArrowRight, Sparkles, MessageSquare, FileText, CheckCircle2, Lock } from 'lucide-react';
 import { useTelegram } from '../hooks/useTelegram';
@@ -6,6 +6,7 @@ import { useTelegram } from '../hooks/useTelegram';
 interface SignUpSheetProps {
   isOpen: boolean;
   onClose: () => void;
+  onRegistered?: () => Promise<void> | void;
 }
 
 export const SignUpSheet: React.FC<SignUpSheetProps> = ({ isOpen, onClose }) => {
