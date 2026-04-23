@@ -33,7 +33,11 @@ export const SignUpSheet: React.FC<SignUpSheetProps> = ({ isOpen, onClose }) => 
         onClose();
         const botUsername = (import.meta.env.VITE_TELEGRAM_BOT_USERNAME || 'Deepflashaibot').replace('@', '');
         const signupLink = `https://t.me/${botUsername}?start=signup`;
-        tg.openTelegramLink?.(signupLink);
+        // Minimize the mini app before opening the bot link
+        tg.close();
+        setTimeout(() => {
+          tg.openTelegramLink?.(signupLink);
+        }, 300);
       } else {
         console.error("Failed to request signup");
       }
