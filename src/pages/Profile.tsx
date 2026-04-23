@@ -41,6 +41,7 @@ const PLANS = [
   {
     id: 'free',
     name: 'Free',
+    usdPrice: 0,
     price: '$0',
     period: 'forever',
     icon: Zap,
@@ -51,9 +52,8 @@ const PLANS = [
   {
     id: 'monthly_basic',
     name: 'Monthly Basic',
+    usdPrice: 8.99,
     price: '$8.99',
-    starsPrice: 450,
-    tonPrice: 2.0,
     period: 'per month',
     icon: ShieldCheck,
     color: 'text-[#ccff00]',
@@ -65,9 +65,8 @@ const PLANS = [
   {
     id: 'monthly_pro',
     name: 'Monthly Pro',
+    usdPrice: 14.99,
     price: '$14.99',
-    starsPrice: 750,
-    tonPrice: 3.5,
     period: 'per month',
     icon: Crown,
     color: 'text-amber-400',
@@ -76,6 +75,12 @@ const PLANS = [
     aiModel: 'gemini-pro'
   }
 ];
+
+const USD_TO_STARS_RATE = 50; // 1 USD ≈ 50 Telegram Stars
+const USD_TO_TON_RATE = Number(import.meta.env.VITE_USD_TO_TON_RATE || 0.23); // configurable market approximation
+
+const getPriceInStars = (usdPrice: number) => Math.ceil(usdPrice * USD_TO_STARS_RATE);
+const getPriceInTon = (usdPrice: number) => Number((usdPrice * USD_TO_TON_RATE).toFixed(2));
 
 
 export const Profile: React.FC = () => {
@@ -125,7 +130,7 @@ export const Profile: React.FC = () => {
   }, [isViewingReferral, initData]);
 
   // Payment State
-  const [isPaymentSheetOpen, setIsPaymentSheetOpen] = useState(false);
+  const [isViewingPaymentMethods, setIsViewingPaymentMethods] = useState(false);
   const [selectedPlanForPayment, setSelectedPlanForPayment] = useState<any>(null);
 
   // Support Chat State
@@ -140,6 +145,11 @@ export const Profile: React.FC = () => {
   const [isSavingProfile, setIsSavingProfile] = useState(false);
   const [isViewingLegal, setIsViewingLegal] = useState(false);
   const [legalContent, setLegalContent] = useState('');
+  const [paymentProcessing, setPaymentProcessing] = useState<{ isLoading: boolean; title: string; detail: string }>({
+    isLoading: false,
+    title: '',
+    detail: '',
+  });
   const chatEndRef = useRef<HTMLDivElement>(null);
 
   useEffect(() => {
@@ -187,11 +197,11 @@ export const Profile: React.FC = () => {
 
   useEffect(() => {
     if (tg?.BackButton) {
-      if (isEditing || isViewingSubscriptions || isViewingReferral || isViewingSupport || isPaymentSheetOpen || isReportingIssue || isViewingLegal) {
+      if (isEditing || isViewingSubscriptions || isViewingReferral || isViewingSupport || isViewingPaymentMethods || isReportingIssue || isViewingLegal) {
         tg.BackButton.show();
         const handleBack = () => {
-          if (isPaymentSheetOpen) {
-            setIsPaymentSheetOpen(false);
+          if (isViewingPaymentMethods) {
+            setIsViewingPaymentMethods(false);
           } else if (isViewingLegal) {
             setIsViewingLegal(false);
           } else if (isReportingIssue) {
@@ -212,7 +222,7 @@ export const Profile: React.FC = () => {
         tg.BackButton.hide();
       }
     }
-  }, [isEditing, isViewingSubscriptions, isViewingReferral, isViewingSupport, isPaymentSheetOpen, isReportingIssue, isViewingLegal, tg]);
+  }, [isEditing, isViewingSubscriptions, isViewingReferral, isViewingSupport, isViewingPaymentMethods, isReportingIssue, isViewingLegal, tg]);
 
   const refreshAuthedProfile = async () => {
     const effectiveInitData = initData || (window as any)?.Telegram?.WebApp?.initData || '';
@@ -343,12 +353,14 @@ export const Profile: React.FC = () => {
   const handleUpgrade = (plan: any) => {
     hapticFeedback('medium');
     setSelectedPlanForPayment(plan);
-    setIsPaymentSheetOpen(true);
+    setIsViewingSubscriptions(false);
+    setIsViewingPaymentMethods(true);
   };
 
   const handleTonPayment = async () => {
     hapticFeedback('medium');
     if (!selectedPlanForPayment || !user) return;
+    const tonPrice = getPriceInTon(Number(selectedPlanForPayment.usdPrice || 0));
     const tonReceiver = import.meta.env.VITE_TON_RECEIVER_ADDRESS || '';
     if (!tonReceiver) {
       showAlert('TON payments are temporarily unavailable. Missing receiver configuration.');
@@ -356,20 +368,29 @@ export const Profile: React.FC = () => {
     }
     
     if (!tonConnectUI.connected) {
-      showAlert('Redirecting to connect your TON wallet...');
-      await tonConnectUI.openModal();
+      setPaymentProcessing({
+        isLoading: true,
+        title: 'Connecting wallet',
+        detail: 'Please connect your TON wallet to continue.',
+      });
+      await tonConnectUI.openModal().finally(() =>
+        setPaymentProcessing({ isLoading: false, title: '', detail: '' })
+      );
       return;
     }
 
-    setIsPaymentSheetOpen(false);
-
     try {
+      setPaymentProcessing({
+        isLoading: true,
+        title: 'Processing TON payment',
+        detail: 'Sending transaction and verifying on-chain...',
+      });
       const transaction = {
         validUntil: Math.floor(Date.now() / 1000) + 60, // 60 sec
         messages: [
           {
             address: tonReceiver,
-            amount: (selectedPlanForPayment.tonPrice * 1e9).toString(), // nanoTON
+            amount: (tonPrice * 1e9).toString(), // nanoTON
             payload: btoa(`plan:${selectedPlanForPayment.id}:user:${user.telegram_id}`) // Memo for tracking
           },
         ],
@@ -378,7 +399,6 @@ export const Profile: React.FC = () => {
       const result = await tonConnectUI.sendTransaction(transaction);
       
       // Verify with backend
-      showAlert('Verifying transaction on-chain...');
       const verifyRes = await fetch('/api/payments/verify-ton-payment', {
         method: 'POST',
         headers: {
@@ -389,7 +409,7 @@ export const Profile: React.FC = () => {
           telegramId: user.telegram_id,
           planId: selectedPlanForPayment.id,
           boc: result.boc,
-          amount: selectedPlanForPayment.tonPrice
+          amount: tonPrice
         })
       });
 
@@ -404,13 +424,15 @@ export const Profile: React.FC = () => {
     } catch (e: any) {
       console.error('TON Payment error:', e);
       showAlert(`TON payment failed: ${e?.message || 'Canceled or failed.'}`);
+    } finally {
+      setPaymentProcessing({ isLoading: false, title: '', detail: '' });
     }
   };
 
   const handleStarsPayment = async () => {
     hapticFeedback('medium');
     if (!selectedPlanForPayment || !user) return;
-    setIsPaymentSheetOpen(false);
+    const starsPrice = getPriceInStars(Number(selectedPlanForPayment.usdPrice || 0));
     
     if (!tg || !user) {
       showAlert('Telegram environment or user not detected.');
@@ -418,7 +440,11 @@ export const Profile: React.FC = () => {
     }
 
     try {
-      showAlert(`Generating invoice for ${selectedPlanForPayment.starsPrice} Stars...`);
+      setPaymentProcessing({
+        isLoading: true,
+        title: 'Preparing Stars invoice',
+        detail: `Creating invoice for ${starsPrice} Stars...`,
+      });
       
       const response = await fetch('/api/payments/create-stars-invoice', {
         method: 'POST',
@@ -429,7 +455,7 @@ export const Profile: React.FC = () => {
         body: JSON.stringify({
           telegramId: user.telegram_id,
           planId: selectedPlanForPayment.id,
-          amount: selectedPlanForPayment.starsPrice,
+          amount: starsPrice,
           title: `Flash AI - ${selectedPlanForPayment.name} Plan`,
           description: `Unlock premium football predictions with ${selectedPlanForPayment.id === 'monthly_basic' ? 'Flash AI Lite' : 'Flash AI Pro'} for 1 month.`
         }),
@@ -438,7 +464,13 @@ export const Profile: React.FC = () => {
       const data = await response.json();
 
       if (data.invoiceLink) {
+        setPaymentProcessing({
+          isLoading: true,
+          title: 'Waiting for payment',
+          detail: 'Complete payment in Telegram to continue.',
+        });
         tg.openInvoice(data.invoiceLink, (status) => {
+          setPaymentProcessing({ isLoading: false, title: '', detail: '' });
           if (status === 'paid') {
             hapticFeedback('success');
             showAlert(`Congratulations! You have successfully upgraded to ${selectedPlanForPayment.name}`);
@@ -455,15 +487,21 @@ export const Profile: React.FC = () => {
     } catch (e: any) {
       console.error('Stars Payment error:', e);
       showAlert('Failed to initiate Stars payment: ' + (e.message || 'Unknown error'));
+    } finally {
+      setPaymentProcessing({ isLoading: false, title: '', detail: '' });
     }
   };
 
   const handleLemonSqueezyPayment = async () => {
     hapticFeedback('medium');
     if (!selectedPlanForPayment || !user) return;
-    setIsPaymentSheetOpen(false);
 
     try {
+      setPaymentProcessing({
+        isLoading: true,
+        title: 'Creating secure checkout',
+        detail: 'Please wait while we redirect you...',
+      });
       // Get Lemon Squeezy checkout URL from backend
       const response = await fetch('/api/payments/create-lemonsqueezy-checkout', {
         method: 'POST',
@@ -484,13 +522,14 @@ export const Profile: React.FC = () => {
       if (data.checkoutUrl) {
         // Open Lemon Squeezy checkout in browser/webview
         window.open(data.checkoutUrl, '_blank');
-        showAlert('Redirecting to secure checkout...');
       } else {
         throw new Error(data.error || 'Failed to create checkout session');
       }
     } catch (e: any) {
       console.error('Lemon Squeezy Payment error:', e);
       showAlert('Failed to initiate payment: ' + (e.message || 'Unknown error'));
+    } finally {
+      setPaymentProcessing({ isLoading: false, title: '', detail: '' });
     }
   };
 
@@ -995,9 +1034,8 @@ export const Profile: React.FC = () => {
 
   if (isViewingSubscriptions) {
     return (
-      <>
-        <div className="fixed inset-0 z-[100] bg-black flex flex-col overflow-hidden">
-          <div className="flex-1 overflow-y-auto no-scrollbar px-6 py-8 space-y-8">
+      <div className="fixed inset-0 z-[100] bg-black flex flex-col overflow-hidden">
+        <div className="flex-1 overflow-y-auto no-scrollbar px-6 py-8 space-y-8">
           <div className="text-center space-y-2">
             <h1 className="text-3xl font-black text-white tracking-tight">Upgrade Plan</h1>
             <p className="text-zinc-500 text-sm font-bold">Choose the best plan for your success</p>
@@ -1007,6 +1045,8 @@ export const Profile: React.FC = () => {
             {PLANS.map((plan) => {
               const isCurrent = user?.plan === plan.id;
               const Icon = plan.icon;
+              const planStarsPrice = getPriceInStars(Number(plan.usdPrice || 0));
+              const planTonPrice = getPriceInTon(Number(plan.usdPrice || 0));
 
               return (
                 <div 
@@ -1034,8 +1074,8 @@ export const Profile: React.FC = () => {
                         <p className="text-2xl font-black text-white">{plan.price}</p>
                       ) : (
                         <div className="flex flex-col items-end">
-                          <p className="text-2xl font-black text-[#ccff00]">{plan.tonPrice} TON</p>
-                          <p className="text-[10px] font-bold text-zinc-500 mt-1">{plan.starsPrice} Stars</p>
+                          <p className="text-2xl font-black text-white">${Number(plan.usdPrice).toFixed(2)}</p>
+                          <p className="text-[10px] font-bold text-zinc-500 mt-1">{planStarsPrice} Stars • {planTonPrice} TON</p>
                         </div>
                       )}
                     </div>
@@ -1050,143 +1090,161 @@ export const Profile: React.FC = () => {
                     ))}
                   </ul>
 
-                  <button 
+                  <button
+                    type="button"
                     disabled={isCurrent}
                     onClick={() => handleUpgrade(plan)}
-                    className={`w-full py-4 rounded-2xl font-black text-sm tracking-widest transition-all ${
-                      isCurrent 
-                        ? 'bg-zinc-800 text-zinc-500 cursor-default' 
-                        : 'bg-white text-black active:scale-[0.98] hover:bg-[#ccff00]'
+                    className={`w-full py-3.5 rounded-2xl font-black text-sm transition-all flex items-center justify-center gap-2 ${
+                      isCurrent
+                        ? 'bg-zinc-800 text-zinc-500 cursor-default border border-zinc-700'
+                        : 'bg-gradient-to-r from-[#ccff00] to-[#b5e500] text-black active:scale-[0.98] shadow-[0_8px_20px_rgba(204,255,0,0.2)]'
                     }`}
                   >
-                    {isCurrent ? 'Current plan' : `Upgrade to ${plan.name}`}
+                    {isCurrent ? (
+                      <>
+                        <Check className="w-4 h-4" />
+                        Current plan
+                      </>
+                    ) : (
+                      <>
+                        Choose plan
+                        <ChevronRight className="w-4 h-4" />
+                      </>
+                    )}
                   </button>
                 </div>
               );
             })}
           </div>
         </div>
+      </div>
+    );
+  }
 
-        {/* Payment Selection Bottom Sheet */}
-        <AnimatePresence>
-          {isPaymentSheetOpen && (
-            <>
-              <motion.div 
-                initial={{ opacity: 0 }}
-                animate={{ opacity: 1 }}
-                exit={{ opacity: 0 }}
-                onClick={() => setIsPaymentSheetOpen(false)}
-                className="fixed inset-0 bg-black/80 backdrop-blur-sm z-[200]"
-              />
-              <motion.div 
-                initial={{ y: '100%' }}
-                animate={{ y: 0 }}
-                exit={{ y: '100%' }}
-                transition={{ type: 'spring', damping: 25, stiffness: 200 }}
-                className="fixed bottom-0 left-0 right-0 bg-zinc-900 border-t border-zinc-800 rounded-t-[40px] z-[201] px-6 pt-8 pb-12 space-y-8"
+  if (isViewingPaymentMethods && selectedPlanForPayment) {
+    const selectedPlanUsdPrice = Number(selectedPlanForPayment.usdPrice || 0);
+    const selectedStarsPrice = getPriceInStars(selectedPlanUsdPrice);
+    const selectedTonPrice = getPriceInTon(selectedPlanUsdPrice);
+    return (
+      <div className="fixed inset-0 z-[100] bg-black flex flex-col overflow-hidden">
+          <div className="flex-1 overflow-y-auto no-scrollbar px-5 py-6 space-y-5">
+            <div className="text-center space-y-1 pt-2">
+              <p className="text-lg font-black text-white">Payment Methods</p>
+              <p className="text-xs font-semibold text-zinc-500">Choose your preferred checkout option</p>
+            </div>
+
+            <div className="rounded-3xl border border-zinc-800 bg-zinc-900/60 p-5">
+              <p className="text-[10px] uppercase tracking-[0.2em] font-black text-zinc-500">Selected plan</p>
+              <div className="mt-2 flex items-center justify-between gap-3">
+                <div>
+                  <p className="text-xl font-black text-white">{selectedPlanForPayment.name}</p>
+                  <p className="text-xs font-semibold text-zinc-500">{selectedPlanForPayment.period}</p>
+                </div>
+                <div className="text-right">
+                  <p className="text-base font-black text-white">${selectedPlanUsdPrice.toFixed(2)}</p>
+                  <p className="text-[11px] font-semibold text-zinc-400">{selectedStarsPrice} Stars • {selectedTonPrice} TON</p>
+                </div>
+              </div>
+            </div>
+
+            <div className="space-y-3">
+              <button
+                onClick={handleStarsPayment}
+                className="w-full bg-[#0088cc]/12 border border-[#0088cc]/30 rounded-3xl p-5 flex items-center justify-between group active:scale-[0.98] transition-all"
               >
-                <div className="flex items-center justify-between mb-2">
-                  <div className="space-y-1">
-                    <h3 className="text-xl font-black text-white">Select payment method</h3>
-                    <p className="text-xs font-bold text-zinc-500 tracking-widest">Upgrade to {selectedPlanForPayment?.name}</p>
+                <div className="flex items-center gap-4">
+                  <div className="w-12 h-12 rounded-2xl bg-[#0088cc] flex items-center justify-center">
+                    <StarsIcon className="w-6 h-6 text-white" />
                   </div>
-                  <button 
-                    onClick={() => setIsPaymentSheetOpen(false)}
-                    className="w-10 h-10 bg-zinc-800 rounded-full flex items-center justify-center active:scale-90 transition-all"
-                  >
-                    <X className="w-5 h-5 text-white" />
-                  </button>
+                  <div className="text-left">
+                    <p className="text-base font-black text-white">Telegram Stars</p>
+                    <p className="text-xs font-semibold text-zinc-400">{selectedStarsPrice} Stars • Fast in-app checkout</p>
+                  </div>
                 </div>
+                <ChevronRight className="w-5 h-5 text-[#0088cc]" />
+              </button>
 
-                <div className="space-y-4">
-                  {/* Telegram Stars Option */}
-                  <button 
-                    onClick={handleStarsPayment}
-                    className="w-full bg-[#0088cc]/10 border border-[#0088cc]/20 rounded-[28px] p-6 flex items-center justify-between group active:scale-[0.98] transition-all"
-                  >
-                    <div className="flex items-center gap-5">
-                      <div className="w-14 h-14 rounded-2xl bg-[#0088cc] flex items-center justify-center shadow-[0_0_20px_rgba(0,136,204,0.3)]">
-                        <StarsIcon className="w-7 h-7 text-white" />
-                      </div>
-                      <div className="text-left">
-                        <p className="text-lg font-black text-white">Telegram Stars</p>
-                        <p className="text-sm font-bold text-[#0088cc]">{selectedPlanForPayment?.starsPrice} Stars</p>
-                      </div>
-                    </div>
-                    <ChevronRight className="w-5 h-5 text-zinc-700 group-hover:text-white transition-colors" />
-                  </button>
-
-                  {/* Crypto (TON) Option */}
-                  <button 
-                    onClick={handleTonPayment}
-                    className="w-full bg-[#0098EA]/10 border border-[#0098EA]/20 rounded-[28px] p-6 flex items-center justify-between group active:scale-[0.98] transition-all"
-                  >
-                    <div className="flex items-center gap-5">
-                      <div className="w-14 h-14 rounded-2xl bg-gradient-to-br from-[#0098EA] to-[#0077B5] flex items-center justify-center shadow-[0_0_20px_rgba(0,152,234,0.3)]">
-                        <Wallet className="w-7 h-7 text-white" />
-                      </div>
-                      <div className="text-left">
-                        <p className="text-lg font-black text-white">Pay with Crypto</p>
-                        <p className="text-sm font-bold text-[#0098EA]">{selectedPlanForPayment?.tonPrice} TON</p>
-                      </div>
-                    </div>
-                    <ChevronRight className="w-5 h-5 text-zinc-700 group-hover:text-[#0098EA] transition-colors" />
-                  </button>
-
-                  {/* Lemon Squeezy Option */}
-                  <button 
-                    onClick={handleLemonSqueezyPayment}
-                    className="w-full bg-[#FFC233]/10 border border-[#FFC233]/20 rounded-[28px] p-6 flex items-center justify-between group active:scale-[0.98] transition-all"
-                  >
-                    <div className="flex items-center gap-5">
-                      <div className="w-14 h-14 rounded-2xl bg-[#FFC233] flex items-center justify-center shadow-[0_0_20px_rgba(255,194,51,0.3)]">
-                        <CreditCard className="w-7 h-7 text-black" />
-                      </div>
-                      <div className="text-left">
-                        <p className="text-lg font-black text-white">Credit/Debit Card</p>
-                        <p className="text-sm font-bold text-[#FFC233]">Powered by Lemon Squeezy</p>
-                      </div>
-                    </div>
-                    <ChevronRight className="w-5 h-5 text-zinc-700 group-hover:text-[#FFC233] transition-colors" />
-                  </button>
+              <button
+                onClick={handleTonPayment}
+                className="w-full bg-[#0098EA]/12 border border-[#0098EA]/25 rounded-3xl p-5 flex items-center justify-between group active:scale-[0.98] transition-all"
+              >
+                <div className="flex items-center gap-4">
+                  <div className="w-12 h-12 rounded-2xl bg-gradient-to-br from-[#0098EA] to-[#0077B5] flex items-center justify-center">
+                    <Wallet className="w-6 h-6 text-white" />
+                  </div>
+                  <div className="text-left">
+                    <p className="text-base font-black text-white">TON Wallet</p>
+                    <p className="text-xs font-semibold text-zinc-400">{selectedTonPrice} TON • Pay securely on-chain</p>
+                  </div>
                 </div>
+                <ChevronRight className="w-5 h-5 text-[#0098EA]" />
+              </button>
 
-                <div className="p-4 bg-zinc-800/30 rounded-2xl">
-                  <p className="text-[10px] font-bold text-zinc-500 text-center leading-relaxed">
-                    By clicking Continue, you agree to our Terms of Service. Secure payment processing.
-                  </p>
-                  <button onClick={() => setIsViewingLegal(true)} className="w-full mt-3 py-2 rounded-xl bg-zinc-800 text-[10px] font-black uppercase text-zinc-300">
-                    View Terms & Privacy
-                  </button>
+              <button
+                onClick={handleLemonSqueezyPayment}
+                className="w-full bg-[#FFC233]/10 border border-[#FFC233]/25 rounded-3xl p-5 flex items-center justify-between group active:scale-[0.98] transition-all"
+              >
+                <div className="flex items-center gap-4">
+                  <div className="w-12 h-12 rounded-2xl bg-[#FFC233] flex items-center justify-center">
+                    <CreditCard className="w-6 h-6 text-black" />
+                  </div>
+                  <div className="text-left">
+                    <p className="text-base font-black text-white">Bank Card</p>
+                    <p className="text-xs font-semibold text-zinc-400">${selectedPlanUsdPrice.toFixed(2)} • Powered by Lemon Squeezy</p>
+                  </div>
                 </div>
+                <ChevronRight className="w-5 h-5 text-[#FFC233]" />
+              </button>
+            </div>
 
-                <button 
-                  onClick={() => setIsPaymentSheetOpen(false)}
-                  className="w-full py-4 rounded-2xl bg-zinc-800 text-white font-black text-sm tracking-widest active:scale-[0.98] transition-all"
-                >
-                  Cancel
-                </button>
-              </motion.div>
-            </>
+            <div className="rounded-2xl bg-zinc-900/70 border border-zinc-800 p-4 space-y-3">
+              <p className="text-[11px] font-semibold text-zinc-400 leading-relaxed">
+                We use encrypted providers for secure processing. By continuing, you agree to the Terms and Privacy Policy.
+              </p>
+              <button onClick={() => setIsViewingLegal(true)} className="w-full py-2.5 rounded-xl bg-zinc-800 text-[10px] font-black uppercase text-zinc-200 tracking-wider">
+                View Terms & Privacy
+              </button>
+            </div>
+          </div>
+
+          {paymentProcessing.isLoading && (
+            <div className="fixed inset-0 z-[140] bg-black/80 backdrop-blur-sm flex items-center justify-center px-6">
+              <div className="w-full max-w-sm rounded-3xl bg-zinc-950 border border-zinc-800 p-6 text-center space-y-4">
+                <div className="mx-auto w-12 h-12 border-4 border-zinc-700 border-t-[#ccff00] rounded-full animate-spin" />
+                <p className="text-base font-black text-white">{paymentProcessing.title}</p>
+                <p className="text-xs font-semibold text-zinc-400 leading-relaxed">{paymentProcessing.detail}</p>
+              </div>
+            </div>
           )}
-          </AnimatePresence>
+      </div>
+    );
+  }
+
+  if (isViewingLegal) {
+    return (
+      <div className="fixed inset-0 z-[120] bg-black flex flex-col overflow-hidden">
+        <div className="sticky top-0 z-20 border-b border-zinc-800/70 bg-[#17212b]/95 backdrop-blur-sm">
+          <div className="h-14 px-4 flex items-center justify-between">
+            <button
+              onClick={() => setIsViewingLegal(false)}
+              className="w-9 h-9 rounded-full bg-white/10 flex items-center justify-center active:scale-95 transition-all"
+              aria-label="Back"
+            >
+              <ArrowLeft className="w-4 h-4 text-white" />
+            </button>
+            <p className="text-sm font-bold text-white">Terms & Policies</p>
+            <div className="w-9" />
+          </div>
         </div>
 
-        <AnimatePresence>
-          {isViewingLegal && (
-            <>
-              <motion.div initial={{ opacity: 0 }} animate={{ opacity: 1 }} exit={{ opacity: 0 }} className="fixed inset-0 bg-black/80 z-[220]" onClick={() => setIsViewingLegal(false)} />
-              <motion.div initial={{ y: '100%' }} animate={{ y: 0 }} exit={{ y: '100%' }} className="fixed bottom-0 left-0 right-0 z-[221] bg-zinc-950 border-t border-zinc-800 rounded-t-[32px] p-6 max-h-[82vh] overflow-y-auto no-scrollbar space-y-4">
-                <h3 className="text-lg font-black text-white">Terms & Privacy Policy</h3>
-                <pre className="text-[11px] text-zinc-400 font-semibold leading-relaxed whitespace-pre-wrap bg-zinc-900/50 border border-zinc-800 rounded-2xl p-4">
-                  {legalContent || 'Loading terms and policies...'}
-                </pre>
-                <button onClick={() => setIsViewingLegal(false)} className="w-full py-3 rounded-2xl bg-[#ccff00] text-black text-xs font-black uppercase tracking-widest">Close</button>
-              </motion.div>
-            </>
-          )}
-        </AnimatePresence>
-      </>
+        <div className="flex-1 overflow-y-auto no-scrollbar px-5 py-5">
+          <div className="rounded-3xl border border-zinc-800 bg-zinc-900/70 p-4">
+            <pre className="text-[11px] text-zinc-300 font-semibold leading-relaxed whitespace-pre-wrap">
+              {legalContent || 'Loading terms and policies...'}
+            </pre>
+          </div>
+        </div>
+      </div>
     );
   }
 
@@ -1396,7 +1454,7 @@ export const Profile: React.FC = () => {
 
       <SignUpSheet 
         isOpen={isSignUpOpen} 
-        onClose={() => setIsSignUpOpen(false)} 
+        onClose={() => setIsSignUpOpen(false)}
       />
     </div>
   );
