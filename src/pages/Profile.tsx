@@ -1455,7 +1455,6 @@ export const Profile: React.FC = () => {
       <SignUpSheet 
         isOpen={isSignUpOpen} 
         onClose={() => setIsSignUpOpen(false)}
-        onRegistered={refreshAuthedProfile}
       />
     </div>
   );

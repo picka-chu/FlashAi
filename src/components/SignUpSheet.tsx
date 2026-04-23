@@ -1,6 +1,6 @@
 import React, { useEffect, useRef, useState } from 'react';
 import { motion, AnimatePresence } from 'motion/react';
-import { X, ShieldCheck, Zap, ArrowRight, Sparkles, MessageSquare, FileText } from 'lucide-react';
+import { X, ShieldCheck, Zap, ArrowRight, Sparkles, MessageSquare, FileText, CheckCircle2, Lock } from 'lucide-react';
 import { useTelegram } from '../hooks/useTelegram';
 
 interface SignUpSheetProps {
@@ -9,66 +9,9 @@ interface SignUpSheetProps {
   onRegistered?: () => Promise<void> | void;
 }
 
-export const SignUpSheet: React.FC<SignUpSheetProps> = ({ isOpen, onClose, onRegistered }) => {
+export const SignUpSheet: React.FC<SignUpSheetProps> = ({ isOpen, onClose }) => {
   const { tg, hapticFeedback, initData, showAlert } = useTelegram();
   const [isSubmitting, setIsSubmitting] = useState(false);
-  const pollIntervalRef = useRef<ReturnType<typeof setInterval> | null>(null);
-  const pollTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null);
-
-  const stopRegistrationWatch = () => {
-    if (pollIntervalRef.current) {
-      clearInterval(pollIntervalRef.current);
-      pollIntervalRef.current = null;
-    }
-    if (pollTimeoutRef.current) {
-      clearTimeout(pollTimeoutRef.current);
-      pollTimeoutRef.current = null;
-    }
-  };
-
-  const checkRegistrationStatus = async () => {
-    if (!initData) return false;
-    try {
-      const res = await fetch('/api/auth/me', {
-        headers: { 'X-TG-Init-Data': initData }
-      });
-      const payload = await res.json().catch(() => ({}));
-      if (!res.ok || !payload?.user?.phone) return false;
-
-      localStorage.removeItem('flashai_signup_pending');
-      stopRegistrationWatch();
-      await onRegistered?.();
-      tg?.expand?.();
-      window.location.reload();
-      return true;
-    } catch {
-      return false;
-    }
-  };
-
-  const startRegistrationWatch = () => {
-    localStorage.setItem('flashai_signup_pending', '1');
-    stopRegistrationWatch();
-    pollIntervalRef.current = setInterval(() => {
-      checkRegistrationStatus();
-    }, 2500);
-    pollTimeoutRef.current = setTimeout(() => {
-      stopRegistrationWatch();
-    }, 3 * 60 * 1000);
-  };
-
-  useEffect(() => {
-    const handleVisibility = () => {
-      if (document.visibilityState === 'visible' && localStorage.getItem('flashai_signup_pending') === '1') {
-        checkRegistrationStatus();
-      }
-    };
-    document.addEventListener('visibilitychange', handleVisibility);
-    return () => {
-      document.removeEventListener('visibilitychange', handleVisibility);
-      stopRegistrationWatch();
-    };
-  }, [initData]);
 
   const handleSignUp = async () => {
     if (isSubmitting) return;
@@ -91,14 +34,13 @@ export const SignUpSheet: React.FC<SignUpSheetProps> = ({ isOpen, onClose, onReg
       });
 
       if (response.ok) {
-        onClose();
         const botUsername = (import.meta.env.VITE_TELEGRAM_BOT_USERNAME || 'Deepflashaibot').replace('@', '');
         const signupLink = `https://t.me/${botUsername}?start=signup`;
-
-        // Open bot chat (mini app minimizes in Telegram UI). Watch for registration and auto-refresh when user returns.
+        onClose();
+        // Open signup bot and close mini app so the user can share contact from bot keyboard.
         if (tg?.openTelegramLink) {
           tg.openTelegramLink(signupLink);
-          startRegistrationWatch();
+          setTimeout(() => tg.close?.(), 180);
         } else {
           window.location.href = signupLink;
         }
@@ -139,17 +81,17 @@ export const SignUpSheet: React.FC<SignUpSheetProps> = ({ isOpen, onClose, onReg
             className="fixed bottom-0 left-0 right-0 bg-zinc-950 border-t border-zinc-800/50 rounded-t-[40px] z-[1001] overflow-hidden"
           >
             {/* Top Glow Ornament */}
-            <div className="absolute top-0 left-1/2 -translate-x-1/2 w-32 h-1 bg-[#ccff00] rounded-full opacity-20 blur-sm" />
+            <div className="absolute top-0 left-1/2 -translate-x-1/2 w-40 h-1 bg-[#ccff00] rounded-full opacity-30 blur-sm" />
             
-            <div className="px-6 pt-10 pb-12 space-y-8 relative">
+            <div className="px-6 pt-8 pb-10 space-y-6 relative">
               <div className="flex items-center justify-between">
                 <div className="space-y-1">
                   <div className="inline-flex items-center gap-2 px-3 py-1 rounded-full bg-[#ccff00]/10 border border-[#ccff00]/20 mb-1">
                     <Sparkles className="w-3 h-3 text-[#ccff00]" />
-                    <span className="text-[10px] font-black text-[#ccff00] uppercase tracking-widest">Early Access</span>
+                    <span className="text-[10px] font-black text-[#ccff00] uppercase tracking-widest">Secure Registration</span>
                   </div>
-                  <h3 className="text-2xl font-black text-white leading-tight">Join the elite squad</h3>
-                  <p className="text-xs font-bold text-zinc-500 tracking-wide">Unlock the full power of Flash AI</p>
+                  <h3 className="text-2xl font-black text-white leading-tight">Complete Your Signup</h3>
+                  <p className="text-xs font-bold text-zinc-500 tracking-wide">One quick step in Telegram to activate your account</p>
                 </div>
                 <button 
                   onClick={onClose}
@@ -159,7 +101,18 @@ export const SignUpSheet: React.FC<SignUpSheetProps> = ({ isOpen, onClose, onReg
                 </button>
               </div>
 
-              <div className="space-y-4">
+              <div className="space-y-3">
+                <div className="grid grid-cols-2 gap-2">
+                  <div className="rounded-2xl bg-zinc-900/60 border border-zinc-800 p-3 flex items-center gap-2">
+                    <Lock className="w-4 h-4 text-[#ccff00]" />
+                    <p className="text-[10px] font-black text-zinc-200 uppercase">Private & Secure</p>
+                  </div>
+                  <div className="rounded-2xl bg-zinc-900/60 border border-zinc-800 p-3 flex items-center gap-2">
+                    <CheckCircle2 className="w-4 h-4 text-[#ccff00]" />
+                    <p className="text-[10px] font-black text-zinc-200 uppercase">1-Tap Verify</p>
+                  </div>
+                </div>
+
                 {/* Features List */}
                 <div className="grid grid-cols-1 gap-3">
                   <div className="flex items-center gap-4 p-5 rounded-[28px] bg-zinc-900/50 border border-zinc-800/50 group transition-all hover:border-[#ccff00]/30">
@@ -194,9 +147,12 @@ export const SignUpSheet: React.FC<SignUpSheetProps> = ({ isOpen, onClose, onReg
                 </div>
 
                 {/* Bot Interaction Info */}
-                <div className="bg-[#ccff00]/5 border border-[#ccff00]/10 rounded-[24px] p-4 text-center">
+                <div className="bg-[#ccff00]/5 border border-[#ccff00]/10 rounded-[24px] p-4 text-center space-y-2">
                   <p className="text-[11px] font-bold text-zinc-400 leading-relaxed">
                     Registration requires sharing your <span className="text-[#ccff00]">phone number</span> via Telegram to prevent abuse and ensure fair credit distribution.
+                  </p>
+                  <p className="text-[10px] font-bold text-zinc-500">
+                    When you tap signup, this mini app will close and Telegram bot chat will open.
                   </p>
                 </div>
 
