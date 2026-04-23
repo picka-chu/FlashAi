@@ -1054,39 +1054,160 @@ export const Profile: React.FC = () => {
                     ))}
                   </ul>
 
-                  <button 
+                  <button
+                    type="button"
                     disabled={isCurrent}
                     onClick={() => handleUpgrade(plan)}
-                    className={`w-full py-4 rounded-2xl font-black text-sm tracking-widest transition-all ${
-                      isCurrent 
-                        ? 'bg-zinc-800 text-zinc-500 cursor-default' 
-                        : 'bg-white text-black active:scale-[0.98] hover:bg-[#ccff00]'
+                    className={`w-full py-3.5 rounded-2xl font-black text-sm transition-all flex items-center justify-center gap-2 ${
+                      isCurrent
+                        ? 'bg-zinc-800 text-zinc-500 cursor-default border border-zinc-700'
+                        : 'bg-gradient-to-r from-[#ccff00] to-[#b5e500] text-black active:scale-[0.98] shadow-[0_8px_20px_rgba(204,255,0,0.2)]'
                     }`}
                   >
-                    {isCurrent ? 'Current plan' : 'Choose payment method'}
+                    {isCurrent ? (
+                      <>
+                        <Check className="w-4 h-4" />
+                        Current plan
+                      </>
+                    ) : (
+                      <>
+                        Choose plan
+                        <ChevronRight className="w-4 h-4" />
+                      </>
+                    )}
                   </button>
                 </div>
               );
             })}
           </div>
         </div>
+      </div>
+    );
+  }
+
+  if (isViewingPaymentMethods && selectedPlanForPayment) {
+    const selectedPlanUsdPrice = Number(selectedPlanForPayment.usdPrice || 0);
+    const selectedStarsPrice = getPriceInStars(selectedPlanUsdPrice);
+    const selectedTonPrice = getPriceInTon(selectedPlanUsdPrice);
+    return (
+      <div className="fixed inset-0 z-[100] bg-black flex flex-col overflow-hidden">
+          <div className="sticky top-0 z-20 border-b border-zinc-800/70 bg-[#17212b]/95 backdrop-blur-sm">
+            <div className="h-14 px-4 flex items-center justify-between">
+              <button
+                onClick={() => setIsViewingPaymentMethods(false)}
+                className="w-9 h-9 rounded-full bg-white/10 flex items-center justify-center active:scale-95 transition-all"
+                aria-label="Back"
+              >
+                <ArrowLeft className="w-4 h-4 text-white" />
+              </button>
+              <p className="text-sm font-bold text-white">Payment Method</p>
+              <div className="w-9" />
+            </div>
+          </div>
+
+          <div className="flex-1 overflow-y-auto no-scrollbar px-5 py-6 space-y-5">
+            <div className="rounded-3xl border border-zinc-800 bg-zinc-900/60 p-5">
+              <p className="text-[10px] uppercase tracking-[0.2em] font-black text-zinc-500">Selected plan</p>
+              <div className="mt-2 flex items-center justify-between gap-3">
+                <div>
+                  <p className="text-xl font-black text-white">{selectedPlanForPayment.name}</p>
+                  <p className="text-xs font-semibold text-zinc-500">{selectedPlanForPayment.period}</p>
+                </div>
+                <div className="text-right">
+                  <p className="text-base font-black text-white">${selectedPlanUsdPrice.toFixed(2)}</p>
+                  <p className="text-[11px] font-semibold text-zinc-400">{selectedStarsPrice} Stars • {selectedTonPrice} TON</p>
+                </div>
+              </div>
+            </div>
+
+            <div className="space-y-3">
+              <button
+                onClick={handleStarsPayment}
+                className="w-full bg-[#0088cc]/12 border border-[#0088cc]/30 rounded-3xl p-5 flex items-center justify-between group active:scale-[0.98] transition-all"
+              >
+                <div className="flex items-center gap-4">
+                  <div className="w-12 h-12 rounded-2xl bg-[#0088cc] flex items-center justify-center">
+                    <StarsIcon className="w-6 h-6 text-white" />
+                  </div>
+                  <div className="text-left">
+                    <p className="text-base font-black text-white">Telegram Stars</p>
+                    <p className="text-xs font-semibold text-zinc-400">{selectedStarsPrice} Stars • Fast in-app checkout</p>
+                  </div>
+                </div>
+                <ChevronRight className="w-5 h-5 text-[#0088cc]" />
+              </button>
+
+              <button
+                onClick={handleTonPayment}
+                className="w-full bg-[#0098EA]/12 border border-[#0098EA]/25 rounded-3xl p-5 flex items-center justify-between group active:scale-[0.98] transition-all"
+              >
+                <div className="flex items-center gap-4">
+                  <div className="w-12 h-12 rounded-2xl bg-gradient-to-br from-[#0098EA] to-[#0077B5] flex items-center justify-center">
+                    <Wallet className="w-6 h-6 text-white" />
+                  </div>
+                  <div className="text-left">
+                    <p className="text-base font-black text-white">TON Wallet</p>
+                    <p className="text-xs font-semibold text-zinc-400">{selectedTonPrice} TON • Pay securely on-chain</p>
+                  </div>
+                </div>
+                <ChevronRight className="w-5 h-5 text-[#0098EA]" />
+              </button>
+
+              <button
+                onClick={handleLemonSqueezyPayment}
+                className="w-full bg-[#FFC233]/10 border border-[#FFC233]/25 rounded-3xl p-5 flex items-center justify-between group active:scale-[0.98] transition-all"
+              >
+                <div className="flex items-center gap-4">
+                  <div className="w-12 h-12 rounded-2xl bg-[#FFC233] flex items-center justify-center">
+                    <CreditCard className="w-6 h-6 text-black" />
+                  </div>
+                  <div className="text-left">
+                    <p className="text-base font-black text-white">Bank Card</p>
+                    <p className="text-xs font-semibold text-zinc-400">${selectedPlanUsdPrice.toFixed(2)} • Powered by Lemon Squeezy</p>
+                  </div>
+                </div>
+                <ChevronRight className="w-5 h-5 text-[#FFC233]" />
+              </button>
+            </div>
+
+            <div className="rounded-2xl bg-zinc-900/70 border border-zinc-800 p-4 space-y-3">
+              <p className="text-[11px] font-semibold text-zinc-400 leading-relaxed">
+                We use encrypted providers for secure processing. By continuing, you agree to the Terms and Privacy Policy.
+              </p>
+              <button onClick={() => setIsViewingLegal(true)} className="w-full py-2.5 rounded-xl bg-zinc-800 text-[10px] font-black uppercase text-zinc-200 tracking-wider">
+                View Terms & Privacy
+              </button>
+            </div>
+          </div>
+      </div>
+    );
+  }
+
+  if (isViewingLegal) {
+    return (
+      <div className="fixed inset-0 z-[120] bg-black flex flex-col overflow-hidden">
+        <div className="sticky top-0 z-20 border-b border-zinc-800/70 bg-[#17212b]/95 backdrop-blur-sm">
+          <div className="h-14 px-4 flex items-center justify-between">
+            <button
+              onClick={() => setIsViewingLegal(false)}
+              className="w-9 h-9 rounded-full bg-white/10 flex items-center justify-center active:scale-95 transition-all"
+              aria-label="Back"
+            >
+              <ArrowLeft className="w-4 h-4 text-white" />
+            </button>
+            <p className="text-sm font-bold text-white">Terms & Policies</p>
+            <div className="w-9" />
+          </div>
         </div>
 
-        <AnimatePresence>
-          {isViewingLegal && (
-            <>
-              <motion.div initial={{ opacity: 0 }} animate={{ opacity: 1 }} exit={{ opacity: 0 }} className="fixed inset-0 bg-black/80 z-[220]" onClick={() => setIsViewingLegal(false)} />
-              <motion.div initial={{ y: '100%' }} animate={{ y: 0 }} exit={{ y: '100%' }} className="fixed bottom-0 left-0 right-0 z-[221] bg-zinc-950 border-t border-zinc-800 rounded-t-[32px] p-6 max-h-[82vh] overflow-y-auto no-scrollbar space-y-4">
-                <h3 className="text-lg font-black text-white">Terms & Privacy Policy</h3>
-                <pre className="text-[11px] text-zinc-400 font-semibold leading-relaxed whitespace-pre-wrap bg-zinc-900/50 border border-zinc-800 rounded-2xl p-4">
-                  {legalContent || 'Loading terms and policies...'}
-                </pre>
-                <button onClick={() => setIsViewingLegal(false)} className="w-full py-3 rounded-2xl bg-[#ccff00] text-black text-xs font-black uppercase tracking-widest">Close</button>
-              </motion.div>
-            </>
-          )}
-        </AnimatePresence>
-      </>
+        <div className="flex-1 overflow-y-auto no-scrollbar px-5 py-5">
+          <div className="rounded-3xl border border-zinc-800 bg-zinc-900/70 p-4">
+            <pre className="text-[11px] text-zinc-300 font-semibold leading-relaxed whitespace-pre-wrap">
+              {legalContent || 'Loading terms and policies...'}
+            </pre>
+          </div>
+        </div>
+      </div>
     );
   }
 
