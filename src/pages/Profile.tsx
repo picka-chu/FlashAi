@@ -49,29 +49,31 @@ const PLANS = [
     features: ['3 Daily credits', '1 Bet slip analysis', 'No AI chat after analysis']
   },
   {
-    id: 'weekly',
-    name: 'Weekly',
-    price: '$5.99',
-    starsPrice: 250,
-    tonPrice: 1.5,
-    period: 'per week',
+    id: 'monthly_basic',
+    name: 'Monthly Basic',
+    price: '$8.99',
+    starsPrice: 450,
+    tonPrice: 2.0,
+    period: 'per month',
     icon: ShieldCheck,
     color: 'text-[#ccff00]',
     bgColor: 'bg-[#ccff00]/10',
-    features: ['35 Daily credits', '3 Bet slip analysis', 'Upto 2 bet slip image upload', 'AI chat after analysis'],
-    popular: true
+    features: ['10 Daily credits', '2 Bet slip analysis/day', 'Flash AI Lite (Gemini Flash)', '1 Bundle (1 Safe + 1 Value Bet)', 'AI chat after analysis'],
+    popular: true,
+    aiModel: 'gemini-flash'
   },
   {
-    id: 'monthly',
-    name: 'Monthly',
+    id: 'monthly_pro',
+    name: 'Monthly Pro',
     price: '$14.99',
-    starsPrice: 600,
+    starsPrice: 750,
     tonPrice: 3.5,
     period: 'per month',
     icon: Crown,
     color: 'text-amber-400',
     bgColor: 'bg-amber-400/10',
-    features: ['120 Daily credits', '10 Bet slip analysis', '5+ Image upload limit', 'Unlimited AI chat', 'Deep analysis & Data gathering']
+    features: ['16 Daily credits', '6 Bet slip analysis/day', 'Flash AI Pro (Gemini Pro)', '1 Bundle (2 Safe + 2 Value Bets)', '1-2 Top Pick Accumulator/day', 'Unlimited AI chat'],
+    aiModel: 'gemini-pro'
   }
 ];
 
@@ -416,7 +418,7 @@ export const Profile: React.FC = () => {
     }
 
     try {
-      showAlert(`Genering invoice for ${selectedPlanForPayment.starsPrice} Stars...`);
+      showAlert(`Generating invoice for ${selectedPlanForPayment.starsPrice} Stars...`);
       
       const response = await fetch('/api/payments/create-stars-invoice', {
         method: 'POST',
@@ -428,8 +430,8 @@ export const Profile: React.FC = () => {
           telegramId: user.telegram_id,
           planId: selectedPlanForPayment.id,
           amount: selectedPlanForPayment.starsPrice,
-          title: `Elite ${selectedPlanForPayment.name} Plan`,
-          description: `Unlock high-confidence predictions and analysis for 1 ${selectedPlanForPayment.id === 'weekly' ? 'week' : 'month'}.`
+          title: `Flash AI - ${selectedPlanForPayment.name} Plan`,
+          description: `Unlock premium football predictions with ${selectedPlanForPayment.id === 'monthly_basic' ? 'Flash AI Lite' : 'Flash AI Pro'} for 1 month.`
         }),
       });
 
@@ -453,6 +455,42 @@ export const Profile: React.FC = () => {
     } catch (e: any) {
       console.error('Stars Payment error:', e);
       showAlert('Failed to initiate Stars payment: ' + (e.message || 'Unknown error'));
+    }
+  };
+
+  const handleLemonSqueezyPayment = async () => {
+    hapticFeedback('medium');
+    if (!selectedPlanForPayment || !user) return;
+    setIsPaymentSheetOpen(false);
+
+    try {
+      // Get Lemon Squeezy checkout URL from backend
+      const response = await fetch('/api/payments/create-lemonsqueezy-checkout', {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          'X-TG-Init-Data': initData || ''
+        },
+        body: JSON.stringify({
+          telegramId: user.telegram_id,
+          planId: selectedPlanForPayment.id,
+          planName: selectedPlanForPayment.name,
+          price: selectedPlanForPayment.price,
+        }),
+      });
+
+      const data = await response.json();
+
+      if (data.checkoutUrl) {
+        // Open Lemon Squeezy checkout in browser/webview
+        window.open(data.checkoutUrl, '_blank');
+        showAlert('Redirecting to secure checkout...');
+      } else {
+        throw new Error(data.error || 'Failed to create checkout session');
+      }
+    } catch (e: any) {
+      console.error('Lemon Squeezy Payment error:', e);
+      showAlert('Failed to initiate payment: ' + (e.message || 'Unknown error'));
     }
   };
 
@@ -1078,27 +1116,44 @@ export const Profile: React.FC = () => {
                     <ChevronRight className="w-5 h-5 text-zinc-700 group-hover:text-white transition-colors" />
                   </button>
 
-                  {/* TON Blockchain Option */}
+                  {/* Crypto (TON) Option */}
                   <button 
                     onClick={handleTonPayment}
-                    className="w-full bg-[#ccff00]/5 border border-[#ccff00]/10 rounded-[28px] p-6 flex items-center justify-between group active:scale-[0.98] transition-all"
+                    className="w-full bg-[#0098EA]/10 border border-[#0098EA]/20 rounded-[28px] p-6 flex items-center justify-between group active:scale-[0.98] transition-all"
                   >
                     <div className="flex items-center gap-5">
-                      <div className="w-14 h-14 rounded-2xl bg-[#ccff00] flex items-center justify-center shadow-[0_0_20px_rgba(204,255,0,0.3)]">
-                        <Wallet className="w-7 h-7 text-black" />
+                      <div className="w-14 h-14 rounded-2xl bg-gradient-to-br from-[#0098EA] to-[#0077B5] flex items-center justify-center shadow-[0_0_20px_rgba(0,152,234,0.3)]">
+                        <Wallet className="w-7 h-7 text-white" />
                       </div>
                       <div className="text-left">
-                        <p className="text-lg font-black text-white">TON Blockchain</p>
-                        <p className="text-sm font-bold text-[#ccff00]">{selectedPlanForPayment?.tonPrice} TON</p>
+                        <p className="text-lg font-black text-white">Pay with Crypto</p>
+                        <p className="text-sm font-bold text-[#0098EA]">{selectedPlanForPayment?.tonPrice} TON</p>
                       </div>
                     </div>
-                    <ChevronRight className="w-5 h-5 text-zinc-700 group-hover:text-[#ccff00] transition-colors" />
+                    <ChevronRight className="w-5 h-5 text-zinc-700 group-hover:text-[#0098EA] transition-colors" />
+                  </button>
+
+                  {/* Lemon Squeezy Option */}
+                  <button 
+                    onClick={handleLemonSqueezyPayment}
+                    className="w-full bg-[#FFC233]/10 border border-[#FFC233]/20 rounded-[28px] p-6 flex items-center justify-between group active:scale-[0.98] transition-all"
+                  >
+                    <div className="flex items-center gap-5">
+                      <div className="w-14 h-14 rounded-2xl bg-[#FFC233] flex items-center justify-center shadow-[0_0_20px_rgba(255,194,51,0.3)]">
+                        <CreditCard className="w-7 h-7 text-black" />
+                      </div>
+                      <div className="text-left">
+                        <p className="text-lg font-black text-white">Credit/Debit Card</p>
+                        <p className="text-sm font-bold text-[#FFC233]">Powered by Lemon Squeezy</p>
+                      </div>
+                    </div>
+                    <ChevronRight className="w-5 h-5 text-zinc-700 group-hover:text-[#FFC233] transition-colors" />
                   </button>
                 </div>
 
                 <div className="p-4 bg-zinc-800/30 rounded-2xl">
                   <p className="text-[10px] font-bold text-zinc-500 text-center leading-relaxed">
-                    By clicking Continue, you agree to our Terms of Service. Payments via TON require a connected wallet.
+                    By clicking Continue, you agree to our Terms of Service. Secure payment processing.
                   </p>
                   <button onClick={() => setIsViewingLegal(true)} className="w-full mt-3 py-2 rounded-xl bg-zinc-800 text-[10px] font-black uppercase text-zinc-300">
                     View Terms & Privacy

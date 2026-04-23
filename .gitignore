@@ -17,55 +17,86 @@ env/
 venv/
 .venv/
 .ENV
-.python-version
-pip-log.txt
-pip-delete-this-directory.txt
-.tox/
-.coverage
-.coverage.*
-.cache
-nosetests.xml
-coverage.xml
-*.cover
-*.log
-.git/modules/
-*.sublime-workspace
-.pytest_cache/
-.mypy_cache/
-.hypothesis/
-
-# Environment
 .env
 .env.local
 .env.*
-!.env.example
+.venv/
+venv/
+ENV/
+env.bak/
+venv.bak/
 
-# Editors
+# Logs
+*.log
+
+# OS generated files
+.DS_Store
+.DS_Store?
+._*
+.Spotlight-V100
+.Trashes
+ehthumbs.db
+Thumbs.db
+
+# IDE
 .vscode/
 .idea/
 *.swp
 *.swo
-*~
-.DS_Store
-Thumbs.db
-
-# Logs
-*.log
 
 # Coverage
 coverage/
 htmlcov/
 .coverage
+
+# Temporary files
+*.tmp
+*.temp
+*.bak
+
+# Compressed files
+*.zip
+*.gz
+*.tar
+*.tgz
+*.bz2
+*.xz
+*.7z
+*.rar
+*.zst
+*.lz4
+*.lzh
+*.cab
+*.arj
+*.rpm
+*.deb
+*.Z
+*.lz
+*.lzo
+*.tar.gz
+*.tar.bz2
+*.tar.xz
+*.tar.zst
+
+# MyPy
+.mypy_cache/
+.dmypy.json
+dmypy.json
+
+# PyTest
 .pytest_cache/
-```
 
-Wait, let me reconsider this. The only modified file is `src/components/SignUpSheet.tsx` which is a TypeScript React component file. This appears to be source code, not build artifacts or dependencies. Looking at the change list again:
+# Gradle
+.gradle/
 
-- Only `src/components/SignUpSheet.tsx` was modified
-- No build artifacts, dependency directories, or temporary files were mentioned in the changes
-
-Since this appears to be pure source code modification without any build artifacts or dependencies, I should output an empty .gitignore per rule #6.
-
-```gitignore
-
+# Compiled files
+*.class
+*.o
+*.so
+*.a
+*.obj
+*.out
+*.exe
+*.dll
+*.dylib
 ```
