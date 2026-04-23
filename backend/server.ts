@@ -34,11 +34,19 @@ const supabase = createClient(supabaseUrl, supabaseKey);
 console.log("✅ Supabase service role key initialized for backend operations.");
 
 const PLAN_CREDITS: Record<string, number> = {
-  free: 0,
-  weekly: 35,
-  monthly: 120,
+  free: 3,
+  monthly_basic: 10,
+  monthly_pro: 16,
   admin: 0,
 };
+
+const PLAN_DAILY_LIMITS: Record<string, { credits: number; betSlipAnalysis: number }> = {
+  free: { credits: 3, betSlipAnalysis: 1 },
+  monthly_basic: { credits: 10, betSlipAnalysis: 2 },
+  monthly_pro: { credits: 16, betSlipAnalysis: 6 },
+  admin: { credits: 999, betSlipAnalysis: 999 },
+};
+
 const signupCreditsRaw = Number(process.env.SIGNUP_CREDITS ?? 3);
 const signupCredits = Number.isFinite(signupCreditsRaw) && signupCreditsRaw >= 0 ? Math.floor(signupCreditsRaw) : 3;
 
@@ -47,8 +55,7 @@ function getPlanCreditAllocation(planId: string) {
 }
 
 function getPlanDurationDays(planId: string): number {
-  if (planId === "weekly") return 7;
-  if (planId === "monthly") return 30;
+  if (planId === "monthly_basic" || planId === "monthly_pro") return 30;
   return 0;
 }
 
@@ -554,6 +561,75 @@ async function startServer() {
       return c.text(content);
     } catch (error: any) {
       return c.text("Terms are temporarily unavailable.", 500);
+    }
+  });
+
+  // Lemon Squeezy Webhook Endpoint
+  app.post("/api/payments/lemonsqueezy-webhook", async (c) => {
+    try {
+      const body = await c.req.json();
+      const eventName = body.meta?.event_name;
+      
+      if (!eventName) {
+        return c.json({ error: "Invalid webhook payload" }, 400);
+      }
+
+      // Verify webhook signature
+      const LEMONSQUEEZY_WEBHOOK_SECRET = process.env.LEMONSQUEEZY_WEBHOOK_SECRET;
+      if (LEMONSQUEEZY_WEBHOOK_SECRET) {
+        const signature = c.req.header("X-Signature");
+        if (!signature) {
+          return c.json({ error: "Missing signature" }, 401);
+        }
+        
+        const crypto = await import('crypto');
+        const hmac = crypto.createHmac('sha256', LEMONSQUEEZY_WEBHOOK_SECRET);
+        const rawBody = JSON.stringify(body);
+        const digest = hmac.update(rawBody).digest('hex');
+        
+        if (signature !== digest) {
+          return c.json({ error: "Invalid signature" }, 401);
+        }
+      }
+
+      // Handle order completed event
+      if (eventName === 'order_created' || eventName === 'payment_success') {
+        const orderData = body.data?.attributes;
+        const customData = orderData?.custom;
+        
+        if (!customData?.telegram_id || !customData?.plan_id) {
+          console.error("Lemon Squeezy webhook: Missing telegram_id or plan_id in custom data");
+          return c.json({ received: true });
+        }
+
+        const telegramId = Number(customData.telegram_id);
+        const planId = customData.plan_id;
+
+        // Apply plan credits
+        await applyPlanCredits(telegramId, planId);
+
+        // Log transaction
+        await supabase.from('transactions').insert({
+          telegram_id: telegramId,
+          amount: orderData?.total || 0,
+          currency: 'USD',
+          status: 'completed',
+          provider_payment_charge_id: String(orderData?.id || ''),
+          type: 'lemonsqueezy'
+        });
+
+        // Notify user via bot
+        if (bot) {
+          await bot.telegram.sendMessage(telegramId, `✅ Payment received! Your account has been upgraded to ${planId.toUpperCase()} plan.`);
+        }
+
+        console.log(`Lemon Squeezy payment processed for user ${telegramId}, plan ${planId}`);
+      }
+
+      return c.json({ received: true });
+    } catch (e: any) {
+      console.error("Lemon Squeezy webhook error:", e.message);
+      return c.json({ error: "Webhook processing failed" }, 500);
     }
   });
 
@@ -1627,6 +1703,93 @@ async function startServer() {
     } catch (e: any) {
       console.error("Create invoice error:", e.message);
       return c.json({ error: "Failed to create invoice link" }, 500);
+    }
+  });
+
+  // Lemon Squeezy Checkout Endpoint
+  app.post("/api/payments/create-lemonsqueezy-checkout", async (c) => {
+    const initData = c.req.header("X-TG-Init-Data");
+    if (!isPlaceholderToken && botToken && (!initData || !validateTelegramInitData(initData, botToken))) {
+      return c.json({ error: "Invalid Telegram authentication" }, 401);
+    }
+
+    try {
+      const { telegramId, planId, planName, price } = await c.req.json();
+      
+      if (!telegramId || !planId) {
+        return c.json({ error: "Missing required parameters" }, 400);
+      }
+
+      // Map plan IDs to Lemon Squeezy variant IDs
+      const LEMONSQUEEZY_STORE_ID = process.env.LEMONSQUEEZY_STORE_ID;
+      const LEMONSQUEEZY_API_KEY = process.env.LEMONSQUEEZY_API_KEY;
+
+      if (!LEMONSQUEEZY_STORE_ID || !LEMONSQUEEZY_API_KEY) {
+        // Fallback: Generate a payment link with user info for manual verification
+        const checkoutUrl = `https://flashai-payment.vercel.app/checkout?plan=${planId}&tg_id=${telegramId}`;
+        return c.json({ checkoutUrl });
+      }
+
+      // Map plan IDs to product/variant IDs in Lemon Squeezy
+      const VARIANT_MAP: Record<string, string> = {
+        'monthly_basic': process.env.LEMONSQUEEZY_VARIANT_MONTHLY_BASIC || 'monthly-basic',
+        'monthly_pro': process.env.LEMONSQUEEZY_VARIANT_MONTHLY_PRO || 'monthly-pro',
+      };
+
+      const variantId = VARIANT_MAP[planId] || planId;
+
+      // Create Lemon Squeezy checkout
+      const response = await fetch(`https://api.lemonsqueezy.com/v1/checkouts`, {
+        method: 'POST',
+        headers: {
+          'Authorization': `Bearer ${LEMONSQUEEZY_API_KEY}`,
+          'Content-Type': 'application/json',
+          'Accept': 'application/vnd.api+json',
+        },
+        body: JSON.stringify({
+          data: {
+            type: 'checkouts',
+            attributes: {
+              checkout_data: {
+                custom: {
+                  telegram_id: String(telegramId),
+                  plan_id: planId,
+                },
+              },
+            },
+            relationships: {
+              store: {
+                data: {
+                  type: 'stores',
+                  id: LEMONSQUEEZY_STORE_ID,
+                },
+              },
+              variant: {
+                data: {
+                  type: 'variants',
+                  id: variantId,
+                },
+              },
+            },
+          },
+        }),
+      });
+
+      if (!response.ok) {
+        throw new Error('Failed to create Lemon Squeezy checkout');
+      }
+
+      const result = await response.json();
+      const checkoutUrl = result.data?.attributes?.url;
+
+      if (!checkoutUrl) {
+        throw new Error('No checkout URL returned from Lemon Squeezy');
+      }
+
+      return c.json({ checkoutUrl });
+    } catch (e: any) {
+      console.error("Lemon Squeezy checkout error:", e.message);
+      return c.json({ error: "Failed to create checkout session" }, 500);
     }
   });
 

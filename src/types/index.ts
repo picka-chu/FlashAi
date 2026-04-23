@@ -1,4 +1,4 @@
-export type UserPlan = 'free' | 'weekly' | 'monthly' | 'pro' | 'vip';
+export type UserPlan = 'free' | 'monthly_basic' | 'monthly_pro' | 'admin';
 
 export interface UserProfile {
   id: string;
