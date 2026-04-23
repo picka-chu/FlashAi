@@ -348,6 +348,7 @@ export const Profile: React.FC = () => {
   const handleUpgrade = (plan: any) => {
     hapticFeedback('medium');
     setSelectedPlanForPayment(plan);
+    setIsViewingSubscriptions(false);
     setIsViewingPaymentMethods(true);
   };
 
