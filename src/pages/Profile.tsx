@@ -998,9 +998,8 @@ export const Profile: React.FC = () => {
 
   if (isViewingSubscriptions) {
     return (
-      <>
-        <div className="fixed inset-0 z-[100] bg-black flex flex-col overflow-hidden">
-          <div className="flex-1 overflow-y-auto no-scrollbar px-6 py-8 space-y-8">
+      <div className="fixed inset-0 z-[100] bg-black flex flex-col overflow-hidden">
+        <div className="flex-1 overflow-y-auto no-scrollbar px-6 py-8 space-y-8">
           <div className="text-center space-y-2">
             <h1 className="text-3xl font-black text-white tracking-tight">Upgrade Plan</h1>
             <p className="text-zinc-500 text-sm font-bold">Choose the best plan for your success</p>
@@ -1096,8 +1095,7 @@ export const Profile: React.FC = () => {
     const selectedStarsPrice = getPriceInStars(selectedPlanUsdPrice);
     const selectedTonPrice = getPriceInTon(selectedPlanUsdPrice);
     return (
-      <>
-        <div className="fixed inset-0 z-[100] bg-black flex flex-col overflow-hidden">
+      <div className="fixed inset-0 z-[100] bg-black flex flex-col overflow-hidden">
           <div className="sticky top-0 z-20 border-b border-zinc-800/70 bg-[#17212b]/95 backdrop-blur-sm">
             <div className="h-14 px-4 flex items-center justify-between">
               <button
@@ -1186,23 +1184,35 @@ export const Profile: React.FC = () => {
               </button>
             </div>
           </div>
+      </div>
+    );
+  }
+
+  if (isViewingLegal) {
+    return (
+      <div className="fixed inset-0 z-[120] bg-black flex flex-col overflow-hidden">
+        <div className="sticky top-0 z-20 border-b border-zinc-800/70 bg-[#17212b]/95 backdrop-blur-sm">
+          <div className="h-14 px-4 flex items-center justify-between">
+            <button
+              onClick={() => setIsViewingLegal(false)}
+              className="w-9 h-9 rounded-full bg-white/10 flex items-center justify-center active:scale-95 transition-all"
+              aria-label="Back"
+            >
+              <ArrowLeft className="w-4 h-4 text-white" />
+            </button>
+            <p className="text-sm font-bold text-white">Terms & Policies</p>
+            <div className="w-9" />
+          </div>
         </div>
 
-        <AnimatePresence>
-          {isViewingLegal && (
-            <>
-              <motion.div initial={{ opacity: 0 }} animate={{ opacity: 1 }} exit={{ opacity: 0 }} className="fixed inset-0 bg-black/80 z-[220]" onClick={() => setIsViewingLegal(false)} />
-              <motion.div initial={{ y: '100%' }} animate={{ y: 0 }} exit={{ y: '100%' }} className="fixed bottom-0 left-0 right-0 z-[221] bg-zinc-950 border-t border-zinc-800 rounded-t-[32px] p-6 max-h-[82vh] overflow-y-auto no-scrollbar space-y-4">
-                <h3 className="text-lg font-black text-white">Terms & Privacy Policy</h3>
-                <pre className="text-[11px] text-zinc-400 font-semibold leading-relaxed whitespace-pre-wrap bg-zinc-900/50 border border-zinc-800 rounded-2xl p-4">
-                  {legalContent || 'Loading terms and policies...'}
-                </pre>
-                <button onClick={() => setIsViewingLegal(false)} className="w-full py-3 rounded-2xl bg-[#ccff00] text-black text-xs font-black uppercase tracking-widest">Close</button>
-              </motion.div>
-            </>
-          )}
-        </AnimatePresence>
-      </>
+        <div className="flex-1 overflow-y-auto no-scrollbar px-5 py-5">
+          <div className="rounded-3xl border border-zinc-800 bg-zinc-900/70 p-4">
+            <pre className="text-[11px] text-zinc-300 font-semibold leading-relaxed whitespace-pre-wrap">
+              {legalContent || 'Loading terms and policies...'}
+            </pre>
+          </div>
+        </div>
+      </div>
     );
   }
 
