@@ -41,6 +41,7 @@ const PLANS = [
   {
     id: 'free',
     name: 'Free',
+    usdPrice: 0,
     price: '$0',
     period: 'forever',
     icon: Zap,
@@ -51,9 +52,8 @@ const PLANS = [
   {
     id: 'monthly_basic',
     name: 'Monthly Basic',
+    usdPrice: 8.99,
     price: '$8.99',
-    starsPrice: 450,
-    tonPrice: 2.0,
     period: 'per month',
     icon: ShieldCheck,
     color: 'text-[#ccff00]',
@@ -65,9 +65,8 @@ const PLANS = [
   {
     id: 'monthly_pro',
     name: 'Monthly Pro',
+    usdPrice: 14.99,
     price: '$14.99',
-    starsPrice: 750,
-    tonPrice: 3.5,
     period: 'per month',
     icon: Crown,
     color: 'text-amber-400',
@@ -76,6 +75,12 @@ const PLANS = [
     aiModel: 'gemini-pro'
   }
 ];
+
+const USD_TO_STARS_RATE = 50; // 1 USD ≈ 50 Telegram Stars
+const USD_TO_TON_RATE = Number(import.meta.env.VITE_USD_TO_TON_RATE || 0.23); // configurable market approximation
+
+const getPriceInStars = (usdPrice: number) => Math.ceil(usdPrice * USD_TO_STARS_RATE);
+const getPriceInTon = (usdPrice: number) => Number((usdPrice * USD_TO_TON_RATE).toFixed(2));
 
 
 export const Profile: React.FC = () => {
@@ -349,6 +354,7 @@ export const Profile: React.FC = () => {
   const handleTonPayment = async () => {
     hapticFeedback('medium');
     if (!selectedPlanForPayment || !user) return;
+    const tonPrice = getPriceInTon(Number(selectedPlanForPayment.usdPrice || 0));
     const tonReceiver = import.meta.env.VITE_TON_RECEIVER_ADDRESS || '';
     if (!tonReceiver) {
       showAlert('TON payments are temporarily unavailable. Missing receiver configuration.');
@@ -367,7 +373,7 @@ export const Profile: React.FC = () => {
         messages: [
           {
             address: tonReceiver,
-            amount: (selectedPlanForPayment.tonPrice * 1e9).toString(), // nanoTON
+            amount: (tonPrice * 1e9).toString(), // nanoTON
             payload: btoa(`plan:${selectedPlanForPayment.id}:user:${user.telegram_id}`) // Memo for tracking
           },
         ],
@@ -387,7 +393,7 @@ export const Profile: React.FC = () => {
           telegramId: user.telegram_id,
           planId: selectedPlanForPayment.id,
           boc: result.boc,
-          amount: selectedPlanForPayment.tonPrice
+          amount: tonPrice
         })
       });
 
@@ -408,6 +414,7 @@ export const Profile: React.FC = () => {
   const handleStarsPayment = async () => {
     hapticFeedback('medium');
     if (!selectedPlanForPayment || !user) return;
+    const starsPrice = getPriceInStars(Number(selectedPlanForPayment.usdPrice || 0));
     
     if (!tg || !user) {
       showAlert('Telegram environment or user not detected.');
@@ -415,7 +422,7 @@ export const Profile: React.FC = () => {
     }
 
     try {
-      showAlert(`Generating invoice for ${selectedPlanForPayment.starsPrice} Stars...`);
+      showAlert(`Generating invoice for ${starsPrice} Stars...`);
       
       const response = await fetch('/api/payments/create-stars-invoice', {
         method: 'POST',
@@ -426,7 +433,7 @@ export const Profile: React.FC = () => {
         body: JSON.stringify({
           telegramId: user.telegram_id,
           planId: selectedPlanForPayment.id,
-          amount: selectedPlanForPayment.starsPrice,
+          amount: starsPrice,
           title: `Flash AI - ${selectedPlanForPayment.name} Plan`,
           description: `Unlock premium football predictions with ${selectedPlanForPayment.id === 'monthly_basic' ? 'Flash AI Lite' : 'Flash AI Pro'} for 1 month.`
         }),
@@ -1003,6 +1010,8 @@ export const Profile: React.FC = () => {
             {PLANS.map((plan) => {
               const isCurrent = user?.plan === plan.id;
               const Icon = plan.icon;
+              const planStarsPrice = getPriceInStars(Number(plan.usdPrice || 0));
+              const planTonPrice = getPriceInTon(Number(plan.usdPrice || 0));
 
               return (
                 <div 
@@ -1030,8 +1039,8 @@ export const Profile: React.FC = () => {
                         <p className="text-2xl font-black text-white">{plan.price}</p>
                       ) : (
                         <div className="flex flex-col items-end">
-                          <p className="text-2xl font-black text-[#ccff00]">{plan.tonPrice} TON</p>
-                          <p className="text-[10px] font-bold text-zinc-500 mt-1">{plan.starsPrice} Stars</p>
+                          <p className="text-2xl font-black text-white">${Number(plan.usdPrice).toFixed(2)}</p>
+                          <p className="text-[10px] font-bold text-zinc-500 mt-1">{planStarsPrice} Stars • {planTonPrice} TON</p>
                         </div>
                       )}
                     </div>
@@ -1083,6 +1092,9 @@ export const Profile: React.FC = () => {
   }
 
   if (isViewingPaymentMethods && selectedPlanForPayment) {
+    const selectedPlanUsdPrice = Number(selectedPlanForPayment.usdPrice || 0);
+    const selectedStarsPrice = getPriceInStars(selectedPlanUsdPrice);
+    const selectedTonPrice = getPriceInTon(selectedPlanUsdPrice);
     return (
       <>
         <div className="fixed inset-0 z-[100] bg-black flex flex-col overflow-hidden">
@@ -1109,8 +1121,8 @@ export const Profile: React.FC = () => {
                   <p className="text-xs font-semibold text-zinc-500">{selectedPlanForPayment.period}</p>
                 </div>
                 <div className="text-right">
-                  <p className="text-base font-black text-[#ccff00]">{selectedPlanForPayment.tonPrice} TON</p>
-                  <p className="text-[11px] font-semibold text-[#0088cc]">{selectedPlanForPayment.starsPrice} Stars</p>
+                  <p className="text-base font-black text-white">${selectedPlanUsdPrice.toFixed(2)}</p>
+                  <p className="text-[11px] font-semibold text-zinc-400">{selectedStarsPrice} Stars • {selectedTonPrice} TON</p>
                 </div>
               </div>
             </div>
@@ -1126,7 +1138,7 @@ export const Profile: React.FC = () => {
                   </div>
                   <div className="text-left">
                     <p className="text-base font-black text-white">Telegram Stars</p>
-                    <p className="text-xs font-semibold text-zinc-400">Fast in-app checkout</p>
+                    <p className="text-xs font-semibold text-zinc-400">{selectedStarsPrice} Stars • Fast in-app checkout</p>
                   </div>
                 </div>
                 <ChevronRight className="w-5 h-5 text-[#0088cc]" />
@@ -1142,7 +1154,7 @@ export const Profile: React.FC = () => {
                   </div>
                   <div className="text-left">
                     <p className="text-base font-black text-white">TON Wallet</p>
-                    <p className="text-xs font-semibold text-zinc-400">Pay securely on-chain</p>
+                    <p className="text-xs font-semibold text-zinc-400">{selectedTonPrice} TON • Pay securely on-chain</p>
                   </div>
                 </div>
                 <ChevronRight className="w-5 h-5 text-[#0098EA]" />
@@ -1158,7 +1170,7 @@ export const Profile: React.FC = () => {
                   </div>
                   <div className="text-left">
                     <p className="text-base font-black text-white">Bank Card</p>
-                    <p className="text-xs font-semibold text-zinc-400">Powered by Lemon Squeezy</p>
+                    <p className="text-xs font-semibold text-zinc-400">${selectedPlanUsdPrice.toFixed(2)} • Powered by Lemon Squeezy</p>
                   </div>
                 </div>
                 <ChevronRight className="w-5 h-5 text-[#FFC233]" />
