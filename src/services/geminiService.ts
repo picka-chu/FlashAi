@@ -15,23 +15,69 @@ const PREDICTION_MODELS = [
 ];
 
 function parseJsonFromText(text: string) {
+  const extractBalancedJson = (input: string): string | null => {
+    const startCandidates = [input.indexOf('{'), input.indexOf('[')].filter((v) => v >= 0);
+    if (!startCandidates.length) return null;
+    const start = Math.min(...startCandidates);
+    const opener = input[start];
+    const closer = opener === '{' ? '}' : ']';
+    let depth = 0;
+    let inString = false;
+    let escaped = false;
+
+    for (let i = start; i < input.length; i++) {
+      const ch = input[i];
+      if (inString) {
+        if (escaped) {
+          escaped = false;
+        } else if (ch === '\\') {
+          escaped = true;
+        } else if (ch === '"') {
+          inString = false;
+        }
+        continue;
+      }
+
+      if (ch === '"') {
+        inString = true;
+      } else if (ch === opener) {
+        depth += 1;
+      } else if (ch === closer) {
+        depth -= 1;
+        if (depth === 0) return input.slice(start, i + 1);
+      }
+    }
+    return null;
+  };
+
   try {
-    if (typeof text === 'object') return text;
-    const start = text.indexOf('{');
-    const startBracket = text.indexOf('[');
-    let s = -1;
-    let e = -1;
-    if (start !== -1 && (startBracket === -1 || start < startBracket)) {
-      s = start;
-      e = text.lastIndexOf('}');
-    } else if (startBracket !== -1) {
-      s = startBracket;
-      e = text.lastIndexOf(']');
+    if (typeof text === 'object' && text !== null) return text;
+    const normalized = String(text || '')
+      .replace(/\u00a0/g, ' ')
+      .replace(/\uFEFF/g, '')
+      .trim();
+    if (!normalized) return null;
+
+    // 1) Direct parse
+    try {
+      return JSON.parse(normalized);
+    } catch {}
+
+    // 2) Parse fenced markdown JSON
+    const fenced = normalized.match(/```(?:json)?\s*([\s\S]*?)\s*```/i)?.[1]?.trim();
+    if (fenced) {
+      try {
+        return JSON.parse(fenced);
+      } catch {}
     }
-    if (s !== -1 && e !== -1) {
-      return JSON.parse(text.substring(s, e + 1));
+
+    // 3) Parse first balanced JSON fragment in the text
+    const balanced = extractBalancedJson(normalized);
+    if (balanced) {
+      return JSON.parse(balanced);
     }
-    return JSON.parse(text.replace(/```json\n?|```/g, "").trim());
+
+    return null;
   } catch (e) {
     console.error("Parse error: Could not parse JSON from text. Raw text:", text);
     return null;

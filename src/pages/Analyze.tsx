@@ -160,6 +160,17 @@ export const Analyze: React.FC<{ onTabChange?: (tab: string) => void }> = ({ onT
     setImages(prev => prev.filter((_, i) => i !== index));
   };
 
+  const handleRetryAnalysis = () => {
+    hapticFeedback('medium');
+    if (selectedMatch) {
+      setError(null);
+      setAnalysisResult(null);
+      setIsAnalyzing(true);
+      return;
+    }
+    handleSend();
+  };
+
   const handleSend = async () => {
     if (!input.trim() && images.length === 0 && !selectedMatch) return;
 
@@ -382,10 +393,18 @@ export const Analyze: React.FC<{ onTabChange?: (tab: string) => void }> = ({ onT
                     <motion.div
                       initial={{ opacity: 0, y: -10 }}
                       animate={{ opacity: 1, y: 0 }}
-                      className="bg-red-500/10 border border-red-500/20 rounded-2xl p-4 flex items-center gap-3"
+                      className="bg-red-500/10 border border-red-500/20 rounded-2xl p-4 space-y-3"
                     >
-                      <AlertCircle className="w-4 h-4 text-red-500" />
-                      <p className="text-xs font-bold text-red-500">{error}</p>
+                      <div className="flex items-center gap-3">
+                        <AlertCircle className="w-4 h-4 text-red-500 shrink-0" />
+                        <p className="text-xs font-bold text-red-500">{error}</p>
+                      </div>
+                      <button
+                        onClick={handleRetryAnalysis}
+                        className="w-full py-2.5 rounded-xl bg-red-500/20 border border-red-500/30 text-red-300 text-[11px] font-black tracking-wider active:scale-[0.99] transition-all"
+                      >
+                        Try Again
+                      </button>
                     </motion.div>
                   )}
 
