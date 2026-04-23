@@ -567,7 +567,8 @@ async function startServer() {
   // Lemon Squeezy Webhook Endpoint
   app.post("/api/payments/lemonsqueezy-webhook", async (c) => {
     try {
-      const body = await c.req.json();
+      const rawBody = await c.req.raw.text();
+      const body = JSON.parse(rawBody);
       const eventName = body.meta?.event_name;
       
       if (!eventName) {
@@ -584,16 +585,19 @@ async function startServer() {
         
         const crypto = await import('crypto');
         const hmac = crypto.createHmac('sha256', LEMONSQUEEZY_WEBHOOK_SECRET);
-        const rawBody = JSON.stringify(body);
         const digest = hmac.update(rawBody).digest('hex');
         
-        if (signature !== digest) {
+        const provided = Buffer.from(signature, 'utf8');
+        const expected = Buffer.from(digest, 'utf8');
+        const isValidSignature = provided.length === expected.length && crypto.timingSafeEqual(provided, expected);
+
+        if (!isValidSignature) {
           return c.json({ error: "Invalid signature" }, 401);
         }
       }
 
       // Handle order completed event
-      if (eventName === 'order_created' || eventName === 'payment_success') {
+      if (['order_created', 'order_paid', 'subscription_payment_success'].includes(eventName)) {
         const orderData = body.data?.attributes;
         const customData = orderData?.custom;
         
@@ -604,6 +608,24 @@ async function startServer() {
 
         const telegramId = Number(customData.telegram_id);
         const planId = customData.plan_id;
+        const paymentRef = String(orderData?.identifier || orderData?.order_number || body.data?.id || '');
+
+        if (!paymentRef) {
+          console.error("Lemon Squeezy webhook: Missing payment reference");
+          return c.json({ received: true });
+        }
+
+        // Idempotency guard: skip already-processed events
+        const { data: existingTx } = await supabase
+          .from('transactions')
+          .select('id')
+          .eq('provider_payment_charge_id', paymentRef)
+          .eq('type', 'lemonsqueezy')
+          .maybeSingle();
+
+        if (existingTx?.id) {
+          return c.json({ received: true, duplicate: true });
+        }
 
         // Apply plan credits
         await applyPlanCredits(telegramId, planId);
@@ -614,7 +636,7 @@ async function startServer() {
           amount: orderData?.total || 0,
           currency: 'USD',
           status: 'completed',
-          provider_payment_charge_id: String(orderData?.id || ''),
+          provider_payment_charge_id: paymentRef,
           type: 'lemonsqueezy'
         });
 
@@ -1750,7 +1772,13 @@ async function startServer() {
           data: {
             type: 'checkouts',
             attributes: {
+              product_options: {
+                redirect_url: process.env.LEMONSQUEEZY_REDIRECT_URL || process.env.APP_URL || 'https://t.me/Deepflashaibot',
+                receipt_button_text: 'Back to Flash AI',
+                receipt_link_url: process.env.APP_URL || 'https://t.me/Deepflashaibot',
+              },
               checkout_data: {
+                name: planName ? `Flash AI — ${planName}` : undefined,
                 custom: {
                   telegram_id: String(telegramId),
                   plan_id: planId,

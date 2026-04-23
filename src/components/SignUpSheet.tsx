@@ -1,4 +1,4 @@
-import React from 'react';
+import React, { useEffect, useRef, useState } from 'react';
 import { motion, AnimatePresence } from 'motion/react';
 import { X, ShieldCheck, Zap, ArrowRight, Sparkles, MessageSquare, FileText } from 'lucide-react';
 import { useTelegram } from '../hooks/useTelegram';
@@ -6,12 +6,72 @@ import { useTelegram } from '../hooks/useTelegram';
 interface SignUpSheetProps {
   isOpen: boolean;
   onClose: () => void;
+  onRegistered?: () => Promise<void> | void;
 }
 
-export const SignUpSheet: React.FC<SignUpSheetProps> = ({ isOpen, onClose }) => {
-  const { tg, hapticFeedback, initData } = useTelegram();
+export const SignUpSheet: React.FC<SignUpSheetProps> = ({ isOpen, onClose, onRegistered }) => {
+  const { tg, hapticFeedback, initData, showAlert } = useTelegram();
+  const [isSubmitting, setIsSubmitting] = useState(false);
+  const pollIntervalRef = useRef<ReturnType<typeof setInterval> | null>(null);
+  const pollTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+
+  const stopRegistrationWatch = () => {
+    if (pollIntervalRef.current) {
+      clearInterval(pollIntervalRef.current);
+      pollIntervalRef.current = null;
+    }
+    if (pollTimeoutRef.current) {
+      clearTimeout(pollTimeoutRef.current);
+      pollTimeoutRef.current = null;
+    }
+  };
+
+  const checkRegistrationStatus = async () => {
+    if (!initData) return false;
+    try {
+      const res = await fetch('/api/auth/me', {
+        headers: { 'X-TG-Init-Data': initData }
+      });
+      const payload = await res.json().catch(() => ({}));
+      if (!res.ok || !payload?.user?.phone) return false;
+
+      localStorage.removeItem('flashai_signup_pending');
+      stopRegistrationWatch();
+      await onRegistered?.();
+      tg?.expand?.();
+      window.location.reload();
+      return true;
+    } catch {
+      return false;
+    }
+  };
+
+  const startRegistrationWatch = () => {
+    localStorage.setItem('flashai_signup_pending', '1');
+    stopRegistrationWatch();
+    pollIntervalRef.current = setInterval(() => {
+      checkRegistrationStatus();
+    }, 2500);
+    pollTimeoutRef.current = setTimeout(() => {
+      stopRegistrationWatch();
+    }, 3 * 60 * 1000);
+  };
+
+  useEffect(() => {
+    const handleVisibility = () => {
+      if (document.visibilityState === 'visible' && localStorage.getItem('flashai_signup_pending') === '1') {
+        checkRegistrationStatus();
+      }
+    };
+    document.addEventListener('visibilitychange', handleVisibility);
+    return () => {
+      document.removeEventListener('visibilitychange', handleVisibility);
+      stopRegistrationWatch();
+    };
+  }, [initData]);
 
   const handleSignUp = async () => {
+    if (isSubmitting) return;
     hapticFeedback('medium');
     
     if (!tg?.initDataUnsafe?.user?.id) {
@@ -20,6 +80,7 @@ export const SignUpSheet: React.FC<SignUpSheetProps> = ({ isOpen, onClose }) => 
     }
 
     try {
+      setIsSubmitting(true);
       const response = await fetch('/api/auth/request-signup', {
         method: 'POST',
         headers: { 
@@ -33,16 +94,23 @@ export const SignUpSheet: React.FC<SignUpSheetProps> = ({ isOpen, onClose }) => 
         onClose();
         const botUsername = (import.meta.env.VITE_TELEGRAM_BOT_USERNAME || 'Deepflashaibot').replace('@', '');
         const signupLink = `https://t.me/${botUsername}?start=signup`;
-        // Minimize the mini app before opening the bot link
-        tg.close();
-        setTimeout(() => {
-          tg.openTelegramLink?.(signupLink);
-        }, 300);
+
+        // Open bot chat (mini app minimizes in Telegram UI). Watch for registration and auto-refresh when user returns.
+        if (tg?.openTelegramLink) {
+          tg.openTelegramLink(signupLink);
+          startRegistrationWatch();
+        } else {
+          window.location.href = signupLink;
+        }
       } else {
         console.error("Failed to request signup");
+        showAlert('Unable to start signup. Please try again.');
       }
     } catch (err) {
       console.error("Sign up request error:", err);
+      showAlert('Signup failed. Please try again.');
+    } finally {
+      setIsSubmitting(false);
     }
   };
 
@@ -135,10 +203,11 @@ export const SignUpSheet: React.FC<SignUpSheetProps> = ({ isOpen, onClose }) => 
                 <div className="pt-2">
                   <button 
                     onClick={handleSignUp}
+                    disabled={isSubmitting}
                     className="group relative w-full bg-[#ccff00] text-black font-black text-sm tracking-[0.1em] py-5 rounded-[24px] shadow-[0_10px_30px_rgba(204,255,0,0.2)] active:scale-[0.98] transition-all flex items-center justify-center gap-3 overflow-hidden"
                   >
                     <div className="absolute inset-0 bg-white/20 translate-x-[-100%] group-hover:translate-x-[100%] transition-transform duration-700 ease-in-out" />
-                    SIGN UP VIA TELEGRAM
+                    {isSubmitting ? 'OPENING TELEGRAM...' : 'SIGN UP VIA TELEGRAM'}
                     <ArrowRight className="w-5 h-5 group-hover:translate-x-1 transition-transform" />
                   </button>
                   <p className="text-[10px] font-bold text-zinc-600 text-center mt-4 tracking-tight uppercase">
