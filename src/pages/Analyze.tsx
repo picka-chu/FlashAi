@@ -285,6 +285,21 @@ export const Analyze: React.FC<{ onTabChange?: (tab: string) => void }> = ({ onT
     }
   };
 
+  const parseForm = (form?: string) =>
+    (form || '')
+      .split('')
+      .filter((result) => ['W', 'D', 'L'].includes(result));
+
+  const getFormSummary = (form?: string) => {
+    const results = parseForm(form);
+    const wins = results.filter((result) => result === 'W').length;
+    const draws = results.filter((result) => result === 'D').length;
+    const losses = results.filter((result) => result === 'L').length;
+    const points = wins * 3 + draws;
+
+    return { results, wins, draws, losses, points };
+  };
+
   return (
     <div className="h-full flex flex-col bg-black relative overflow-hidden">
       {/* Header */}
@@ -329,18 +344,18 @@ export const Analyze: React.FC<{ onTabChange?: (tab: string) => void }> = ({ onT
                   </button>
                   <Sparkles className="w-4 h-4 text-[#ccff00]/30" />
                 </div>
-                <div className="flex items-center justify-between gap-4">
-                  <div className="flex-1 flex flex-col items-center">
-                    <div className="w-10 h-10 rounded-xl bg-gradient-to-br from-zinc-800 to-zinc-900 border border-zinc-700/30 flex items-center justify-center shadow-lg mb-2 overflow-hidden">
+                <div className="grid grid-cols-[1fr_auto_1fr] items-center gap-3">
+                  <div className="min-w-0 flex flex-col items-center justify-center">
+                    <div className="w-12 h-12 rounded-xl bg-gradient-to-br from-zinc-800 to-zinc-900 border border-zinc-700/30 flex items-center justify-center shadow-lg mb-2 overflow-hidden shrink-0">
                       {selectedMatch.homeLogo ? (
-                        <img src={selectedMatch.homeLogo} alt={selectedMatch.homeShort} className="w-6 h-6 object-contain" referrerPolicy="no-referrer" />
+                        <img src={selectedMatch.homeLogo} alt={selectedMatch.homeShort} className="w-8 h-8 object-contain" referrerPolicy="no-referrer" />
                       ) : (
                         <span className="text-xs font-black text-white">{selectedMatch.homeShort}</span>
                       )}
                     </div>
-                    <p className="text-sm font-black text-white truncate w-full text-center">{selectedMatch.home}</p>
+                    <p className="text-sm font-black text-white leading-tight text-center line-clamp-2 min-h-10">{selectedMatch.home}</p>
                   </div>
-                  <div className="flex flex-col items-center">
+                  <div className="flex flex-col items-center shrink-0 px-1">
                     {selectedMatch.score ? (
                       <span className="text-xl font-black text-[#ccff00] tracking-tighter">{selectedMatch.score}</span>
                     ) : (
@@ -348,15 +363,15 @@ export const Analyze: React.FC<{ onTabChange?: (tab: string) => void }> = ({ onT
                     )}
                     <span className="text-[8px] font-black text-zinc-500 mt-1">{selectedMatch.minute || selectedMatch.time}</span>
                   </div>
-                  <div className="flex-1 flex flex-col items-center">
-                    <div className="w-10 h-10 rounded-xl bg-gradient-to-br from-zinc-800 to-zinc-900 border border-zinc-700/30 flex items-center justify-center shadow-lg mb-2 overflow-hidden">
+                  <div className="min-w-0 flex flex-col items-center justify-center">
+                    <div className="w-12 h-12 rounded-xl bg-gradient-to-br from-zinc-800 to-zinc-900 border border-zinc-700/30 flex items-center justify-center shadow-lg mb-2 overflow-hidden shrink-0">
                       {selectedMatch.awayLogo ? (
-                        <img src={selectedMatch.awayLogo} alt={selectedMatch.awayShort} className="w-6 h-6 object-contain" referrerPolicy="no-referrer" />
+                        <img src={selectedMatch.awayLogo} alt={selectedMatch.awayShort} className="w-8 h-8 object-contain" referrerPolicy="no-referrer" />
                       ) : (
                         <span className="text-xs font-black text-white">{selectedMatch.awayShort}</span>
                       )}
                     </div>
-                    <p className="text-sm font-black text-white truncate w-full text-center">{selectedMatch.away}</p>
+                    <p className="text-sm font-black text-white leading-tight text-center line-clamp-2 min-h-10">{selectedMatch.away}</p>
                   </div>
                 </div>
               </div>
@@ -513,17 +528,40 @@ export const Analyze: React.FC<{ onTabChange?: (tab: string) => void }> = ({ onT
                       </details>
 
                       {/* Team Data */}
-                      <div className="grid grid-cols-2 gap-3">
+                      <div className="space-y-3">
+                        <div className="flex items-center gap-2 px-1">
+                          <ShieldAlert className="w-3.5 h-3.5 text-[#ccff00]" />
+                          <p className="text-[10px] font-black text-zinc-500 tracking-widest">Team status</p>
+                        </div>
+
+                        <div className="grid grid-cols-2 gap-3">
                         {['home', 'away'].map((side) => {
                           const team = analysisResult.teamData[side as 'home' | 'away'];
+                          const { results, wins, draws, losses, points } = getFormSummary(team.form);
+                          const injuries = team.injuries || [];
+                          const keyStats = team.keyStats || [];
                           return (
-                            <div key={side} className="bg-zinc-900/30 border border-zinc-800/50 rounded-[24px] p-4">
-                              <h4 className="text-xs font-black text-white mb-2 truncate">{team.name}</h4>
-                              <div className="space-y-3">
-                                <div>
-                                  <span className="text-[8px] font-black text-zinc-500">Form</span>
-                                  <div className="flex gap-1 mt-1">
-                                    {team.form && team.form !== 'N/A' ? team.form.split('').map((res: string, idx: number) => (
+                            <div key={side} className="bg-gradient-to-b from-zinc-900/50 to-zinc-900/20 border border-zinc-800/60 rounded-[24px] p-4 space-y-3">
+                              <div className="flex items-start justify-between gap-2">
+                                <h4 className="text-xs font-black text-white truncate">{team.name}</h4>
+                                <span className={`text-[8px] font-black px-2 py-1 rounded-full border ${
+                                  injuries.length > 0
+                                    ? 'bg-red-500/10 border-red-500/30 text-red-300'
+                                    : 'bg-green-500/10 border-green-500/30 text-green-300'
+                                }`}>
+                                  {injuries.length > 0 ? `${injuries.length} out` : 'Full squad'}
+                                </span>
+                              </div>
+
+                              <div>
+                                <div className="flex items-center justify-between">
+                                  <span className="text-[8px] font-black text-zinc-500">Recent form</span>
+                                  {results.length > 0 && (
+                                    <span className="text-[8px] font-black text-[#ccff00]">{points}/{results.length * 3} pts</span>
+                                  )}
+                                </div>
+                                <div className="flex gap-1 mt-1.5">
+                                  {results.length > 0 ? results.map((res: string, idx: number) => (
                                       <span key={idx} className={`w-4 h-4 rounded-sm flex items-center justify-center text-[8px] font-black ${
                                         res === 'W' ? 'bg-green-500/20 text-green-400' :
                                         res === 'D' ? 'bg-zinc-500/20 text-zinc-400' :
@@ -534,20 +572,39 @@ export const Analyze: React.FC<{ onTabChange?: (tab: string) => void }> = ({ onT
                                     )) : (
                                       <span className="text-[8px] font-black text-zinc-600">—</span>
                                     )}
-                                  </div>
                                 </div>
-                                {team.injuries.length > 0 && (
-                                  <div>
-                                    <span className="text-[8px] font-black text-zinc-500">Missing</span>
-                                    <p className="text-[10px] text-zinc-400 mt-0.5 leading-tight line-clamp-2">
-                                      {team.injuries.join(', ')}
-                                    </p>
-                                  </div>
+                                {results.length > 0 && (
+                                  <p className="text-[9px] text-zinc-500 font-bold mt-1">
+                                    {wins}W • {draws}D • {losses}L
+                                  </p>
                                 )}
                               </div>
+
+                              {injuries.length > 0 && (
+                                <div>
+                                  <span className="text-[8px] font-black text-zinc-500">Missing players</span>
+                                  <p className="text-[10px] text-zinc-400 mt-0.5 leading-tight line-clamp-2">
+                                    {injuries.join(', ')}
+                                  </p>
+                                </div>
+                              )}
+
+                              {keyStats.length > 0 && (
+                                <div className="flex flex-wrap gap-1.5">
+                                  {keyStats.slice(0, 2).map((stat: string, idx: number) => (
+                                    <span
+                                      key={`${team.name}-${idx}`}
+                                      className="text-[8px] font-black px-2 py-1 rounded-full bg-[#ccff00]/10 border border-[#ccff00]/20 text-[#e7ff8a]"
+                                    >
+                                      {stat}
+                                    </span>
+                                  ))}
+                                </div>
+                              )}
                             </div>
                           );
                         })}
+                        </div>
                       </div>
 
                       {user?.plan === 'free' && (
