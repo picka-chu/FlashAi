@@ -45,7 +45,7 @@ export const SignUpSheet: React.FC<SignUpSheetProps> = ({ isOpen, onClose }) => 
         // Open signup bot and close mini app so the user can share contact from bot keyboard.
         if (tg?.openTelegramLink) {
           tg.openTelegramLink(signupLink);
-          setTimeout(() => tg.close?.(), 180);
+          tg.close?.();
         } else {
           window.location.href = signupLink;
         }
@@ -86,18 +86,15 @@ export const SignUpSheet: React.FC<SignUpSheetProps> = ({ isOpen, onClose }) => 
             className="fixed bottom-0 left-0 right-0 bg-zinc-950 border-t border-zinc-800/50 rounded-t-[40px] z-[1001] overflow-hidden"
           >
             <div className="px-6 pt-8 pb-10 space-y-6 relative">
-              <div className="flex items-center justify-between">
-                <div />
-                <button 
-                  onClick={onClose}
-                  className="w-10 h-10 bg-zinc-900 border border-zinc-800 rounded-full flex items-center justify-center active:scale-90 transition-all"
-                >
-                  <X className="w-5 h-5 text-zinc-400" />
-                </button>
-              </div>
+              <button 
+                onClick={onClose}
+                className="absolute top-6 right-6 w-10 h-10 bg-zinc-900 border border-zinc-800 rounded-full flex items-center justify-center active:scale-90 transition-all"
+              >
+                <X className="w-5 h-5 text-zinc-400" />
+              </button>
 
               <div className="space-y-5">
-                <div className="space-y-2 text-center">
+                <div className="space-y-2 text-center pt-6">
                   <p className="text-[10px] font-black text-[#ccff00] uppercase tracking-[0.2em]">Get Started</p>
                   <h3 className="text-3xl font-black text-white leading-tight">Create Your Flash AI Account</h3>
                   <p className="text-xs font-bold text-zinc-500 leading-relaxed">
@@ -110,7 +107,8 @@ export const SignUpSheet: React.FC<SignUpSheetProps> = ({ isOpen, onClose }) => 
                     type="checkbox"
                     checked={acceptedTerms}
                     onChange={(e) => setAcceptedTerms(e.target.checked)}
-                    className="mt-0.5 w-4 h-4 rounded border-zinc-600 bg-zinc-800 text-[#ccff00] focus:ring-[#ccff00]/40"
+                    style={{ accentColor: '#ccff00' }}
+                    className="mt-0.5 w-4 h-4 rounded border-zinc-600 bg-zinc-800 focus:ring-[#ccff00]/40"
                   />
                   <p className="text-[11px] font-bold text-zinc-400 leading-relaxed">
                     I agree with <button type="button" onClick={() => openLegalDocument('terms')} className="text-[#ccff00] underline">Terms</button> and <button type="button" onClick={() => openLegalDocument('privacy')} className="text-[#ccff00] underline">Privacy Policy</button>.
@@ -124,7 +122,7 @@ export const SignUpSheet: React.FC<SignUpSheetProps> = ({ isOpen, onClose }) => 
                     className="group relative w-full bg-[#ccff00] text-black font-black text-sm tracking-[0.1em] py-5 rounded-[20px] shadow-[0_10px_30px_rgba(204,255,0,0.2)] active:scale-[0.98] transition-all flex items-center justify-center gap-3 overflow-hidden disabled:opacity-60 disabled:cursor-not-allowed"
                   >
                     <div className="absolute inset-0 bg-white/20 translate-x-[-100%] group-hover:translate-x-[100%] transition-transform duration-700 ease-in-out" />
-                    {isSubmitting ? 'OPENING TELEGRAM...' : 'CONTINUE'}
+                    Continue
                     <ArrowRight className="w-5 h-5 group-hover:translate-x-1 transition-transform" />
                   </button>
                   <div className="flex items-center justify-center gap-2 mt-3">
