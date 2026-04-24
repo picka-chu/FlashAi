@@ -38,6 +38,8 @@ console.log("✅ Supabase service role key initialized for backend operations.")
 
 const PLAN_CREDITS: Record<string, number> = {
   free: 3,
+  weekly: 35,
+  monthly: 120,
   monthly_basic: 10,
   monthly_pro: 16,
   admin: 0,
@@ -45,6 +47,8 @@ const PLAN_CREDITS: Record<string, number> = {
 
 const PLAN_DAILY_LIMITS: Record<string, { credits: number; betSlipAnalysis: number }> = {
   free: { credits: 3, betSlipAnalysis: 1 },
+  weekly: { credits: 35, betSlipAnalysis: 3 },
+  monthly: { credits: 120, betSlipAnalysis: 10 },
   monthly_basic: { credits: 10, betSlipAnalysis: 2 },
   monthly_pro: { credits: 16, betSlipAnalysis: 6 },
   admin: { credits: 999, betSlipAnalysis: 999 },
@@ -2424,6 +2428,66 @@ ${ad.subtitle}`;
     }
   });
 
+
+  app.post("/api/admin/users/suspend", adminOnly, async (c) => {
+    const { telegramId } = await c.req.json().catch(() => ({} as any));
+    if (!telegramId) return c.json({ error: "telegramId is required" }, 400);
+
+    try {
+      const { error } = await supabase
+        .from("users")
+        .update({
+          is_suspended: true,
+          last_active: new Date().toISOString()
+        })
+        .eq("telegram_id", Number(telegramId));
+
+      if (error) throw error;
+
+      if (bot) {
+        try {
+          await bot.telegram.sendMessage(
+            Number(telegramId),
+            "Your account has been suspended. Please contact support if you believe this is an error."
+          );
+        } catch {}
+      }
+
+      return c.json({ success: true });
+    } catch (error: any) {
+      return c.json({ error: error?.message || "Failed to suspend user" }, 500);
+    }
+  });
+
+  app.post("/api/admin/users/delete", adminOnly, async (c) => {
+    const { telegramId } = await c.req.json().catch(() => ({} as any));
+    if (!telegramId) return c.json({ error: "telegramId is required" }, 400);
+
+    try {
+      const targetId = Number(telegramId);
+
+      // Delete user history
+      await supabase.from("user_history").delete().eq("telegram_id", targetId);
+
+      // Delete usage logs
+      await supabase.from("usage_logs").delete().eq("telegram_id", targetId);
+
+      // Delete credit transactions
+      await supabase.from("credit_transactions").delete().eq("telegram_id", targetId);
+
+      // Delete user
+      const { error } = await supabase
+        .from("users")
+        .delete()
+        .eq("telegram_id", targetId);
+
+      if (error) throw error;
+
+      return c.json({ success: true });
+    } catch (error: any) {
+      return c.json({ error: error?.message || "Failed to delete user" }, 500);
+    }
+  });
   app.get("/api/admin/users", adminOnly, async (c) => {
     const query = (c.req.query("q") || "").trim();
     const page = Math.max(1, Number(c.req.query("page") || 1));

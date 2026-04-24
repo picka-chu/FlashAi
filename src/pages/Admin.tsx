@@ -124,7 +124,51 @@ export const Admin: React.FC = () => {
       setUsers([]);
       setUsersHasMore(false);
     }
+ 
+
+  const suspendUser = async (telegramId: number) => {
+    const confirmed = await showConfirm('Suspend this user? They will not be able to access the app.');
+    if (!confirmed) return;
+
+    try {
+      const res = await fetch('/api/admin/users/suspend', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json', 'X-TG-Init-Data': initData },
+        body: JSON.stringify({ telegramId })
+      });
+      const data = await res.json().catch(() => ({}));
+      if (res.ok) {
+        fetchUsers(userSearch, usersPage);
+        showAlert('User suspended successfully.');
+      } else {
+        showAlert(data.error || 'Failed to suspend user');
+      }
+    } catch (e) {
+      showAlert('Error suspending user');
+    }
   };
+
+  const deleteUser = async (telegramId: number) => {
+    const confirmed = await showConfirm('Delete this user and all their data? This action cannot be undone.');
+    if (!confirmed) return;
+
+    try {
+      const res = await fetch('/api/admin/users/delete', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json', 'X-TG-Init-Data': initData },
+        body: JSON.stringify({ telegramId })
+      });
+      const data = await res.json().catch(() => ({}));
+      if (res.ok) {
+        fetchUsers(userSearch, usersPage);
+        showAlert('User and all data deleted successfully.');
+      } else {
+        showAlert(data.error || 'Failed to delete user');
+      }
+    } catch (e) {
+      showAlert('Error deleting user');
+    }
+  }; };
 
   const fetchDashboard = async () => {
     try {
@@ -902,10 +946,12 @@ export const Admin: React.FC = () => {
                        </div>
                      </div>
 
-                     <div className="flex gap-2">
-                       <button onClick={() => promoteUser(u.telegram_id, 'admin')} className="flex-1 py-2 rounded-xl bg-[#ccff00]/10 text-[10px] font-black uppercase text-[#ccff00]">Make Admin</button>
-                       <button onClick={() => promoteUser(u.telegram_id, 'user')} className="flex-1 py-2 rounded-xl bg-zinc-800 text-[10px] font-black uppercase text-zinc-300">Make User</button>
-                       <button onClick={() => notifyUser(u.telegram_id)} className="flex-1 py-2 rounded-xl bg-blue-500/10 text-[10px] font-black uppercase text-blue-300">Notify</button>
+                     <div className="flex gap-2 flex-wrap">
+                       <button onClick={() => promoteUser(u.telegram_id, 'admin')} className="flex-1 min-w-[80px] py-2 rounded-xl bg-[#ccff00]/10 text-[10px] font-black uppercase text-[#ccff00]">Make Admin</button>
+                       <button onClick={() => promoteUser(u.telegram_id, 'user')} className="flex-1 min-w-[80px] py-2 rounded-xl bg-zinc-800 text-[10px] font-black uppercase text-zinc-300">Make User</button>
+                       <button onClick={() => notifyUser(u.telegram_id)} className="flex-1 min-w-[80px] py-2 rounded-xl bg-blue-500/10 text-[10px] font-black uppercase text-blue-300">Notify</button>
+                       <button onClick={() => suspendUser(u.telegram_id)} className="flex-1 min-w-[80px] py-2 rounded-xl bg-orange-500/10 text-[10px] font-black uppercase text-orange-400">Suspend</button>
+                       <button onClick={() => deleteUser(u.telegram_id)} className="flex-1 min-w-[80px] py-2 rounded-xl bg-red-500/10 text-[10px] font-black uppercase text-red-400">Delete</button>
                      </div>
                      <div className="flex gap-2 items-center">
                        <select
@@ -913,11 +959,11 @@ export const Admin: React.FC = () => {
                          onChange={(e) => setPlanSelections((prev) => ({ ...prev, [String(u.telegram_id)]: e.target.value }))}
                          className="flex-1 bg-zinc-800 border border-zinc-700 rounded-xl px-3 py-2 text-[10px] font-black uppercase text-zinc-200"
                        >
-                         <option value="free">Free</option>
-                         <option value="weekly">Weekly</option>
-                         <option value="monthly">Monthly</option>
+                         <option value="free">Free Trial</option>
                          <option value="monthly_basic">Monthly Basic</option>
                          <option value="monthly_pro">Monthly Pro</option>
+                         <option value="weekly">Weekly (Legacy)</option>
+                         <option value="monthly">Monthly (Legacy)</option>
                          <option value="admin">Admin</option>
                        </select>
                        <button

@@ -20,7 +20,8 @@ import {
   Target,
   ChevronRight,
   UserPlus,
-  Share2
+  Share2,
+  Megaphone
 } from 'lucide-react';
 import { useUserStore } from '../store/useUserStore';
 import { searchMatches } from '../services/footballService';
@@ -377,6 +378,41 @@ export const Analyze: React.FC<{ onTabChange?: (tab: string) => void }> = ({ onT
     }
   };
 
+
+  const handleForwardToTelegram = async () => {
+    try {
+      hapticFeedback('light');
+      const blob = await buildPredictionCardBlob();
+      if (!blob) {
+        showAlert('No analysis card available.');
+        return;
+      }
+
+      const reader = new FileReader();
+      reader.onload = async () => {
+        try {
+          const matchName = selectedMatch?.home && selectedMatch?.away ? `${selectedMatch.home} vs ${selectedMatch.away}` : 'Match';
+          const confidence = analysisResult?.predictions?.[0]?.confidence || 'N/A';
+          const message = `Flash AI Prediction: ${matchName} - Confidence: ${confidence}%`;
+
+          if (tg?.openTelegramLink) {
+            const encodedMsg = encodeURIComponent(message);
+            tg.openTelegramLink(`https://t.me/share/url?url=${encodeURIComponent(window.location.href)}&text=${encodedMsg}`);
+            showAlert('Opening Telegram to share...');
+          } else {
+            showAlert('Please share this prediction with your contacts in Telegram.');
+          }
+        } catch (error) {
+          console.error('Telegram forward error:', error);
+          showAlert('Could not forward to Telegram. Try using the Share button instead.');
+        }
+      };
+      reader.readAsDataURL(blob);
+    } catch (e) {
+      console.error('Forward to Telegram failed:', e);
+      showAlert('Could not forward prediction card.');
+    }
+  };
   return (
     <div className="h-full flex flex-col bg-black relative overflow-hidden">
       {/* Header */}
@@ -603,14 +639,24 @@ export const Analyze: React.FC<{ onTabChange?: (tab: string) => void }> = ({ onT
                           </p>
                         </div>
                       </details>
-                      <button
-                        type="button"
-                        onClick={handleSharePredictionCard}
-                        className="w-full py-3 rounded-2xl bg-[#ccff00]/10 border border-[#ccff00]/30 text-[#ccff00] text-xs font-black uppercase tracking-widest flex items-center justify-center gap-2"
-                      >
-                        <Share2 className="w-3.5 h-3.5" />
-                        Share prediction card
-                      </button>
+                      <div className="grid grid-cols-2 gap-3">
+                        <button
+                          type="button"
+                          onClick={handleSharePredictionCard}
+                          className="py-3 rounded-2xl bg-[#ccff00]/10 border border-[#ccff00]/30 text-[#ccff00] text-xs font-black uppercase tracking-widest flex items-center justify-center gap-2 hover:bg-[#ccff00]/20 transition-all"
+                        >
+                          <Share2 className="w-3.5 h-3.5" />
+                          Share
+                        </button>
+                        <button
+                          type="button"
+                          onClick={handleForwardToTelegram}
+                          className="py-3 rounded-2xl bg-blue-500/10 border border-blue-500/30 text-blue-400 text-xs font-black uppercase tracking-widest flex items-center justify-center gap-2 hover:bg-blue-500/20 transition-all"
+                        >
+                          <Megaphone className="w-3.5 h-3.5" />
+                          Forward
+                        </button>
+                      </div>
 
                       {/* Team Data */}
                       <div className="space-y-3">

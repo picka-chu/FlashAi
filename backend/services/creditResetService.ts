@@ -31,9 +31,11 @@ interface PlanConfig {
 }
 
 const PLAN_CONFIG: Record<string, PlanConfig> = {
-  free: { dailyCredits: 3, name: "Free" },
+  free: { dailyCredits: 3, name: "Free Trial (7 days)" },
   weekly: { dailyCredits: 35, name: "Pro Weekly" },
   monthly: { dailyCredits: 120, name: "Elite Monthly" },
+  monthly_basic: { dailyCredits: 10, name: "Monthly Basic" },
+  monthly_pro: { dailyCredits: 16, name: "Monthly Pro" },
   admin: { dailyCredits: 999, name: "Administrator" }
 };
 
