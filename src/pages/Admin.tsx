@@ -77,6 +77,7 @@ export const Admin: React.FC = () => {
   const [userSearch, setUserSearch] = useState('');
   const [usersPage, setUsersPage] = useState(1);
   const [usersHasMore, setUsersHasMore] = useState(false);
+  const [planSelections, setPlanSelections] = useState<Record<string, string>>({});
   const [notifyMessage, setNotifyMessage] = useState('');
   const [pushForm, setPushForm] = useState({
     message: '',
@@ -307,6 +308,27 @@ export const Admin: React.FC = () => {
     if (res.ok) {
       fetchUsers(userSearch, usersPage);
       showAlert(`User updated to ${role}`);
+    }
+  };
+
+  const assignUserPlan = async (telegramId: number) => {
+    const selectedPlan = planSelections[String(telegramId)];
+    if (!selectedPlan) {
+      showAlert('Please choose a plan first.');
+      return;
+    }
+
+    const res = await fetch('/api/admin/users/assign-plan', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json', 'X-TG-Init-Data': initData },
+      body: JSON.stringify({ telegramId, planId: selectedPlan })
+    });
+    const data = await res.json().catch(() => ({}));
+    if (res.ok) {
+      fetchUsers(userSearch, usersPage);
+      showAlert(`Plan updated to ${selectedPlan}.`);
+    } else {
+      showAlert(data.error || 'Failed to assign plan');
     }
   };
 
@@ -884,6 +906,26 @@ export const Admin: React.FC = () => {
                        <button onClick={() => promoteUser(u.telegram_id, 'admin')} className="flex-1 py-2 rounded-xl bg-[#ccff00]/10 text-[10px] font-black uppercase text-[#ccff00]">Make Admin</button>
                        <button onClick={() => promoteUser(u.telegram_id, 'user')} className="flex-1 py-2 rounded-xl bg-zinc-800 text-[10px] font-black uppercase text-zinc-300">Make User</button>
                        <button onClick={() => notifyUser(u.telegram_id)} className="flex-1 py-2 rounded-xl bg-blue-500/10 text-[10px] font-black uppercase text-blue-300">Notify</button>
+                     </div>
+                     <div className="flex gap-2 items-center">
+                       <select
+                         value={planSelections[String(u.telegram_id)] || u.plan || 'free'}
+                         onChange={(e) => setPlanSelections((prev) => ({ ...prev, [String(u.telegram_id)]: e.target.value }))}
+                         className="flex-1 bg-zinc-800 border border-zinc-700 rounded-xl px-3 py-2 text-[10px] font-black uppercase text-zinc-200"
+                       >
+                         <option value="free">Free</option>
+                         <option value="weekly">Weekly</option>
+                         <option value="monthly">Monthly</option>
+                         <option value="monthly_basic">Monthly Basic</option>
+                         <option value="monthly_pro">Monthly Pro</option>
+                         <option value="admin">Admin</option>
+                       </select>
+                       <button
+                         onClick={() => assignUserPlan(u.telegram_id)}
+                         className="px-3 py-2 rounded-xl bg-emerald-500/15 border border-emerald-500/30 text-[10px] font-black uppercase text-emerald-300"
+                       >
+                         Assign Plan
+                       </button>
                      </div>
                    </div>
                  ))}

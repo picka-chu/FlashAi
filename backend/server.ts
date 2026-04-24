@@ -2372,6 +2372,58 @@ ${ad.subtitle}`;
     return c.json({ success: true });
   });
 
+  app.post("/api/admin/users/assign-plan", adminOnly, async (c) => {
+    const { telegramId, planId } = await c.req.json().catch(() => ({} as any));
+    const targetTelegramId = Number(telegramId || 0);
+    const targetPlan = String(planId || "").trim();
+    const allowedPlans = new Set(["free", "weekly", "monthly", "monthly_basic", "monthly_pro", "admin"]);
+
+    if (!targetTelegramId || !allowedPlans.has(targetPlan)) {
+      return c.json({ error: "Valid telegramId and planId are required" }, 400);
+    }
+
+    try {
+      const nowIso = new Date().toISOString();
+
+      if (targetPlan === "monthly_basic" || targetPlan === "monthly_pro") {
+        await applyPlanCredits(targetTelegramId, targetPlan);
+      } else if (targetPlan === "admin") {
+        const { error } = await supabase
+          .from("users")
+          .update({
+            role: "admin",
+            plan: "admin",
+            credits: 999,
+            last_active: nowIso,
+            last_credit_reset: nowIso,
+          })
+          .eq("telegram_id", targetTelegramId);
+        if (error) throw error;
+      } else {
+        const planExpiresAt = targetPlan === "weekly"
+          ? new Date(Date.now() + 7 * 24 * 60 * 60 * 1000).toISOString()
+          : targetPlan === "monthly"
+            ? new Date(Date.now() + 30 * 24 * 60 * 60 * 1000).toISOString()
+            : null;
+
+        const { error } = await supabase
+          .from("users")
+          .update({
+            plan: targetPlan,
+            ...(targetPlan === "free" ? { plan_expires_at: null } : { plan_expires_at: planExpiresAt }),
+            last_active: nowIso,
+            last_credit_reset: nowIso,
+          })
+          .eq("telegram_id", targetTelegramId);
+        if (error) throw error;
+      }
+
+      return c.json({ success: true });
+    } catch (error: any) {
+      return c.json({ error: error?.message || "Failed to assign plan" }, 500);
+    }
+  });
+
   app.get("/api/admin/users", adminOnly, async (c) => {
     const query = (c.req.query("q") || "").trim();
     const page = Math.max(1, Number(c.req.query("page") || 1));
