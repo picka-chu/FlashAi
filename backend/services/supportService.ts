@@ -2,7 +2,7 @@ import { GoogleGenAI } from '@google/genai';
 import { 
   analysisCache,
   isRetryableGeminiError 
-} from '../../src/services/apiCacheService';
+} from './apiCacheService';
 
 export interface FAQ {
   id?: string;
