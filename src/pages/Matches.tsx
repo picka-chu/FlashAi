@@ -69,11 +69,6 @@ export const Matches: React.FC<MatchesProps> = ({ onTabChange }) => {
             awayProb: 35,
             drawProb: 20,
             xG: m.xG || { home: 0, away: 0 },
-            odds: { 
-              home: (2.0 + Math.random()).toFixed(2), 
-              draw: (3.0 + Math.random()).toFixed(2), 
-              away: (2.5 + Math.random()).toFixed(2) 
-            },
             status: m.fixture.status.state === 'pre' ? 'Upcoming' : 'Live'
           };
         };

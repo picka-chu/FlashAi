@@ -1,5 +1,5 @@
 import { GoogleGenAI } from "@google/genai";
-import { ContextData, BetSlipAnalysis, MatchData, PredictionResult } from "../types/prediction";
+import { ContextData, BetSlipAnalysis, MatchData, PredictionResult } from "../../src/types/prediction";
 import { multiAgentService } from "./multiAgentService";
 import { 
   apiKeyManager, 
