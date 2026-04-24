@@ -32,6 +32,12 @@ export async function getMatchDetails(fixtureId: number | string, match?: any): 
   return response.json();
 }
 
+export async function fetchMatchH2H(home: string, away: string) {
+  const response = await fetch(`/api/football/h2h?home=${encodeURIComponent(home)}&away=${encodeURIComponent(away)}`);
+  if (!response.ok) return null;
+  return response.json();
+}
+
 export async function getLiveMatches() {
   const cacheKey = 'live_matches';
   const cached = getFromCache(cacheKey);

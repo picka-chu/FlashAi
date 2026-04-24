@@ -1,16 +1,13 @@
 import React, { useState, useEffect } from 'react';
 import { motion } from 'motion/react';
-import { Trophy, Medal, Star, ChevronLeft, ArrowUpRight, Copy } from 'lucide-react';
+import { Trophy, Star } from 'lucide-react';
 import { useTelegram } from '../hooks/useTelegram';
-import { supabase } from '../lib/supabase';
 
 interface LeaderboardUser {
   id: string;
-  name: string;
-  username: string;
-  telegram_id: number;
+  displayName: string;
   credits: number;
-  photo_url?: string;
+  avatarUrl?: string | null;
 }
 
 export const Leaderboard: React.FC<{ onBack: () => void }> = ({ onBack }) => {
@@ -36,13 +33,10 @@ export const Leaderboard: React.FC<{ onBack: () => void }> = ({ onBack }) => {
   useEffect(() => {
     const fetchLeaderboard = async () => {
       try {
-        const { data, error } = await supabase
-          .from('users')
-          .select('id, name, username, telegram_id, credits, photo_url')
-          .order('credits', { ascending: false })
-          .limit(10);
-        
-        if (data) setUsers(data);
+        const response = await fetch('/api/leaderboard');
+        if (!response.ok) throw new Error('Failed to fetch leaderboard');
+        const data = await response.json();
+        if (Array.isArray(data)) setUsers(data);
       } catch (e) {
         console.error("Failed to fetch leaderboard:", e);
       } finally {
@@ -92,18 +86,17 @@ export const Leaderboard: React.FC<{ onBack: () => void }> = ({ onBack }) => {
 
                 {/* Avatar */}
                 <div className="w-12 h-12 bg-zinc-800 rounded-full flex items-center justify-center shrink-0 overflow-hidden relative">
-                   {user.photo_url ? (
-                     <img src={user.photo_url} alt="" className="w-full h-full object-cover" />
+                   {user.avatarUrl ? (
+                     <img src={user.avatarUrl} alt="" className="w-full h-full object-cover" />
                    ) : (
-                     <span className="text-sm font-black text-white">{user.name.substring(0, 2).toUpperCase()}</span>
+                     <span className="text-sm font-black text-white">{user.displayName.substring(0, 2).toUpperCase()}</span>
                    )}
                    {i === 0 && <div className="absolute top-0 right-0 w-3 h-3 bg-amber-400 rounded-full border-2 border-zinc-900" />}
                 </div>
 
                 {/* User Info */}
                 <div className="flex-1 min-w-0">
-                  <p className="text-sm font-black text-white truncate">{user.name}</p>
-                  <p className="text-[10px] font-bold text-zinc-500 truncate">@{user.username || user.telegram_id}</p>
+                  <p className="text-sm font-black text-white truncate">{user.displayName}</p>
                 </div>
 
                 {/* Score */}

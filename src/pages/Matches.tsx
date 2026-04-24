@@ -64,16 +64,7 @@ export const Matches: React.FC<MatchesProps> = ({ onTabChange }) => {
               return matchDate.toLocaleDateString('en-GB', { day: '2-digit', month: 'short' });
             })(),
             hype: 'High',
-            confidence: 85,
-            homeProb: 45,
-            awayProb: 35,
-            drawProb: 20,
             xG: m.xG || { home: 0, away: 0 },
-            odds: { 
-              home: (2.0 + Math.random()).toFixed(2), 
-              draw: (3.0 + Math.random()).toFixed(2), 
-              away: (2.5 + Math.random()).toFixed(2) 
-            },
             status: m.fixture.status.state === 'pre' ? 'Upcoming' : 'Live'
           };
         };
@@ -244,7 +235,7 @@ export const Matches: React.FC<MatchesProps> = ({ onTabChange }) => {
                       </span>
                       <span className="text-[#ccff00] flex items-center gap-1">
                         <Sparkles className="w-3 h-3" />
-                        {match.confidence}% confidence
+                        AI insights available
                       </span>
                     </div>
                   </div>
