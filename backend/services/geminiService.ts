@@ -1,5 +1,5 @@
 import { GoogleGenAI } from "@google/genai";
-import { ContextData, BetSlipAnalysis, MatchData, PredictionResult } from "../types/prediction";
+import { ContextData, BetSlipAnalysis, MatchData, PredictionResult } from "../../src/types/prediction";
 import { multiAgentService } from "./multiAgentService";
 import { 
   apiKeyManager, 
@@ -142,8 +142,8 @@ export async function analyzeMatchWithSearch(matchString: string): Promise<Predi
           predictions: topPredictions,
           overallReasoning: parsed.overallReasoning || "No reasoning provided.",
           teamData: parsed.teamData || {
-            home: { name: matchString.split('vs')[0]?.trim() || 'Home', form: 'N/A', injuries: [], keyStats: [] },
-            away: { name: matchString.split('vs')[1]?.trim() || 'Away', form: 'N/A', injuries: [], keyStats: [] }
+            home: { name: 'Home', form: 'N/A', injuries: [], keyStats: [] },
+            away: { name: 'Away', form: 'N/A', injuries: [], keyStats: [] }
           }
         };
       } catch (error: any) {
