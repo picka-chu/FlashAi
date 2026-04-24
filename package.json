@@ -27,7 +27,6 @@
     "class-variance-authority": "^0.7.1",
     "clsx": "^2.1.1",
     "dotenv": "^17.2.3",
-    "express": "^4.21.2",
     "hono": "^4.12.12",
     "lucide-react": "^1.8.0",
     "motion": "^12.23.24",
@@ -42,7 +41,6 @@
     "zustand": "^5.0.12"
   },
   "devDependencies": {
-    "@types/express": "^4.17.21",
     "@types/node": "^22.14.0",
     "autoprefixer": "^10.4.21",
     "tailwindcss": "^4.1.14",

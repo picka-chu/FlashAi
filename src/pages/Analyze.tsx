@@ -19,7 +19,8 @@ import {
   Dices,
   Target,
   ChevronRight,
-  UserPlus
+  UserPlus,
+  Share2
 } from 'lucide-react';
 import { useUserStore } from '../store/useUserStore';
 import { searchMatches } from '../services/footballService';
@@ -61,7 +62,7 @@ export const Analyze: React.FC<{ onTabChange?: (tab: string) => void }> = ({ onT
     updateCredits
   } = useUserStore();
 
-  const { hapticFeedback, initData, tg } = useTelegram();
+  const { hapticFeedback, initData, tg, showAlert } = useTelegram();
 
   useEffect(() => {
     let interval: NodeJS.Timeout;
@@ -300,6 +301,82 @@ export const Analyze: React.FC<{ onTabChange?: (tab: string) => void }> = ({ onT
     return { results, wins, draws, losses, points };
   };
 
+  const buildPredictionCardBlob = async () => {
+    if (!analysisResult || !selectedMatch) return null;
+    const canvas = document.createElement('canvas');
+    canvas.width = 1080;
+    canvas.height = 1350;
+    const ctx = canvas.getContext('2d');
+    if (!ctx) return null;
+
+    ctx.fillStyle = '#070707';
+    ctx.fillRect(0, 0, canvas.width, canvas.height);
+    ctx.fillStyle = '#ccff00';
+    ctx.fillRect(0, 0, canvas.width, 16);
+
+    ctx.fillStyle = '#ffffff';
+    ctx.font = 'bold 64px sans-serif';
+    ctx.fillText('FLASH AI', 70, 120);
+    ctx.font = 'bold 44px sans-serif';
+    ctx.fillText(`${selectedMatch.home} vs ${selectedMatch.away}`, 70, 210, 940);
+
+    const drawCard = (title: string, prediction: any, y: number) => {
+      ctx.fillStyle = '#121212';
+      ctx.fillRect(70, y, 940, 280);
+      ctx.strokeStyle = '#2a2a2a';
+      ctx.strokeRect(70, y, 940, 280);
+      ctx.fillStyle = '#ccff00';
+      ctx.font = 'bold 30px sans-serif';
+      ctx.fillText(title, 110, y + 60);
+      ctx.fillStyle = '#ffffff';
+      ctx.font = 'bold 46px sans-serif';
+      ctx.fillText(prediction?.market || 'N/A', 110, y + 130, 860);
+      ctx.fillStyle = '#9ca3af';
+      ctx.font = '28px sans-serif';
+      ctx.fillText(`Confidence: ${Number(prediction?.confidence || 0)}%`, 110, y + 190);
+      ctx.fillStyle = '#d4d4d8';
+      ctx.font = '24px sans-serif';
+      ctx.fillText(String(prediction?.reasoning || '').slice(0, 95), 110, y + 240, 860);
+    };
+
+    drawCard('Top prediction', analysisResult.predictions?.[0], 300);
+    drawCard('Value pick', analysisResult.predictions?.[1], 640);
+
+    ctx.fillStyle = '#71717a';
+    ctx.font = '26px sans-serif';
+    ctx.fillText('Generated with Flash AI • Bet responsibly', 70, 1260);
+
+    return await new Promise<Blob | null>((resolve) => canvas.toBlob((blob) => resolve(blob), 'image/png'));
+  };
+
+  const handleSharePredictionCard = async () => {
+    try {
+      const blob = await buildPredictionCardBlob();
+      if (!blob) return showAlert('No analysis card available.');
+      const file = new File([blob], 'flashai-prediction.png', { type: 'image/png' });
+
+      if (navigator.canShare && navigator.canShare({ files: [file] })) {
+        await navigator.share({
+          title: 'Flash AI prediction',
+          text: `${selectedMatch?.home} vs ${selectedMatch?.away} prediction`,
+          files: [file],
+        });
+        return;
+      }
+
+      const url = URL.createObjectURL(blob);
+      const a = document.createElement('a');
+      a.href = url;
+      a.download = 'flashai-prediction.png';
+      a.click();
+      URL.revokeObjectURL(url);
+      showAlert('Prediction card downloaded.');
+    } catch (e) {
+      console.error('Share card failed:', e);
+      showAlert('Could not share prediction card.');
+    }
+  };
+
   return (
     <div className="h-full flex flex-col bg-black relative overflow-hidden">
       {/* Header */}
@@ -526,6 +603,14 @@ export const Analyze: React.FC<{ onTabChange?: (tab: string) => void }> = ({ onT
                           </p>
                         </div>
                       </details>
+                      <button
+                        type="button"
+                        onClick={handleSharePredictionCard}
+                        className="w-full py-3 rounded-2xl bg-[#ccff00]/10 border border-[#ccff00]/30 text-[#ccff00] text-xs font-black uppercase tracking-widest flex items-center justify-center gap-2"
+                      >
+                        <Share2 className="w-3.5 h-3.5" />
+                        Share prediction card
+                      </button>
 
                       {/* Team Data */}
                       <div className="space-y-3">

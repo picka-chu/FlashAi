@@ -5,7 +5,7 @@ import {
   ValueBet, 
   PredictionResult,
   TeamStats
-} from "../types/prediction";
+} from "../../src/types/prediction";
 import { fetchContextData } from "./geminiService";
 import { multiAgentService } from "./multiAgentService";
 
