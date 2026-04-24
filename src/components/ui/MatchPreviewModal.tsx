@@ -1,8 +1,7 @@
 import React, { useEffect, useState } from 'react';
 import { motion, AnimatePresence, useMotionValue, useTransform } from 'motion/react';
 import { X, Sparkles, Info, Activity, Target, Zap, Shield, TrendingUp, Users, Loader2 } from 'lucide-react';
-import { fetchMatchH2H } from '../../services/geminiService';
-import { getMatchDetails } from '../../services/footballService';
+import { fetchMatchH2H, getMatchDetails } from '../../services/footballService';
 
 interface MatchPreviewModalProps {
   isOpen: boolean;
