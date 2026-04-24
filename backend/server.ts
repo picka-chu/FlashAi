@@ -12,6 +12,9 @@ import crypto from "crypto";
 import { getLiveMatches, getMatchDetails, getUpcomingMatches, searchMatches } from "./services/footballService";
 import { generateSupportReply, getDefaultFaqs } from "./services/supportService";
 import CreditResetScheduler from "./tasks/creditResetScheduler.js";
+import { InMemoryRateLimiter } from "./middleware/rateLimit";
+import { registerLeaderboardRoutes } from "./routes/leaderboard";
+import { getTelegramUserFromInitData, validateTelegramInitData } from "./middleware/auth";
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
@@ -139,55 +142,6 @@ async function ensureBootstrapAdminRole() {
     }
   } catch (error) {
     console.error("Failed to ensure bootstrap admin role:", error);
-  }
-}
-
-/**
- * Validates the data received from the Telegram Web App.
- * @param initData - The initialization data string from Telegram.
- * @param botToken - The Telegram Bot Token.
- * @returns boolean - True if the data is valid, false otherwise.
- */
-function validateTelegramInitData(initData: string, botToken: string): boolean {
-  if (!initData || !botToken) return false;
-
-  try {
-    const urlParams = new URLSearchParams(initData);
-    const hash = urlParams.get("hash");
-    urlParams.delete("hash");
-
-    const dataCheckString = Array.from(urlParams.entries())
-      .map(([key, value]) => `${key}=${value}`)
-      .sort()
-      .join("\n");
-
-    const secretKey = crypto
-      .createHmac("sha256", "WebAppData")
-      .update(botToken)
-      .digest();
-
-    const calculatedHash = crypto
-      .createHmac("sha256", secretKey)
-      .update(dataCheckString)
-      .digest("hex");
-
-    return calculatedHash === hash;
-  } catch (err) {
-    console.error("InitData validation error:", err);
-    return false;
-  }
-}
-
-/**
- * Extracts the user ID from the initData.
- */
-function getTelegramUserFromInitData(initData: string): any {
-  try {
-    const params = new URLSearchParams(initData);
-    const userStr = params.get("user");
-    return userStr ? JSON.parse(userStr) : null;
-  } catch {
-    return null;
   }
 }
 
@@ -484,39 +438,23 @@ async function startServer() {
     throw new Error("CRITICAL: TELEGRAM_BOT_TOKEN is not set. Server startup aborted.");
   }
 
-  const requestBuckets = new Map<string, { count: number; resetAt: number }>();
   const RATE_LIMIT_WINDOW_MS = 60 * 1000;
   const RATE_LIMIT_MAX = 25;
+  const rateLimiter = new InMemoryRateLimiter(RATE_LIMIT_WINDOW_MS, RATE_LIMIT_MAX);
 
   const getRequestIp = (c: any) =>
     c.req.header("x-forwarded-for")?.split(",")[0]?.trim() ||
     c.req.header("x-real-ip") ||
     "unknown";
 
-  const isRateLimited = (identifier: string) => {
-    const now = Date.now();
-    const current = requestBuckets.get(identifier);
-    if (!current || now > current.resetAt) {
-      requestBuckets.set(identifier, { count: 1, resetAt: now + RATE_LIMIT_WINDOW_MS });
-      return false;
-    }
-
-    current.count += 1;
-    requestBuckets.set(identifier, current);
-    return current.count > RATE_LIMIT_MAX;
-  };
-  setInterval(() => {
-    const now = Date.now();
-    for (const [key, bucket] of requestBuckets.entries()) {
-      if (now > bucket.resetAt) requestBuckets.delete(key);
-    }
-  }, 5 * 60 * 1000);
+  const isRateLimited = (identifier: string) => rateLimiter.isRateLimited(identifier);
 
   const hasValidTelegramAuth = (initData?: string | null) =>
     Boolean(initData && validateTelegramInitData(initData, botToken));
 
   const ADMIN_TASKS_KEY = "admin_tasks_v1";
   const ADMIN_ADS_KEY = "admin_ads_v1";
+  registerLeaderboardRoutes(app, supabase);
 
   const getCachedCollection = async <T = any>(key: string): Promise<T[]> => {
     try {
@@ -855,7 +793,14 @@ async function startServer() {
     }
 
     try {
-      const { matchString, matchId } = await c.req.json();
+      const { matchString: rawMatchString, matchId } = await c.req.json();
+      if (typeof rawMatchString !== "string" || !rawMatchString.trim() || rawMatchString.length > 200) {
+        return c.json({ error: "Invalid match string" }, 400);
+      }
+      const matchString = rawMatchString.replace(/[^\w\s\-\.]/g, "").trim();
+      if (!matchString) {
+        return c.json({ error: "Invalid match string" }, 400);
+      }
       const tgUser = initData ? getTelegramUserFromInitData(initData) : null;
       if (!tgUser) return c.json({ error: "User not identified" }, 401);
 
