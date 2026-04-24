@@ -38,12 +38,14 @@ import {
   Cell
 } from 'recharts';
 import { useTelegram } from '../hooks/useTelegram';
+import { useUserStore } from '../store/useUserStore';
 
 type AdminTab = 'dashboard' | 'analytics' | 'tasks' | 'ads' | 'users' | 'notifications' | 'reports';
 
 export const Admin: React.FC = () => {
   const [activeTab, setActiveTab] = useState<AdminTab>('dashboard');
   const { tg, hapticFeedback, showAlert, showConfirm, initData } = useTelegram();
+  const { user, isLoading: isUserLoading } = useUserStore();
   
   const [stats, setStats] = useState<any>(null);
   const [analytics, setAnalytics] = useState<any>(null);
@@ -73,6 +75,8 @@ export const Admin: React.FC = () => {
   const [reportStatusFilter, setReportStatusFilter] = useState<'all' | 'open' | 'reviewing' | 'resolved'>('all');
   const [users, setUsers] = useState<any[]>([]);
   const [userSearch, setUserSearch] = useState('');
+  const [usersPage, setUsersPage] = useState(1);
+  const [usersHasMore, setUsersHasMore] = useState(false);
   const [notifyMessage, setNotifyMessage] = useState('');
   const [pushForm, setPushForm] = useState({
     message: '',
@@ -95,20 +99,29 @@ export const Admin: React.FC = () => {
     fetchReports(reportStatusFilter);
   }, [initData]);
 
-  const fetchUsers = async (q = '') => {
+  const fetchUsers = async (q = '', page = 1) => {
     try {
-      const res = await fetch(`/api/admin/users${q ? `?q=${encodeURIComponent(q)}` : ''}`, {
+      const params = new URLSearchParams();
+      if (q) params.set('q', q);
+      params.set('page', String(page));
+      params.set('limit', '50');
+      const res = await fetch(`/api/admin/users?${params.toString()}`, {
         headers: { 'X-TG-Init-Data': initData }
       });
       if (!res.ok) {
         setUsers([]);
+        setUsersHasMore(false);
         return;
       }
       const data = await res.json();
-      setUsers(Array.isArray(data) ? data : []);
+      const rows = Array.isArray(data) ? data : data?.users;
+      setUsers(Array.isArray(rows) ? rows : []);
+      setUsersHasMore(Boolean(data?.hasMore));
+      setUsersPage(Number(data?.page || page));
     } catch (e) {
       console.error(e);
       setUsers([]);
+      setUsersHasMore(false);
     }
   };
 
@@ -292,7 +305,7 @@ export const Admin: React.FC = () => {
       body: JSON.stringify({ telegramId, role })
     });
     if (res.ok) {
-      fetchUsers(userSearch);
+      fetchUsers(userSearch, usersPage);
       showAlert(`User updated to ${role}`);
     }
   };
@@ -332,6 +345,25 @@ export const Admin: React.FC = () => {
        }
     });
   };
+
+  if (isUserLoading) {
+    return (
+      <div className="h-full w-full bg-black flex items-center justify-center">
+        <span className="text-sm font-bold text-zinc-400 uppercase tracking-widest">Loading...</span>
+      </div>
+    );
+  }
+
+  if (!user || user.role !== 'admin') {
+    return (
+      <div className="h-full w-full bg-black flex items-center justify-center p-6">
+        <div className="text-center space-y-2">
+          <h2 className="text-lg font-black text-white">Access Denied</h2>
+          <p className="text-xs font-bold text-zinc-500 uppercase tracking-widest">Admin role required.</p>
+        </div>
+      </div>
+    );
+  }
 
   if (isLoading) {
     return (
@@ -809,12 +841,15 @@ export const Admin: React.FC = () => {
                  <Search className="w-4 h-4 text-zinc-600" />
                  <input
                    value={userSearch}
-                   onChange={(e) => setUserSearch(e.target.value)}
-                   onKeyDown={(e) => { if (e.key === 'Enter') fetchUsers(userSearch); }}
+                   onChange={(e) => {
+                     setUserSearch(e.target.value);
+                     setUsersPage(1);
+                   }}
+                   onKeyDown={(e) => { if (e.key === 'Enter') fetchUsers(userSearch, 1); }}
                    placeholder="Search user ID or name..."
                    className="bg-transparent border-none text-sm font-bold text-white focus:outline-none w-full"
                  />
-                 <button onClick={() => fetchUsers(userSearch)} className="text-[10px] text-[#ccff00] font-black">GO</button>
+                 <button onClick={() => fetchUsers(userSearch, 1)} className="text-[10px] text-[#ccff00] font-black">GO</button>
                </div>
 
                <div className="bg-zinc-900/50 border border-zinc-800 rounded-3xl p-4">
@@ -852,6 +887,25 @@ export const Admin: React.FC = () => {
                      </div>
                    </div>
                  ))}
+               </div>
+               <div className="flex items-center justify-between">
+                 <button
+                   type="button"
+                   disabled={usersPage <= 1}
+                   onClick={() => fetchUsers(userSearch, Math.max(1, usersPage - 1))}
+                   className="px-3 py-2 rounded-xl bg-zinc-800 text-[10px] font-black uppercase text-zinc-300 disabled:opacity-50"
+                 >
+                   Previous
+                 </button>
+                 <span className="text-[10px] font-black text-zinc-500 uppercase tracking-widest">Page {usersPage}</span>
+                 <button
+                   type="button"
+                   disabled={!usersHasMore}
+                   onClick={() => fetchUsers(userSearch, usersPage + 1)}
+                   className="px-3 py-2 rounded-xl bg-zinc-800 text-[10px] font-black uppercase text-zinc-300 disabled:opacity-50"
+                 >
+                   Next
+                 </button>
                </div>
             </motion.div>
           )}
