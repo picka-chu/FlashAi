@@ -2331,19 +2331,29 @@ ${ad.subtitle}`;
 
   app.get("/api/admin/users", adminOnly, async (c) => {
     const query = (c.req.query("q") || "").trim();
+    const page = Math.max(1, Number(c.req.query("page") || 1));
+    const limit = Math.min(100, Math.max(1, Number(c.req.query("limit") || 50)));
+    const from = (page - 1) * limit;
+    const to = from + limit - 1;
     let dbQuery = supabase
       .from("users")
-      .select("telegram_id,name,username,role,plan,credits,last_active,created_at")
+      .select("telegram_id,name,username,role,plan,credits,last_active,created_at", { count: "exact" })
       .order("created_at", { ascending: false })
-      .limit(150);
+      .range(from, to);
 
     if (query) {
       dbQuery = dbQuery.or(`name.ilike.%${query}%,username.ilike.%${query}%,telegram_id.eq.${Number(query) || 0}`);
     }
 
-    const { data, error } = await dbQuery;
+    const { data, error, count } = await dbQuery;
     if (error) return c.json({ error: error.message }, 500);
-    return c.json(data || []);
+    return c.json({
+      users: data || [],
+      page,
+      limit,
+      total: count || 0,
+      hasMore: (count || 0) > page * limit,
+    });
   });
 
   app.post("/api/admin/users/notify", adminOnly, async (c) => {

@@ -18,6 +18,8 @@ export default function App() {
   const [activeTab, setActiveTab] = useState<TabType>("home");
   const { user: tgUser, isReady, initData, setHeaderColor, setBackgroundColor } = useTelegram();
   const { setUser, isLoading, setLoading } = useUserStore();
+  const [loadError, setLoadError] = useState<string | null>(null);
+  const [retryNonce, setRetryNonce] = useState(0);
   
   const [lp, setLp] = useState<any>(null);
 
@@ -47,6 +49,10 @@ export default function App() {
         return;
       }
 
+      setLoadError(null);
+      const abortController = new AbortController();
+      const timeoutId = setTimeout(() => abortController.abort(), 10_000);
+
       try {
         const mapUser = (data: any) => ({
           id: data.id,
@@ -65,6 +71,7 @@ export default function App() {
         if (initData) {
           const res = await fetch('/api/auth/me', {
             headers: { 'X-TG-Init-Data': initData },
+            signal: abortController.signal,
           });
 
           if (res.ok) {
@@ -95,8 +102,10 @@ export default function App() {
         }
       } catch (err) {
         console.error("Error fetching profile:", err);
+        setLoadError("We couldn't load your profile. Check your connection and try again.");
         setUser(null);
       } finally {
+        clearTimeout(timeoutId);
         setLoading(false);
       }
     };
@@ -107,7 +116,7 @@ export default function App() {
       setUser(null);
       setLoading(false);
     }
-  }, [tgUser, isReady, initData, setUser, setLoading]);
+  }, [tgUser, isReady, initData, setUser, setLoading, retryNonce]);
 
   useEffect(() => {
     const params = new URLSearchParams(window.location.search);
@@ -138,6 +147,28 @@ export default function App() {
         <div className="flex flex-col items-center gap-4">
           <div className="w-12 h-12 border-4 border-[#ccff00]/20 border-t-[#ccff00] rounded-full animate-spin" />
           <p className="text-zinc-500 text-xs font-black uppercase tracking-widest">Loading Flash AI</p>
+        </div>
+      </div>
+    );
+  }
+
+  if (loadError) {
+    return (
+      <div className="h-[100dvh] bg-black flex items-center justify-center p-6">
+        <div className="max-w-sm w-full bg-zinc-900/60 border border-zinc-800 rounded-3xl p-6 text-center space-y-4">
+          <p className="text-sm font-black text-white">Connection issue</p>
+          <p className="text-xs font-bold text-zinc-400">{loadError}</p>
+          <button
+            type="button"
+            onClick={() => {
+              setLoadError(null);
+              setLoading(true);
+              setRetryNonce((v) => v + 1);
+            }}
+            className="w-full py-3 rounded-2xl bg-[#ccff00] text-black font-black text-sm"
+          >
+            Retry
+          </button>
         </div>
       </div>
     );
