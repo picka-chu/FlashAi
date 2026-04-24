@@ -38,12 +38,14 @@ import {
   Cell
 } from 'recharts';
 import { useTelegram } from '../hooks/useTelegram';
+import { useUserStore } from '../store/useUserStore';
 
 type AdminTab = 'dashboard' | 'analytics' | 'tasks' | 'ads' | 'users' | 'notifications' | 'reports';
 
 export const Admin: React.FC = () => {
   const [activeTab, setActiveTab] = useState<AdminTab>('dashboard');
   const { tg, hapticFeedback, showAlert, showConfirm, initData } = useTelegram();
+  const { user, isLoading: isUserLoading } = useUserStore();
   
   const [stats, setStats] = useState<any>(null);
   const [analytics, setAnalytics] = useState<any>(null);
@@ -332,6 +334,25 @@ export const Admin: React.FC = () => {
        }
     });
   };
+
+  if (isUserLoading) {
+    return (
+      <div className="h-full w-full bg-black flex items-center justify-center">
+        <span className="text-sm font-bold text-zinc-400 uppercase tracking-widest">Loading...</span>
+      </div>
+    );
+  }
+
+  if (!user || user.role !== 'admin') {
+    return (
+      <div className="h-full w-full bg-black flex items-center justify-center p-6">
+        <div className="text-center space-y-2">
+          <h2 className="text-lg font-black text-white">Access Denied</h2>
+          <p className="text-xs font-bold text-zinc-500 uppercase tracking-widest">Admin role required.</p>
+        </div>
+      </div>
+    );
+  }
 
   if (isLoading) {
     return (
