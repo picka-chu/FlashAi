@@ -103,7 +103,7 @@ export const Home: React.FC<HomeProps> = ({ onTabChange }) => {
 
   const [isSignUpOpen, setIsSignUpOpen] = useState(false);
   const { user, setSelectedMatch, setIsAnalyzing, setAnalysisResult } = useUserStore();
-  const { hapticFeedback, tg } = useTelegram();
+  const { hapticFeedback, tg, initData } = useTelegram();
 
   useEffect(() => {
     const activeAd = dynamicAds[adIndex];
@@ -135,18 +135,16 @@ export const Home: React.FC<HomeProps> = ({ onTabChange }) => {
   };
 
   useEffect(() => {
-    if (!tg?.initData && user?.phone) {
-      // Wait for Telegram init data so user-scoped endpoints (recent activities) work reliably.
-      return;
-    }
-
     const fetchData = async () => {
       try {
+        const authInitData = initData || tg?.initData || '';
         const [upcoming, trending, adsRes, activitiesRes] = await Promise.all([
           getUpcomingMatches(),
           getTrendingPicks(),
-          fetch('/api/common/ads', { headers: { 'X-TG-Init-Data': tg?.initData || '' } }).then(r => r.json()),
-          fetch('/api/user/activities', { headers: { 'X-TG-Init-Data': tg?.initData || '' } }).then(r => r.ok ? r.json() : [])
+          fetch('/api/common/ads', { headers: { 'X-TG-Init-Data': authInitData } }).then(r => r.json()),
+          authInitData
+            ? fetch('/api/user/activities', { headers: { 'X-TG-Init-Data': authInitData } }).then(r => r.ok ? r.json() : [])
+            : Promise.resolve([])
         ]);
         
         if (adsRes && adsRes.length > 0) {
@@ -210,7 +208,7 @@ export const Home: React.FC<HomeProps> = ({ onTabChange }) => {
       }
     };
     fetchData();
-  }, [tg?.initData, user?.phone]);
+  }, [initData, tg?.initData, user?.phone]);
 
   const formatActivityLabel = (endpoint: string, method: string) => {
     if (endpoint.includes('/api/analyze-betslip')) return 'Bet slip analyzed';
