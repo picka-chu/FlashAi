@@ -130,15 +130,28 @@ export default function App() {
   }, []);
 
   const renderPage = () => {
-    switch (activeTab) {
-      case "home": return <Home onTabChange={setActiveTab} />;
-      case "matches": return <Matches onTabChange={setActiveTab} />;
-      case "analyze": return <Analyze onTabChange={setActiveTab} />;
-      case "history": return <History />;
-      case "profile": return <Profile />;
-      case "admin": return <Admin />;
-      default: return <Home onTabChange={setActiveTab} />;
-    }
+    return (
+      <>
+        <div className={activeTab === "home" ? "h-full" : "hidden"}>
+          <Home onTabChange={setActiveTab} />
+        </div>
+        <div className={activeTab === "matches" ? "h-full" : "hidden"}>
+          <Matches onTabChange={setActiveTab} />
+        </div>
+        <div className={activeTab === "analyze" ? "h-full" : "hidden"}>
+          <Analyze onTabChange={setActiveTab} />
+        </div>
+        <div className={activeTab === "history" ? "h-full" : "hidden"}>
+          <History />
+        </div>
+        <div className={activeTab === "profile" ? "h-full" : "hidden"}>
+          <Profile />
+        </div>
+        <div className={activeTab === "admin" ? "h-full" : "hidden"}>
+          <Admin />
+        </div>
+      </>
+    );
   };
 
   if (isLoading) {
@@ -183,18 +196,9 @@ export default function App() {
       activeTab={activeTab} 
       onTabChange={setActiveTab}
     >
-      <AnimatePresence mode="wait">
-        <motion.div
-          key={activeTab}
-          initial={{ opacity: 0, y: 10 }}
-          animate={{ opacity: 1, y: 0 }}
-          exit={{ opacity: 0, y: -10 }}
-          transition={{ duration: 0.2 }}
-          className="h-full"
-        >
-          {renderPage()}
-        </motion.div>
-      </AnimatePresence>
+      <div className="h-full">
+        {renderPage()}
+      </div>
     </MainLayout>
   );
 }

@@ -331,9 +331,9 @@ export const Home: React.FC<HomeProps> = ({ onTabChange }) => {
         
         {user?.phone && (
           <div className="flex items-center gap-3">
-            <div className="bg-white/5 backdrop-blur-md border border-white/10 px-3 py-1.5 rounded-full flex items-center gap-1.5 shadow-[0_0_15px_rgba(204,255,0,0.1)]">
-              <Zap className="w-3.5 h-3.5 text-[#ccff00]" />
-              <span className="text-xs font-black text-white">{user.credits}</span>
+            <div className={`backdrop-blur-md border px-3 py-1.5 rounded-full flex items-center gap-1.5 shadow-[0_0_15px_rgba(204,255,0,0.1)] ${user.credits <= 0 ? 'bg-red-500/10 border-red-500/20' : 'bg-white/5 border-white/10'}`}>
+              <Zap className={`w-3.5 h-3.5 ${user.credits <= 0 ? 'text-red-500' : 'text-[#ccff00]'}`} />
+              <span className={`text-xs font-black ${user.credits <= 0 ? 'text-red-500' : 'text-white'}`}>{user.credits}</span>
             </div>
           </div>
         )}
@@ -563,67 +563,67 @@ export const Home: React.FC<HomeProps> = ({ onTabChange }) => {
             </button>
           </div>
 
-          <div className="space-y-2.5">
+          <div className="flex gap-3 overflow-x-auto no-scrollbar snap-x pb-2">
             {upcomingMatches.length > 0 ? (
               upcomingMatches.slice(0, 10).map((match) => (
                 <motion.div
                   key={match.id}
-                  initial={{ opacity: 0, y: 10 }}
-                  animate={{ opacity: 1, y: 0 }}
+                  initial={{ opacity: 0, scale: 0.95 }}
+                  animate={{ opacity: 1, scale: 1 }}
                   onClick={() => handleAnalyze(match)}
-                  className="group relative bg-[#141414] border border-white/[0.03] rounded-2xl p-4 active:scale-[0.98] transition-all"
+                  className="shrink-0 w-[280px] snap-center relative bg-[#141414] border border-white/[0.03] rounded-2xl p-4 active:scale-[0.98] transition-all cursor-pointer"
                 >
-                  <div className="flex items-center justify-between gap-4">
-                    <div className="flex flex-col gap-3 flex-1">
-                      {/* League & Time */}
+                  <div className="flex flex-col gap-3">
+                    {/* League & Time */}
+                    <div className="flex items-center justify-between">
                       <div className="flex items-center gap-2">
-                        <span className="text-[9px] font-bold text-zinc-500 uppercase tracking-[0.1em]">{match.league}</span>
-                        <span className="w-1 h-1 rounded-full bg-zinc-800" />
-                        <span className="text-[9px] font-medium text-zinc-400">{match.time} • {match.date}</span>
+                        <span className="text-[9px] font-bold text-zinc-500 uppercase tracking-[0.1em] line-clamp-1 max-w-[150px]">{match.league}</span>
                       </div>
-                      
-                      {/* Teams */}
-                      <div className="space-y-2">
+                      <span className="text-[9px] font-medium text-zinc-400">{match.time}</span>
+                    </div>
+                    
+                    {/* Teams */}
+                    <div className="space-y-3 py-1">
+                      <div className="flex items-center justify-between">
                         <div className="flex items-center gap-3">
-                          <div className="w-6 h-6 rounded-lg bg-zinc-800/50 flex items-center justify-center overflow-hidden border border-white/5">
+                          <div className="w-7 h-7 rounded-lg bg-zinc-800/50 flex items-center justify-center overflow-hidden border border-white/5">
                             {match.homeLogo ? (
-                              <img src={match.homeLogo} alt="" className="w-4 h-4 object-contain" referrerPolicy="no-referrer" />
+                              <img src={match.homeLogo} alt="" className="w-5 h-5 object-contain" referrerPolicy="no-referrer" />
                             ) : (
                               <span className="text-[8px] font-bold text-zinc-500">{match.homeShort}</span>
                             )}
                           </div>
-                          <span className="text-sm font-semibold text-zinc-100">{match.home}</span>
+                          <span className="text-sm font-bold text-zinc-100 line-clamp-1">{match.home}</span>
                         </div>
+                      </div>
+                      <div className="flex items-center justify-between">
                         <div className="flex items-center gap-3">
-                          <div className="w-6 h-6 rounded-lg bg-zinc-800/50 flex items-center justify-center overflow-hidden border border-white/5">
+                          <div className="w-7 h-7 rounded-lg bg-zinc-800/50 flex items-center justify-center overflow-hidden border border-white/5">
                             {match.awayLogo ? (
-                              <img src={match.awayLogo} alt="" className="w-4 h-4 object-contain" referrerPolicy="no-referrer" />
+                              <img src={match.awayLogo} alt="" className="w-5 h-5 object-contain" referrerPolicy="no-referrer" />
                             ) : (
                               <span className="text-[8px] font-bold text-zinc-500">{match.awayShort}</span>
                             )}
                           </div>
-                          <span className="text-sm font-semibold text-zinc-100">{match.away}</span>
+                          <span className="text-sm font-bold text-zinc-100 line-clamp-1">{match.away}</span>
                         </div>
                       </div>
                     </div>
 
-                    {/* Action */}
-                    <button
-                      onClick={(e) => {
-                        e.stopPropagation();
-                        handleAnalyze(match);
-                      }}
-                      className="h-10 px-4 rounded-xl bg-[#ccff00] text-black text-[11px] font-black uppercase tracking-wider flex items-center gap-1.5 active:scale-95 transition-transform shadow-[0_4px_12px_rgba(204,255,0,0.15)]"
-                    >
-                      <Zap className="w-3 h-3 fill-current" />
-                      Analyze
-                    </button>
+                    {/* Footer Info */}
+                    <div className="flex items-center justify-between pt-2 border-t border-white/[0.03]">
+                      <span className="text-[9px] font-medium text-zinc-500">{match.date}</span>
+                      <div className="flex items-center gap-1">
+                        <Zap className="w-2.5 h-2.5 text-[#ccff00] fill-[#ccff00]" />
+                        <span className="text-[9px] font-black text-[#ccff00] uppercase tracking-tighter">Click to analyze</span>
+                      </div>
+                    </div>
                   </div>
                 </motion.div>
               ))
             ) : (
               [1, 2, 3].map((i) => (
-                <div key={i} className="h-28 bg-[#141414] border border-white/[0.03] rounded-2xl animate-pulse" />
+                <div key={i} className="shrink-0 w-[280px] h-36 bg-[#141414] border border-white/[0.03] rounded-2xl animate-pulse" />
               ))
             )}
           </div>

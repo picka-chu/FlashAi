@@ -108,9 +108,9 @@ export const Matches: React.FC<MatchesProps> = ({ onTabChange }) => {
         <h1 className="text-lg font-black text-white">Matches</h1>
         <div className="flex items-center gap-3">
           {user?.phone && (
-            <div className="bg-white/5 backdrop-blur-md border border-white/10 px-3 py-1.5 rounded-full flex items-center gap-1.5 shadow-[0_0_15px_rgba(204,255,0,0.1)]">
-              <Zap className="w-3.5 h-3.5 text-[#ccff00]" />
-              <span className="text-xs font-black text-white">{user?.credits}</span>
+            <div className={`backdrop-blur-md border px-3 py-1.5 rounded-full flex items-center gap-1.5 shadow-[0_0_15px_rgba(204,255,0,0.1)] ${user.credits <= 0 ? 'bg-red-500/10 border-red-500/20' : 'bg-white/5 border-white/10'}`}>
+              <Zap className={`w-3.5 h-3.5 ${user.credits <= 0 ? 'text-red-500' : 'text-[#ccff00]'}`} />
+              <span className={`text-xs font-black ${user.credits <= 0 ? 'text-red-500' : 'text-white'}`}>{user.credits}</span>
             </div>
           )}
         </div>
