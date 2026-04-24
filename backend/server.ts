@@ -1949,35 +1949,72 @@ async function startServer() {
     }
 
     try {
-      const { telegramId, planId, boc, amount } = await c.req.json();
+      const { telegramId, planId, boc, amount, txHash: rawTxHash } = await c.req.json();
       const tgUser = initData ? getTelegramUserFromInitData(initData) : null;
       const effectiveTelegramId = tgUser?.id || Number(telegramId || 0);
+      const txHash = String(rawTxHash || boc || "").trim().slice(0, 256);
       
-      if (!effectiveTelegramId || !planId || !boc) {
+      if (!effectiveTelegramId || !planId || !txHash) {
         return c.json({ error: "Missing required parameters" }, 400);
       }
       if (tgUser?.id && Number(telegramId || 0) && tgUser.id !== Number(telegramId || 0)) {
         return c.json({ error: "Telegram identity mismatch" }, 403);
       }
 
-      // 1. Log the transaction in the database
-      const { error: txError } = await supabase.from('transactions').insert({
-        telegram_id: effectiveTelegramId,
-        amount: amount,
-        currency: 'TON',
-        status: 'completed',
-        provider_payment_charge_id: boc.substring(0, 100), // Use first part of BOC as ref
-        type: 'ton'
-      });
+      // 1) Replay protection: reject already-processed TON tx hashes
+      const { data: existingProcessedTx, error: existingProcessedTxError } = await supabase
+        .from("processed_transactions")
+        .select("id")
+        .eq("tx_hash", txHash)
+        .maybeSingle();
+      if (existingProcessedTxError && existingProcessedTxError.code !== "PGRST116") {
+        throw existingProcessedTxError;
+      }
+      if (existingProcessedTx?.id) {
+        return c.json({ error: "Transaction already processed" }, 409);
+      }
 
-      if (txError) throw txError;
+      // Reserve tx hash first to prevent concurrent replay.
+      const { error: processedTxInsertError } = await supabase
+        .from("processed_transactions")
+        .insert({
+          tx_hash: txHash,
+          telegram_id: effectiveTelegramId,
+          plan_id: String(planId),
+          provider: "ton",
+          processed_at: new Date().toISOString(),
+        });
+      if (processedTxInsertError) {
+        if (processedTxInsertError.code === "23505") {
+          return c.json({ error: "Transaction already processed" }, 409);
+        }
+        throw processedTxInsertError;
+      }
 
-      // 2. Apply plan + credits consistently
-      await applyPlanCredits(effectiveTelegramId, planId);
+      try {
+        // 2. Log the transaction in the database
+        const { error: txError } = await supabase.from('transactions').insert({
+          telegram_id: effectiveTelegramId,
+          amount: amount,
+          currency: 'TON',
+          status: 'completed',
+          provider_payment_charge_id: txHash.substring(0, 100),
+          type: 'ton'
+        });
 
-      // 3. Notify the user via Bot
-      if (bot) {
-        await bot.telegram.sendMessage(effectiveTelegramId, `✅ TON payment received! Your account is now on ${planId.toUpperCase()} plan.`);
+        if (txError) throw txError;
+
+        // 3. Apply plan + credits consistently
+        await applyPlanCredits(effectiveTelegramId, planId);
+
+        // 4. Notify the user via Bot
+        if (bot) {
+          await bot.telegram.sendMessage(effectiveTelegramId, `✅ TON payment received! Your account is now on ${planId.toUpperCase()} plan.`);
+        }
+      } catch (processingError) {
+        // Compensating action: release tx hash reservation so user can retry safely.
+        await supabase.from("processed_transactions").delete().eq("tx_hash", txHash);
+        throw processingError;
       }
 
       return c.json({ success: true });
