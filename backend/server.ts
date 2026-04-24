@@ -455,6 +455,46 @@ async function startServer() {
   const ADMIN_TASKS_KEY = "admin_tasks_v1";
   const ADMIN_ADS_KEY = "admin_ads_v1";
   registerLeaderboardRoutes(app, supabase);
+  const RATES_TTL_MS = 15 * 60 * 1000;
+  let cachedRates: { tonUsd: number; updatedAt: number } | null = null;
+
+  app.get("/api/config/rates", async (c) => {
+    try {
+      const now = Date.now();
+      if (cachedRates && now - cachedRates.updatedAt < RATES_TTL_MS) {
+        return c.json({
+          tonUsd: cachedRates.tonUsd,
+          updatedAt: new Date(cachedRates.updatedAt).toISOString(),
+          source: "cache",
+        });
+      }
+
+      const response = await axios.get(
+        "https://api.coingecko.com/api/v3/simple/price?ids=the-open-network&vs_currencies=usd",
+        { timeout: 10_000 },
+      );
+      const tonUsd = Number(response?.data?.["the-open-network"]?.usd || 0);
+      if (!Number.isFinite(tonUsd) || tonUsd <= 0) {
+        throw new Error("Invalid TON/USD rate response");
+      }
+
+      cachedRates = { tonUsd, updatedAt: now };
+      return c.json({
+        tonUsd,
+        updatedAt: new Date(now).toISOString(),
+        source: "live",
+      });
+    } catch (error: any) {
+      if (cachedRates) {
+        return c.json({
+          tonUsd: cachedRates.tonUsd,
+          updatedAt: new Date(cachedRates.updatedAt).toISOString(),
+          source: "stale_cache",
+        });
+      }
+      return c.json({ error: "Failed to fetch market rates" }, 503);
+    }
+  });
 
   const getCachedCollection = async <T = any>(key: string): Promise<T[]> => {
     try {
@@ -838,7 +878,17 @@ async function startServer() {
       const result = await analyzeMatchWithSearch(matchString);
 
       const topPrediction = result?.predictions?.[0];
-      const [home = "Home", away = "Away"] = String(matchString).split("vs").map((p: string) => p.trim());
+      let home = "Home";
+      let away = "Away";
+      if (matchId) {
+        try {
+          const fixtureDetails = await getMatchDetails(matchId);
+          home = fixtureDetails?.home?.name || home;
+          away = fixtureDetails?.away?.name || away;
+        } catch {
+          // Fallback to generic names if fixture lookup fails.
+        }
+      }
       const newHistoryItem: UserHistoryItem = {
         id: crypto.randomUUID(),
         fixtureId: String(matchId || "").startsWith("espn_") ? String(matchId) : null,

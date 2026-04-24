@@ -77,10 +77,10 @@ const PLANS = [
 ];
 
 const USD_TO_STARS_RATE = 50; // 1 USD ≈ 50 Telegram Stars
-const USD_TO_TON_RATE = Number(import.meta.env.VITE_USD_TO_TON_RATE || 0.23); // configurable market approximation
+const DEFAULT_USD_TO_TON_RATE = Number(import.meta.env.VITE_USD_TO_TON_RATE || 0.23);
 
 const getPriceInStars = (usdPrice: number) => Math.ceil(usdPrice * USD_TO_STARS_RATE);
-const getPriceInTon = (usdPrice: number) => Number((usdPrice * USD_TO_TON_RATE).toFixed(2));
+const getPriceInTon = (usdPrice: number, usdToTonRate: number) => Number((usdPrice * usdToTonRate).toFixed(2));
 
 
 export const Profile: React.FC = () => {
@@ -132,6 +132,7 @@ export const Profile: React.FC = () => {
   // Payment State
   const [isViewingPaymentMethods, setIsViewingPaymentMethods] = useState(false);
   const [selectedPlanForPayment, setSelectedPlanForPayment] = useState<any>(null);
+  const [usdToTonRate, setUsdToTonRate] = useState(DEFAULT_USD_TO_TON_RATE);
 
   // Support Chat State
   const [chatMessage, setChatMessage] = useState('');
@@ -163,6 +164,20 @@ export const Profile: React.FC = () => {
       supportService.getFAQs().then(setFaqs);
     }
   }, [isViewingSupport]);
+
+  useEffect(() => {
+    fetch('/api/config/rates')
+      .then((r) => (r.ok ? r.json() : null))
+      .then((data) => {
+        const tonUsd = Number(data?.tonUsd || 0);
+        if (tonUsd > 0) {
+          setUsdToTonRate(1 / tonUsd);
+        }
+      })
+      .catch(() => {
+        // Keep fallback rate.
+      });
+  }, []);
 
   useEffect(() => {
     if (!isViewingLegal) return;
@@ -360,7 +375,7 @@ export const Profile: React.FC = () => {
   const handleTonPayment = async () => {
     hapticFeedback('medium');
     if (!selectedPlanForPayment || !user) return;
-    const tonPrice = getPriceInTon(Number(selectedPlanForPayment.usdPrice || 0));
+    const tonPrice = getPriceInTon(Number(selectedPlanForPayment.usdPrice || 0), usdToTonRate);
     const tonReceiver = import.meta.env.VITE_TON_RECEIVER_ADDRESS || '';
     if (!tonReceiver) {
       showAlert('TON payments are temporarily unavailable. Missing receiver configuration.');
@@ -1046,7 +1061,7 @@ export const Profile: React.FC = () => {
               const isCurrent = user?.plan === plan.id;
               const Icon = plan.icon;
               const planStarsPrice = getPriceInStars(Number(plan.usdPrice || 0));
-              const planTonPrice = getPriceInTon(Number(plan.usdPrice || 0));
+              const planTonPrice = getPriceInTon(Number(plan.usdPrice || 0), usdToTonRate);
 
               return (
                 <div 
@@ -1124,7 +1139,7 @@ export const Profile: React.FC = () => {
   if (isViewingPaymentMethods && selectedPlanForPayment) {
     const selectedPlanUsdPrice = Number(selectedPlanForPayment.usdPrice || 0);
     const selectedStarsPrice = getPriceInStars(selectedPlanUsdPrice);
-    const selectedTonPrice = getPriceInTon(selectedPlanUsdPrice);
+    const selectedTonPrice = getPriceInTon(selectedPlanUsdPrice, usdToTonRate);
     return (
       <div className="fixed inset-0 z-[100] bg-black flex flex-col overflow-hidden">
           <div className="flex-1 overflow-y-auto no-scrollbar px-5 py-6 space-y-5">

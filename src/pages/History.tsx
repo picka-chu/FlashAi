@@ -1,6 +1,7 @@
 import React, { useEffect, useMemo, useState } from 'react';
 import { motion, AnimatePresence } from 'motion/react';
 import { useUserStore } from '../store/useUserStore';
+import { useTelegram } from '../hooks/useTelegram';
 import {
   History as HistoryIcon,
   Search,
@@ -66,6 +67,7 @@ export const History: React.FC = () => {
   const [activeItem, setActiveItem] = useState<HistoryItem | null>(null);
 
   const { user } = useUserStore();
+  const { initData } = useTelegram();
 
   const filteredHistory = historyItems.filter((item) => {
     const haystack = `${item.match} ${item.predictionMarket}`.toLowerCase();
@@ -84,8 +86,7 @@ export const History: React.FC = () => {
   useEffect(() => {
     const loadHistory = async () => {
       try {
-        const tgInitData = window?.Telegram?.WebApp?.initData || '';
-        const res = await fetch('/api/user/history', { headers: { 'X-TG-Init-Data': tgInitData } });
+        const res = await fetch('/api/user/history', { headers: { 'X-TG-Init-Data': initData || '' } });
         const data = await res.json();
         const normalized = (Array.isArray(data) ? data : []).map((item: any) => ({
           id: String(item.id),
@@ -109,7 +110,7 @@ export const History: React.FC = () => {
       }
     };
     loadHistory();
-  }, []);
+  }, [initData]);
 
   const formatDate = (date: string) => new Date(date).toLocaleString();
 
