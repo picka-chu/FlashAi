@@ -122,7 +122,7 @@ export const SignUpSheet: React.FC<SignUpSheetProps> = ({ isOpen, onClose }) => 
                     className="group relative w-full bg-[#ccff00] text-black font-black text-sm tracking-[0.1em] py-5 rounded-[20px] shadow-[0_10px_30px_rgba(204,255,0,0.2)] active:scale-[0.98] transition-all flex items-center justify-center gap-3 overflow-hidden disabled:opacity-60 disabled:cursor-not-allowed"
                   >
                     <div className="absolute inset-0 bg-white/20 translate-x-[-100%] group-hover:translate-x-[100%] transition-transform duration-700 ease-in-out" />
-                    CONTINUE
+                    Continue
                     <ArrowRight className="w-5 h-5 group-hover:translate-x-1 transition-transform" />
                   </button>
                   <div className="flex items-center justify-center gap-2 mt-3">
