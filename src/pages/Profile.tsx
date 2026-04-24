@@ -71,7 +71,7 @@ const PLANS = [
     icon: Crown,
     color: 'text-amber-400',
     bgColor: 'bg-amber-400/10',
-    features: ['16 Daily credits', '6 Bet slip analysis/day', 'Flash AI Pro (Gemini Pro)', '1 Bundle (2 Safe + 2 Value Bets)', '1-2 Top Pick Accumulator/day', 'Unlimited AI chat'],
+    features: ['16 Daily credits', '6 Bet slip analysis/day', 'Flash AI Pro (advanced reasoning tier)', '1 Bundle (2 Safe + 2 Value Bets)', '1-2 Top Pick Accumulator/day', 'Unlimited AI chat'],
     aiModel: 'gemini-pro'
   }
 ];

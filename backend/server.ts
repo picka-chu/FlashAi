@@ -1401,6 +1401,49 @@ async function startServer() {
     });
 
     bot.launch().catch(err => console.error("❌ Bot launch failed:", err));
+
+    let lastReminderDate = "";
+    const maybeSendMatchdayReminders = async () => {
+      const now = new Date();
+      const todayKey = now.toISOString().slice(0, 10);
+      if (lastReminderDate === todayKey) return;
+      if (now.getUTCHours() < 9) return; // Send once after 09:00 UTC
+
+      try {
+        const upcoming = await getUpcomingMatches();
+        const todaysMatches = (upcoming || []).filter((m: any) => String(m?.fixture?.date || "").startsWith(todayKey)).slice(0, 3);
+        if (!todaysMatches.length) return;
+
+        const reminderLines = todaysMatches.map((m: any) =>
+          `• ${m?.teams?.home?.name || "Home"} vs ${m?.teams?.away?.name || "Away"}`
+        );
+        const message = `⚽ Matchday Reminder\n\nToday's highlighted fixtures:\n${reminderLines.join("\n")}\n\nOpen Flash AI for analysis before kickoff.`;
+
+        const { data: recipients } = await supabase
+          .from("users")
+          .select("telegram_id")
+          .neq("plan", "free")
+          .limit(500);
+
+        for (const recipient of recipients || []) {
+          try {
+            await bot.telegram.sendMessage(Number(recipient.telegram_id), message, Markup.inlineKeyboard([
+              [Markup.button.webApp("Open Flash AI", appUrl)],
+            ]));
+          } catch {
+            // Continue broadcasting to remaining recipients.
+          }
+        }
+        lastReminderDate = todayKey;
+      } catch (err) {
+        console.error("Matchday reminder task failed:", err);
+      }
+    };
+
+    setInterval(() => {
+      maybeSendMatchdayReminders().catch(() => undefined);
+    }, 60 * 60 * 1000);
+    maybeSendMatchdayReminders().catch(() => undefined);
   }
 
   // Auth/Signup Request Endpoint

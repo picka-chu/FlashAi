@@ -1,6 +1,7 @@
 import { GoogleGenAI } from "@google/genai";
 import { ContextData, BetSlipAnalysis, MatchData, PredictionResult } from "../../src/types/prediction";
 import { multiAgentService } from "./multiAgentService";
+import { logger } from "../utils/logger";
 import { 
   apiKeyManager, 
   analysisCache, 
@@ -120,10 +121,10 @@ export async function analyzeMatchWithSearch(matchString: string): Promise<Predi
         });
 
         const rawText = result.text || "";
-        console.log("Raw Gemini response:", rawText.substring(0, 500));
+        logger.debug("Gemini response received", { preview: rawText.substring(0, 180) });
         
         const parsed = parseJsonFromText(rawText);
-        console.log("Parsed result:", parsed ? Object.keys(parsed) : "null");
+        logger.debug("Gemini parsed keys", parsed ? Object.keys(parsed) : ["null"]);
         
         if (!parsed) {
           throw new Error(`Failed to parse JSON from Gemini response. Raw text: ${rawText.substring(0, 200)}`);
