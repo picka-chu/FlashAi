@@ -1,6 +1,6 @@
-import React, { useEffect, useRef, useState } from 'react';
+import React, { useState } from 'react';
 import { motion, AnimatePresence } from 'motion/react';
-import { X, ArrowRight, FileText } from 'lucide-react';
+import { X, ArrowRight, ShieldCheck, Zap } from 'lucide-react';
 import { useTelegram } from '../hooks/useTelegram';
 
 interface SignUpSheetProps {
@@ -41,11 +41,11 @@ export const SignUpSheet: React.FC<SignUpSheetProps> = ({ isOpen, onClose }) => 
       if (response.ok) {
         const botUsername = (import.meta.env.VITE_TELEGRAM_BOT_USERNAME || 'Deepflashaibot').replace('@', '');
         const signupLink = `https://t.me/${botUsername}`;
-        onClose();
-        // Open signup bot and close mini app so the user can share contact from bot keyboard.
-        if (tg?.openTelegramLink) {
-          tg.openTelegramLink(signupLink);
-          tg.close?.();
+        
+        // Use tg.close() to close the mini app as requested
+        if (tg?.close) {
+          // Optional: briefly show a success message or just close
+          tg.close();
         } else {
           window.location.href = signupLink;
         }
@@ -76,61 +76,77 @@ export const SignUpSheet: React.FC<SignUpSheetProps> = ({ isOpen, onClose }) => 
             animate={{ opacity: 1 }}
             exit={{ opacity: 0 }}
             onClick={onClose}
-            className="fixed inset-0 bg-black/80 backdrop-blur-md z-[1000]"
+            className="fixed inset-0 bg-black/90 backdrop-blur-sm z-[1000]"
           />
           <motion.div 
             initial={{ y: '100%' }}
             animate={{ y: 0 }}
             exit={{ y: '100%' }}
-            transition={{ type: 'spring', damping: 25, stiffness: 200 }}
-            className="fixed bottom-0 left-0 right-0 bg-zinc-950 border-t border-zinc-800/50 rounded-t-[40px] z-[1001] overflow-hidden"
+            transition={{ type: 'spring', damping: 30, stiffness: 300 }}
+            className="fixed bottom-0 left-0 right-0 bg-[#0f0f0f] border-t border-white/[0.05] rounded-t-[32px] z-[1001] overflow-hidden"
           >
-            <div className="px-6 pt-8 pb-10 space-y-6 relative">
+            <div className="px-8 pt-10 pb-12 space-y-8 relative">
               <button 
                 onClick={onClose}
-                className="absolute top-6 right-6 w-10 h-10 bg-zinc-900 border border-zinc-800 rounded-full flex items-center justify-center active:scale-90 transition-all"
+                className="absolute top-6 right-6 w-8 h-8 bg-white/5 rounded-full flex items-center justify-center active:scale-90 transition-all"
               >
-                <X className="w-5 h-5 text-zinc-400" />
+                <X className="w-4 h-4 text-zinc-500" />
               </button>
 
-              <div className="space-y-5">
-                <div className="space-y-2 text-center pt-6">
-                  <p className="text-[10px] font-black text-[#ccff00] uppercase tracking-[0.2em]">Get Started</p>
-                  <h3 className="text-3xl font-black text-white leading-tight">Create Your Flash AI Account</h3>
-                  <p className="text-xs font-bold text-zinc-500 leading-relaxed">
-                    Continue in Telegram, share your contact once, and activate your account securely.
+              <div className="space-y-6">
+                <div className="space-y-3">
+                  <div className="w-12 h-12 bg-[#ccff00]/10 rounded-2xl flex items-center justify-center mb-6">
+                    <Zap className="w-6 h-6 text-[#ccff00] fill-current" />
+                  </div>
+                  <h3 className="text-2xl font-bold text-white tracking-tight">Join Flash AI</h3>
+                  <p className="text-sm text-zinc-400 leading-relaxed">
+                    Unlock professional football analysis and real-time predictions. Share your contact to get started.
                   </p>
                 </div>
 
-                <label className="flex items-start gap-3 p-4 rounded-2xl bg-zinc-900/60 border border-zinc-800/70 cursor-pointer">
-                  <input
-                    type="checkbox"
-                    checked={acceptedTerms}
-                    onChange={(e) => setAcceptedTerms(e.target.checked)}
-                    style={{ accentColor: '#ccff00' }}
-                    className="mt-0.5 w-4 h-4 rounded border-zinc-600 bg-zinc-800 focus:ring-[#ccff00]/40"
-                  />
-                  <p className="text-[11px] font-bold text-zinc-400 leading-relaxed">
-                    I agree with <button type="button" onClick={() => openLegalDocument('terms')} className="text-[#ccff00] underline">Terms</button> and <button type="button" onClick={() => openLegalDocument('privacy')} className="text-[#ccff00] underline">Privacy Policy</button>.
-                  </p>
-                </label>
+                <div className="space-y-4 py-4">
+                  <div className="flex items-start gap-3">
+                    <div className="mt-1 w-5 h-5 rounded-full bg-zinc-800 flex items-center justify-center shrink-0">
+                      <ShieldCheck className="w-3 h-3 text-[#ccff00]" />
+                    </div>
+                    <p className="text-xs text-zinc-400">Secure Telegram-based authentication</p>
+                  </div>
+                  <div className="flex items-start gap-3">
+                    <div className="mt-1 w-5 h-5 rounded-full bg-zinc-800 flex items-center justify-center shrink-0">
+                      <Zap className="w-3 h-3 text-[#ccff00]" />
+                    </div>
+                    <p className="text-xs text-zinc-400">Instant access to premium insights</p>
+                  </div>
+                </div>
 
-                <div>
+                <div className="space-y-6">
+                  <label className="flex items-start gap-3 cursor-pointer group">
+                    <div className="relative flex items-center">
+                      <input
+                        type="checkbox"
+                        checked={acceptedTerms}
+                        onChange={(e) => setAcceptedTerms(e.target.checked)}
+                        className="peer h-5 w-5 cursor-pointer appearance-none rounded-md border border-white/10 bg-white/5 transition-all checked:bg-[#ccff00]"
+                      />
+                      <X className="absolute h-3.5 w-3.5 text-black opacity-0 peer-checked:opacity-100 left-0.5 pointer-events-none" />
+                    </div>
+                    <p className="text-[11px] text-zinc-500 leading-relaxed">
+                      I agree to the <button type="button" onClick={() => openLegalDocument('terms')} className="text-zinc-300 hover:text-[#ccff00] transition-colors">Terms of Service</button> and <button type="button" onClick={() => openLegalDocument('privacy')} className="text-zinc-300 hover:text-[#ccff00] transition-colors">Privacy Policy</button>.
+                    </p>
+                  </label>
+
                   <button 
                     onClick={handleSignUp}
                     disabled={isSubmitting || !acceptedTerms}
-                    className="group relative w-full bg-[#ccff00] text-black font-black text-sm tracking-[0.1em] py-5 rounded-[20px] shadow-[0_10px_30px_rgba(204,255,0,0.2)] active:scale-[0.98] transition-all flex items-center justify-center gap-3 overflow-hidden disabled:opacity-60 disabled:cursor-not-allowed"
+                    className="w-full bg-[#ccff00] text-black font-bold text-sm py-4 rounded-2xl active:scale-[0.98] transition-all flex items-center justify-center gap-2 disabled:opacity-30 disabled:grayscale"
                   >
-                    <div className="absolute inset-0 bg-white/20 translate-x-[-100%] group-hover:translate-x-[100%] transition-transform duration-700 ease-in-out" />
-                    Continue
-                    <ArrowRight className="w-5 h-5 group-hover:translate-x-1 transition-transform" />
+                    {isSubmitting ? 'Processing...' : 'Continue to Telegram'}
+                    <ArrowRight className="w-4 h-4" />
                   </button>
-                  <div className="flex items-center justify-center gap-2 mt-3">
-                    <FileText className="w-3.5 h-3.5 text-zinc-600" />
-                    <p className="text-[10px] font-bold text-zinc-600 uppercase tracking-widest">
-                      Mini app will close and open bot contact step
-                    </p>
-                  </div>
+                  
+                  <p className="text-[10px] text-center text-zinc-600 font-medium uppercase tracking-widest">
+                    App will close to complete registration
+                  </p>
                 </div>
               </div>
             </div>

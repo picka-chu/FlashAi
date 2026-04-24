@@ -472,9 +472,9 @@ export async function executeWithRetry<T>(
         throw new Error('No API keys available');
       }
 
-      // Professional Jitter: Small random delay to prevent synchronized retries
+      // Optimized Jitter: Reduced for faster recovery
       if (attempt > 0) {
-        const jitter = Math.random() * 1000;
+        const jitter = Math.random() * 500;
         await new Promise(resolve => setTimeout(resolve, jitter));
       }
 
@@ -502,8 +502,10 @@ export async function executeWithRetry<T>(
         // Report failure
         apiKeyManager.reportFailure(keyInfo.index, isRateLimit);
         
+        // Fast key rotation for rate limits without exponential backoff
         if (isRateLimit && attempt < maxRetries) {
-          console.log(`🔄 Rate limit hit, rotating to next key (attempt ${attempt}/${maxRetries})`);
+          console.log(`🔄 Rate limit hit, fast rotating to next key (attempt ${attempt}/${maxRetries})`);
+          // Skip delay and try next key immediately
           continue;
         }
         
@@ -512,7 +514,8 @@ export async function executeWithRetry<T>(
           throw error;
         }
         
-        const delay = Math.min(1000 * Math.pow(2, attempt), 5000);
+        // Reduced backoff for other retryable errors
+        const delay = Math.min(500 * Math.pow(1.5, attempt), 2000);
         await new Promise(resolve => setTimeout(resolve, delay));
       }
     }

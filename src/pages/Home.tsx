@@ -554,61 +554,77 @@ export const Home: React.FC<HomeProps> = ({ onTabChange }) => {
         {/* Top Prematch */}
         <section className="space-y-4">
           <div className="flex items-center justify-between">
-            <h3 className="text-sm font-black text-white tracking-wider">Top prematch</h3>
-            <span className="text-[10px] font-bold text-zinc-500">View all</span>
+            <h3 className="text-xs font-black text-zinc-400 uppercase tracking-[0.15em]">Top prematch</h3>
+            <button 
+              onClick={() => onTabChange('matches')}
+              className="text-[10px] font-black text-[#ccff00] uppercase tracking-wider"
+            >
+              View all
+            </button>
           </div>
 
-          <div className="flex gap-4 overflow-x-auto no-scrollbar pb-4 snap-x">
-            {upcomingMatches.length > 0 ? upcomingMatches.map((match) => (
-              <motion.div 
-                key={match.id}
-                whileTap={{ scale: 0.98 }}
-                onClick={() => handleAnalyze(match)}
-                className="shrink-0 w-[85vw] max-w-[320px] snap-center bg-zinc-900 border border-zinc-800 rounded-[32px] p-5 relative overflow-hidden cursor-pointer"
-              >
-                <div className="flex justify-between items-start mb-6 relative z-10">
-                  <span className="text-xs font-black text-white tracking-widest bg-white/10 px-3 py-1 rounded-full">
-                    {match.league}
-                  </span>
-                  <span className="text-[10px] font-black text-[#ccff00] bg-[#ccff00]/10 px-2 py-1 rounded-full backdrop-blur-sm">
-                    {match.date}
-                  </span>
-                </div>
-
-                <div className="flex items-center justify-between relative z-10">
-                  <div className="flex flex-col items-center gap-2 w-1/3">
-                    <div className="w-14 h-14 bg-zinc-800 rounded-full p-2 shadow-lg flex items-center justify-center overflow-hidden">
-                      {match.homeLogo ? (
-                        <img src={match.homeLogo} alt={match.homeShort} className="w-10 h-10 object-contain" referrerPolicy="no-referrer" />
-                      ) : (
-                        <span className="text-xl font-black text-white">{match.homeShort}</span>
-                      )}
+          <div className="space-y-2.5">
+            {upcomingMatches.length > 0 ? (
+              upcomingMatches.slice(0, 10).map((match) => (
+                <motion.div
+                  key={match.id}
+                  initial={{ opacity: 0, y: 10 }}
+                  animate={{ opacity: 1, y: 0 }}
+                  onClick={() => handleAnalyze(match)}
+                  className="group relative bg-[#141414] border border-white/[0.03] rounded-2xl p-4 active:scale-[0.98] transition-all"
+                >
+                  <div className="flex items-center justify-between gap-4">
+                    <div className="flex flex-col gap-3 flex-1">
+                      {/* League & Time */}
+                      <div className="flex items-center gap-2">
+                        <span className="text-[9px] font-bold text-zinc-500 uppercase tracking-[0.1em]">{match.league}</span>
+                        <span className="w-1 h-1 rounded-full bg-zinc-800" />
+                        <span className="text-[9px] font-medium text-zinc-400">{match.time} • {match.date}</span>
+                      </div>
+                      
+                      {/* Teams */}
+                      <div className="space-y-2">
+                        <div className="flex items-center gap-3">
+                          <div className="w-6 h-6 rounded-lg bg-zinc-800/50 flex items-center justify-center overflow-hidden border border-white/5">
+                            {match.homeLogo ? (
+                              <img src={match.homeLogo} alt="" className="w-4 h-4 object-contain" referrerPolicy="no-referrer" />
+                            ) : (
+                              <span className="text-[8px] font-bold text-zinc-500">{match.homeShort}</span>
+                            )}
+                          </div>
+                          <span className="text-sm font-semibold text-zinc-100">{match.home}</span>
+                        </div>
+                        <div className="flex items-center gap-3">
+                          <div className="w-6 h-6 rounded-lg bg-zinc-800/50 flex items-center justify-center overflow-hidden border border-white/5">
+                            {match.awayLogo ? (
+                              <img src={match.awayLogo} alt="" className="w-4 h-4 object-contain" referrerPolicy="no-referrer" />
+                            ) : (
+                              <span className="text-[8px] font-bold text-zinc-500">{match.awayShort}</span>
+                            )}
+                          </div>
+                          <span className="text-sm font-semibold text-zinc-100">{match.away}</span>
+                        </div>
+                      </div>
                     </div>
-                    <span className="text-xs font-black text-white text-center">{match.home}</span>
-                  </div>
 
-                  <div className="flex flex-col items-center justify-center w-1/3">
-                    <span className="text-[10px] font-bold text-zinc-500 mb-1">{match.time}</span>
-                    <span className="text-2xl font-black text-white">VS</span>
-                    <span className="text-[10px] font-bold text-zinc-500 mt-1">{match.date}</span>
+                    {/* Action */}
+                    <button
+                      onClick={(e) => {
+                        e.stopPropagation();
+                        handleAnalyze(match);
+                      }}
+                      className="h-10 px-4 rounded-xl bg-[#ccff00] text-black text-[11px] font-black uppercase tracking-wider flex items-center gap-1.5 active:scale-95 transition-transform shadow-[0_4px_12px_rgba(204,255,0,0.15)]"
+                    >
+                      <Zap className="w-3 h-3 fill-current" />
+                      Analyze
+                    </button>
                   </div>
-
-                  <div className="flex flex-col items-center gap-2 w-1/3">
-                    <div className="w-14 h-14 bg-zinc-800 rounded-full p-2 shadow-lg flex items-center justify-center overflow-hidden">
-                      {match.awayLogo ? (
-                        <img src={match.awayLogo} alt={match.awayShort} className="w-10 h-10 object-contain" referrerPolicy="no-referrer" />
-                      ) : (
-                        <span className="text-xl font-black text-white">{match.awayShort}</span>
-                      )}
-                    </div>
-                    <span className="text-xs font-black text-white text-center">{match.away}</span>
-                  </div>
-                </div>
-              </motion.div>
-            )) : (
-              <div className="w-full py-8 flex flex-col items-center justify-center bg-white/5 rounded-[32px] border border-white/10">
-                <span className="text-zinc-500 text-sm font-bold">No upcoming matches</span>
-              </div>
+                </motion.div>
+              ))
+            ) : (
+              [1, 2, 3].map((i) => (
+                <div key={i} className="h-28 bg-[#141414] border border-white/[0.03] rounded-2xl animate-pulse" />
+              ))
             )}
           </div>
         </section>

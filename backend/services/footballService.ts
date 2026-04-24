@@ -201,16 +201,44 @@ export async function getLiveMatches() {
   return mapped;
 }
 
+const UPCOMING_CACHE: Record<string, { data: any[]; timestamp: number }> = {};
+const UPCOMING_CACHE_TTL = 5 * 60 * 1000; // 5 minutes
+
 export async function getUpcomingMatches(topFixtures: string[] = []) {
   const startDate = getTodayDateString();
-  const dateRange = `${startDate}`;
+  const cacheKey = `upcoming_${startDate}`;
+  
+  const cached = UPCOMING_CACHE[cacheKey];
+  if (cached && Date.now() - cached.timestamp < UPCOMING_CACHE_TTL) {
+    return sortAndFilterUpcoming(cached.data, topFixtures);
+  }
 
-  const promises = POPULAR_LEAGUES.map((league) =>
-    axios.get(`${ESPN_BASE}/${league}/scoreboard?dates=${dateRange}`).then((res) => (res.data.events || []).map((e: any) => ({ ...e, _leagueSlug: league }))).catch(() => []),
-  );
+  const priorityLeagues = POPULAR_LEAGUES.slice(0, 15);
+  const remainingLeagues = POPULAR_LEAGUES.slice(15);
 
-  const flattened = (await Promise.all(promises)).flat();
-  const upcoming = flattened.filter((e: any) => (e.status?.type?.state || e.competitions?.[0]?.status?.type?.state) === 'pre');
+  const fetchLeagues = async (leagues: string[]) => {
+    const promises = leagues.map((league) =>
+      axios.get(`${ESPN_BASE}/${league}/scoreboard?dates=${startDate}`, { timeout: 5000 })
+        .then((res) => (res.data.events || []).map((e: any) => ({ ...e, _leagueSlug: league })))
+        .catch(() => [])
+    );
+    return (await Promise.all(promises)).flat();
+  };
+
+  const priorityEvents = await fetchLeagues(priorityLeagues);
+  UPCOMING_CACHE[cacheKey] = { data: priorityEvents, timestamp: Date.now() };
+
+  fetchLeagues(remainingLeagues).then(remainingEvents => {
+    if (remainingEvents.length > 0) {
+      UPCOMING_CACHE[cacheKey].data = [...UPCOMING_CACHE[cacheKey].data, ...remainingEvents];
+    }
+  });
+
+  return sortAndFilterUpcoming(priorityEvents, topFixtures);
+}
+
+function sortAndFilterUpcoming(events: any[], topFixtures: string[]) {
+  const upcoming = events.filter((e: any) => (e.status?.type?.state || e.competitions?.[0]?.status?.type?.state) === 'pre');
 
   upcoming.sort((a, b) => {
     const dateA = new Date(a.date).getTime();
