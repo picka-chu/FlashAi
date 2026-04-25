@@ -38,8 +38,6 @@ console.log("✅ Supabase service role key initialized for backend operations.")
 
 const PLAN_CREDITS: Record<string, number> = {
   free: 3,
-  weekly: 35,
-  monthly: 120,
   monthly_basic: 10,
   monthly_pro: 16,
   admin: 0,
@@ -47,16 +45,12 @@ const PLAN_CREDITS: Record<string, number> = {
 
 const PLAN_DAILY_LIMITS: Record<string, { credits: number; betSlipAnalysis: number }> = {
   free: { credits: 3, betSlipAnalysis: 1 },
-  weekly: { credits: 35, betSlipAnalysis: 3 },
-  monthly: { credits: 120, betSlipAnalysis: 10 },
   monthly_basic: { credits: 10, betSlipAnalysis: 2 },
   monthly_pro: { credits: 16, betSlipAnalysis: 6 },
   admin: { credits: 999, betSlipAnalysis: 999 },
 };
 
 const PLAN_PRICE_USD: Record<string, number> = {
-  weekly: 3.99,
-  monthly: 12.99,
   monthly_basic: 8.99,
   monthly_pro: 14.99,
 };
@@ -563,7 +557,7 @@ async function startServer() {
 
   const normalizeAudience = (value: string) => {
     const v = String(value || "all").toLowerCase();
-    if (["all", "subscribed", "unsubscribed", "weekly", "monthly", "admin"].includes(v)) return v;
+    if (["all", "subscribed", "unsubscribed", "monthly_basic", "monthly_pro", "admin"].includes(v)) return v;
     return "all";
   };
 
@@ -785,8 +779,6 @@ async function startServer() {
   // Updated to match frontend UI promises and professional tier structure
   const PLAN_CONFIG: Record<string, { dailyCredits: number; name: string }> = {
     free: { dailyCredits: 3, name: "Free" },
-    weekly: { dailyCredits: 35, name: "Pro Weekly" },
-    monthly: { dailyCredits: 120, name: "Elite Monthly" },
     monthly_basic: { dailyCredits: 10, name: "Monthly Basic" },
     monthly_pro: { dailyCredits: 16, name: "Monthly Pro" },
     admin: { dailyCredits: 999, name: "Administrator" }
@@ -804,9 +796,7 @@ async function startServer() {
 
     // Auto-downgrade expired subscriptions.
     if (
-      (effectivePlan === "weekly" ||
-        effectivePlan === "monthly" ||
-        effectivePlan === "monthly_basic" ||
+      (effectivePlan === "monthly_basic" ||
         effectivePlan === "monthly_pro") &&
       planExpiresAt &&
       planExpiresAt.getTime() <= now.getTime()
@@ -1039,8 +1029,8 @@ async function startServer() {
       const plan = user.plan || "free";
       const maxImagesByPlan: Record<string, number> = {
         free: 1,
-        weekly: 2,
-        monthly: 5,
+        monthly_basic: 2,
+        monthly_pro: 6,
         admin: 10,
       };
       const maxImages = maxImagesByPlan[plan] ?? 1;
@@ -1746,13 +1736,21 @@ async function startServer() {
       const tgUser = initData ? getTelegramUserFromInitData(initData) : null;
       if (!tgUser?.id) return c.json({ error: "User not identified" }, 401);
 
-      const [{ count: referredCount }, { data: referrers }] = await Promise.all([
+      const [{ count: referredCount }, { data: referrers }, { data: rewardedReferrals }] = await Promise.all([
         supabase.from("users").select("*", { count: "exact", head: true }).eq("referrer_id", tgUser.id),
         supabase.from("users").select("telegram_id").eq("referrer_id", tgUser.id),
+        supabase
+          .from("referrals")
+          .select("reward_amount")
+          .eq("referrer_telegram_id", tgUser.id)
+          .eq("reward_given", true),
       ]);
 
       const totalReferred = referredCount || 0;
-      const earnedCredits = totalReferred * referralRewardCredits;
+      const earnedCredits = (rewardedReferrals || []).reduce((total: number, referral: any) => {
+        const rewardAmount = Number(referral?.reward_amount || 0);
+        return total + (Number.isFinite(rewardAmount) ? rewardAmount : 0);
+      }, 0);
       const referralLink = `https://t.me/${botUsername}?start=${tgUser.id}`;
 
       return c.json({
@@ -2035,18 +2033,24 @@ async function startServer() {
     }
 
     try {
-      const { telegramId, taskId, reward } = await c.req.json();
-      
-      if (!telegramId || !taskId || !reward) {
+      const tgUser = initData ? getTelegramUserFromInitData(initData) : null;
+      const { telegramId, taskId } = await c.req.json();
+      const normalizedTelegramId = Number(telegramId || 0);
+      const normalizedTaskId = String(taskId || "").trim();
+
+      if (!tgUser?.id || !normalizedTelegramId || !normalizedTaskId) {
         return c.json({ error: "Missing required parameters" }, 400);
+      }
+      if (tgUser.id !== normalizedTelegramId) {
+        return c.json({ error: "Telegram identity mismatch" }, 403);
       }
 
       // 1. Check if user already completed the task
       const { data: taskLog } = await supabase
         .from('user_tasks')
         .select('*')
-        .eq('telegram_id', telegramId)
-        .eq('task_id', taskId)
+        .eq('telegram_id', normalizedTelegramId)
+        .eq('task_id', normalizedTaskId)
         .single();
 
       if (taskLog) {
@@ -2054,7 +2058,15 @@ async function startServer() {
       }
 
       // 2. Perform verification for specific tasks
-      const { data: taskData } = await supabase.from('tasks').select('*').eq('id', taskId).single();
+      const { data: taskData } = await supabase
+        .from('tasks')
+        .select('id,reward,url,active')
+        .eq('id', normalizedTaskId)
+        .maybeSingle();
+      if (!taskData || taskData.active === false) {
+        return c.json({ error: "Task not found or inactive" }, 404);
+      }
+      const taskReward = Math.max(0, Math.floor(Number(taskData.reward || 0)));
       
       if (taskData && bot) {
         // Check if task URL points to a Telegram channel/group
@@ -2064,7 +2076,7 @@ async function startServer() {
         if (match && match[1]) {
           const channelUsername = `@${match[1]}`;
           try {
-            const member = await bot.telegram.getChatMember(channelUsername, telegramId);
+            const member = await bot.telegram.getChatMember(channelUsername, normalizedTelegramId);
             const validStatuses = ['member', 'administrator', 'creator'];
             
             if (!validStatuses.includes(member.status)) {
@@ -2088,17 +2100,25 @@ async function startServer() {
 
       // 3. Log completion and award reward
       const { error: logError } = await supabase.from('user_tasks').insert({
-        telegram_id: telegramId,
-        task_id: taskId,
+        telegram_id: normalizedTelegramId,
+        task_id: normalizedTaskId,
         completed_at: new Date().toISOString()
       });
 
       if (logError) throw logError;
 
-      const { data: user } = await supabase.from('users').select('credits').eq('telegram_id', telegramId).single();
-      await supabase.from('users').update({ credits: (user?.credits || 0) + reward }).eq('telegram_id', telegramId);
+      const { data: user } = await supabase
+        .from('users')
+        .select('credits')
+        .eq('telegram_id', normalizedTelegramId)
+        .single();
+      const newCredits = (user?.credits || 0) + taskReward;
+      await supabase
+        .from('users')
+        .update({ credits: newCredits })
+        .eq('telegram_id', normalizedTelegramId);
 
-      return c.json({ success: true, newCredits: (user?.credits || 0) + reward });
+      return c.json({ success: true, newCredits, rewardedCredits: taskReward });
     } catch (e: any) {
       console.error("Task claim error:", e.message);
       return c.json({ error: "Failed to claim task reward" }, 500);
@@ -2501,8 +2521,8 @@ async function startServer() {
       let query = supabase.from("users").select("telegram_id");
       if (targetGroup === 'subscribed') query = query.neq('plan', 'free');
       if (targetGroup === 'unsubscribed') query = query.eq('plan', 'free');
-      if (targetGroup === 'weekly') query = query.eq('plan', 'weekly');
-      if (targetGroup === 'monthly') query = query.eq('plan', 'monthly');
+      if (targetGroup === 'monthly_basic') query = query.eq('plan', 'monthly_basic');
+      if (targetGroup === 'monthly_pro') query = query.eq('plan', 'monthly_pro');
 
       const { data: users } = await query.not("telegram_id", "is", null);
       if (!users || !bot) return c.json({ success: true, sentCount: 0 });
@@ -2559,7 +2579,7 @@ ${ad.subtitle}`;
     const { telegramId, planId } = await c.req.json().catch(() => ({} as any));
     const targetTelegramId = Number(telegramId || 0);
     const targetPlan = String(planId || "").trim();
-    const allowedPlans = new Set(["free", "weekly", "monthly", "monthly_basic", "monthly_pro", "admin"]);
+    const allowedPlans = new Set(["free", "monthly_basic", "monthly_pro", "admin"]);
 
     if (!targetTelegramId || !allowedPlans.has(targetPlan)) {
       return c.json({ error: "Valid telegramId and planId are required" }, 400);
@@ -2583,11 +2603,9 @@ ${ad.subtitle}`;
           .eq("telegram_id", targetTelegramId);
         if (error) throw error;
       } else {
-        const planExpiresAt = targetPlan === "weekly"
-          ? new Date(Date.now() + 7 * 24 * 60 * 60 * 1000).toISOString()
-          : targetPlan === "monthly"
-            ? new Date(Date.now() + 30 * 24 * 60 * 60 * 1000).toISOString()
-            : null;
+        const planExpiresAt = targetPlan === "free"
+          ? null
+          : new Date(Date.now() + 30 * 24 * 60 * 60 * 1000).toISOString();
 
         const { error } = await supabase
           .from("users")
@@ -2770,8 +2788,8 @@ ${ad.subtitle}`;
     let query = supabase.from("users").select("telegram_id,plan").not("telegram_id", "is", null);
     if (target_group === 'subscribed') query = query.neq('plan', 'free');
     if (target_group === 'unsubscribed') query = query.eq('plan', 'free');
-    if (target_group === 'weekly') query = query.eq('plan', 'weekly');
-    if (target_group === 'monthly') query = query.eq('plan', 'monthly');
+    if (target_group === 'monthly_basic') query = query.eq('plan', 'monthly_basic');
+    if (target_group === 'monthly_pro') query = query.eq('plan', 'monthly_pro');
     if (target_group === 'admin') query = query.eq('plan', 'admin');
 
     const { data: users } = await query;
