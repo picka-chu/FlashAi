@@ -2621,6 +2621,12 @@ ${ad.subtitle}`;
 
       return c.json({ success: true });
     } catch (error: any) {
+      const rawMessage = String(error?.message || "");
+      if (error?.code === "22P02" && rawMessage.includes("enum user_plan")) {
+        return c.json({
+          error: "Database plan enum is outdated. Run migration_plan_enum_monthly_tiers.sql to add monthly_basic/monthly_pro."
+        }, 500);
+      }
       return c.json({ error: error?.message || "Failed to assign plan" }, 500);
     }
   });
