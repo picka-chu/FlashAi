@@ -405,7 +405,8 @@ export function isRetryableGeminiError(error: any): boolean {
     msg.includes("rate") ||
     msg.includes("unavailable") ||
     msg.includes("overloaded") ||
-    msg.includes("429")
+    msg.includes("429") ||
+    msg.includes("failed to parse json from gemini response")
   );
 }
 
