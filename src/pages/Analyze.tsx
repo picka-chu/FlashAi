@@ -132,8 +132,8 @@ export const Analyze: React.FC<{ onTabChange?: (tab: string) => void }> = ({ onT
     if (!files) return;
     const maxImagesByPlan: Record<string, number> = {
       free: 1,
-      weekly: 2,
-      monthly: 5,
+      monthly_basic: 2,
+      monthly_pro: 6,
       admin: 10,
     };
     const plan = user?.plan || 'free';

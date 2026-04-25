@@ -15,12 +15,12 @@ export const INITIAL_FAQS: FAQ[] = [
   },
   {
     question: 'How do I get more credits?',
-    answer: "You can get more credits by upgrading to a Weekly or Monthly plan, or by completing tasks in the 'Referral and Earn' section. You also get a daily bonus if you claim it!",
+    answer: "You can get more credits by upgrading to Monthly Basic or Monthly Pro, or by completing tasks in the 'Referral and Earn' section. You also get a daily bonus if you claim it!",
     category: 'general',
   },
   {
     question: 'What are the differences between the plans?',
-    answer: 'Free plan gives 3 daily credits and 1 analysis. Weekly ($3.99) gives 35 daily credits and 3 analyses. Monthly ($11.99) gives 120 daily credits, 10 analyses, and unlimited AI chat with deep data gathering.',
+    answer: 'Free gives 3 daily credits and 1 analysis. Monthly Basic ($8.99) gives 10 daily credits and 2 analyses per day. Monthly Pro ($14.99) gives 16 daily credits, 6 analyses per day, and full AI chat access.',
     category: 'subscription',
   },
   {

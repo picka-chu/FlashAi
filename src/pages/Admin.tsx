@@ -811,10 +811,10 @@ export const Admin: React.FC = () => {
                         </button>
                         <button 
                           disabled={isBroadcasting}
-                          onClick={() => broadcastAd(ad.id, 'weekly')}
+                          onClick={() => broadcastAd(ad.id, 'monthly_pro')}
                           className="py-2.5 rounded-xl bg-[#ccff00]/10 text-[9px] font-black uppercase text-[#ccff00] hover:bg-[#ccff00] hover:text-black transition-all flex items-center justify-center gap-2"
                         >
-                          <Zap className="w-3 h-3" /> Weekly
+                          <Zap className="w-3 h-3" /> Pro
                         </button>
                       </div>
                     </div>
@@ -1116,8 +1116,8 @@ export const Admin: React.FC = () => {
                   <option value="all">All users</option>
                   <option value="unsubscribed">Unsubscribed users</option>
                   <option value="subscribed">Subscribed users</option>
-                  <option value="weekly">Weekly subscribers</option>
-                  <option value="monthly">Monthly subscribers</option>
+                  <option value="monthly_basic">Monthly Basic subscribers</option>
+                  <option value="monthly_pro">Monthly Pro subscribers</option>
                 </select>
 
                 <button disabled={isSendingNotification} onClick={sendPushNotification} className="w-full py-4 rounded-2xl bg-[#ccff00] text-black font-black uppercase tracking-widest text-xs disabled:opacity-50">
