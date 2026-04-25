@@ -634,15 +634,19 @@ export const Home: React.FC<HomeProps> = ({ onTabChange }) => {
                   initial={{ opacity: 0, scale: 0.95 }}
                   animate={{ opacity: 1, scale: 1 }}
                   onClick={() => handleAnalyze(match)}
-                  className="shrink-0 w-[280px] snap-center relative bg-[#141414] border border-white/[0.03] rounded-2xl p-4 active:scale-[0.98] transition-all cursor-pointer"
+                  className="shrink-0 w-[280px] snap-center relative bg-[#151515] border border-white/[0.04] rounded-[28px] p-4 active:scale-[0.98] transition-all cursor-pointer"
                 >
-                  <div className="flex flex-col gap-3">
-                    {/* League & Time */}
-                    <div className="flex items-center justify-between">
-                      <div className="flex items-center gap-2">
-                        <span className="text-[9px] font-bold text-zinc-500 uppercase tracking-[0.1em] line-clamp-1 max-w-[150px]">{match.league}</span>
+                  <div className="flex items-center justify-between mb-3">
+                    <span className="text-[10px] font-black text-zinc-400 uppercase tracking-wider line-clamp-1 max-w-[140px]">{match.league}</span>
+                    <span className="text-[10px] font-black text-zinc-400 bg-zinc-800/80 px-2.5 py-1 rounded-full">Up coming</span>
+                  </div>
+
+                  <div className="grid grid-cols-[1fr_auto_1fr] items-center gap-2">
+                    <div className="flex flex-col items-center gap-2">
+                      <div className="w-14 h-14 rounded-full bg-zinc-800/80 border border-zinc-700 p-2.5 flex items-center justify-center overflow-hidden">
+                        {match.homeLogo ? <img src={match.homeLogo} alt="" className="w-full h-full object-contain" referrerPolicy="no-referrer" /> : <span className="text-[10px] font-bold text-zinc-500">{match.homeShort}</span>}
                       </div>
-                      <span className="text-[9px] font-medium text-zinc-400">{match.time}</span>
+                      <span className="text-sm font-black text-zinc-100 line-clamp-1">{match.home}</span>
                     </div>
                     
                     {/* Teams side-by-side */}
@@ -669,14 +673,11 @@ export const Home: React.FC<HomeProps> = ({ onTabChange }) => {
                         </div>
                       </div>
                     </div>
-
-                    {/* Footer Info */}
-                    <div className="flex items-center justify-between pt-2 border-t border-white/[0.03]">
-                      <span className="text-[9px] font-medium text-zinc-500">{match.date}</span>
-                      <div className="flex items-center gap-1">
-                        <Zap className="w-2.5 h-2.5 text-[#ccff00] fill-[#ccff00]" />
-                        <span className="text-[9px] font-black text-[#ccff00] uppercase tracking-tighter">Click to analyze</span>
+                    <div className="flex flex-col items-center gap-2">
+                      <div className="w-14 h-14 rounded-full bg-zinc-800/80 border border-zinc-700 p-2.5 flex items-center justify-center overflow-hidden">
+                        {match.awayLogo ? <img src={match.awayLogo} alt="" className="w-full h-full object-contain" referrerPolicy="no-referrer" /> : <span className="text-[10px] font-bold text-zinc-500">{match.awayShort}</span>}
                       </div>
+                      <span className="text-sm font-black text-zinc-100 line-clamp-1">{match.away}</span>
                     </div>
                   </div>
                 </motion.div>

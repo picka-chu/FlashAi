@@ -1,6 +1,6 @@
 import React, { useState, useEffect } from 'react';
 import { motion, AnimatePresence } from 'motion/react';
-import { Search, Trophy, Clock, Flame, TrendingUp, Zap, UserPlus, Radio, Lock, Sparkles } from 'lucide-react';
+import { Search, Trophy, Clock, Flame, TrendingUp, Zap, Radio, Lock, Sparkles, ChevronLeft, MoreHorizontal, Bookmark, PlayCircle, BarChart3, Share2 } from 'lucide-react';
 import { useUserStore } from '../store/useUserStore';
 import { Skeleton } from '../components/ui/Skeleton';
 import { analyzeLiveMatch, getLiveMatches, getLiveMatchPreview, getUpcomingMatches, recordMatchClick } from '../services/footballService';
@@ -13,6 +13,12 @@ type MatchType = 'live' | 'prematch';
 interface MatchesProps {
   onTabChange: (tab: any) => void;
 }
+
+const statPercent = (value: string | number) => {
+  const raw = typeof value === 'number' ? value : Number(String(value).replace('%', '').replace(',', '.'));
+  if (!Number.isFinite(raw)) return 50;
+  return Math.max(0, Math.min(100, raw));
+};
 
 export const Matches: React.FC<MatchesProps> = ({ onTabChange }) => {
   const [searchQuery, setSearchQuery] = useState('');
@@ -33,9 +39,7 @@ export const Matches: React.FC<MatchesProps> = ({ onTabChange }) => {
   const formatMatch = (m: any) => {
     const elapsed = Number(m?.fixture?.status?.elapsed || 0);
     let displayMinute = m?.fixture?.status?.short || '--';
-    if (elapsed > 0) {
-      displayMinute = `${Math.floor(elapsed)}'`;
-    }
+    if (elapsed > 0) displayMinute = `${Math.floor(elapsed)}'`;
 
     return {
       ...m,
@@ -65,7 +69,6 @@ export const Matches: React.FC<MatchesProps> = ({ onTabChange }) => {
       xG: m.xG || { home: 0, away: 0 },
       stats: m.stats || {},
       status: m.fixture.status.state === 'pre' ? 'Upcoming' : 'Live',
-      provider: m.provider || 'espn',
     };
   };
 
@@ -143,7 +146,6 @@ export const Matches: React.FC<MatchesProps> = ({ onTabChange }) => {
       const preview = await getLiveMatchPreview(String(match.id), initData || '');
       setPreviewMatch(formatMatch(preview));
     } catch (error: any) {
-      // Graceful fallback: open modal using already loaded live card data.
       if (match?.teams && match?.fixture) {
         setPreviewMatch(formatMatch(match));
         return;
@@ -177,6 +179,119 @@ export const Matches: React.FC<MatchesProps> = ({ onTabChange }) => {
 
   const activeList = activeMatchType === 'live' ? filteredLiveMatches : filteredUpcomingMatches;
 
+  if (previewMatch) {
+    const stats = previewMatch?.stats || {};
+    const homeAttacks = statPercent(stats?.shots?.home || 50);
+    const awayAttacks = statPercent(stats?.shots?.away || 50);
+    const homePassing = statPercent(stats?.possession?.home || 50);
+    const awayPassing = 100 - homePassing;
+    const homeShooting = statPercent(stats?.shotsOnTarget?.home || 50);
+    const awayShooting = statPercent(stats?.shotsOnTarget?.away || 50);
+    const homeCorners = statPercent(stats?.corners?.home || 50);
+    const awayCorners = statPercent(stats?.corners?.away || 50);
+
+    const rows = [
+      { label: 'Attacks', home: homeAttacks, away: awayAttacks },
+      { label: 'Passing', home: homePassing, away: awayPassing },
+      { label: 'Shooting', home: homeShooting, away: awayShooting },
+      { label: 'Corners', home: homeCorners, away: awayCorners },
+    ];
+
+    return (
+      <div className="h-full bg-black text-white overflow-y-auto no-scrollbar">
+        <div className="sticky top-0 z-20 bg-black/85 backdrop-blur-xl border-b border-white/5 px-4 py-4 flex items-center justify-between">
+          <button onClick={() => setPreviewMatch(null)} className="w-9 h-9 rounded-full bg-zinc-900 border border-zinc-800 flex items-center justify-center">
+            <ChevronLeft className="w-5 h-5" />
+          </button>
+          <div className="text-xs font-black uppercase tracking-[0.2em] text-zinc-400">Live Match</div>
+          <button className="w-9 h-9 rounded-full bg-zinc-900 border border-zinc-800 flex items-center justify-center">
+            <MoreHorizontal className="w-5 h-5" />
+          </button>
+        </div>
+
+        <div className="p-5 space-y-5 pb-28">
+          <div className="bg-zinc-900 border border-zinc-800 rounded-[28px] p-5 space-y-5">
+            <div className="text-center">
+              <h2 className="text-3xl font-black tracking-tight">{previewMatch.league}</h2>
+              <p className="text-zinc-500 text-sm mt-1">Live match details • {previewMatch.minute || 'LIVE'}</p>
+            </div>
+
+            <div className="grid grid-cols-[1fr_auto_1fr] items-center gap-3">
+              <div className="flex flex-col items-center gap-2">
+                <div className="w-20 h-20 rounded-full bg-zinc-800 border border-zinc-700 p-3 flex items-center justify-center overflow-hidden">
+                  {previewMatch.homeLogo ? <img src={previewMatch.homeLogo} alt={previewMatch.home} className="w-full h-full object-contain" referrerPolicy="no-referrer" /> : <span className="text-xl font-black">{previewMatch.homeShort}</span>}
+                </div>
+                <div className="text-lg font-black text-center line-clamp-1">{previewMatch.home}</div>
+              </div>
+
+              <div className="text-center px-1">
+                <div className="text-6xl font-black leading-none tracking-tight">{previewMatch.score || '0:0'}</div>
+                <div className="text-sm font-bold text-zinc-400 mt-2">{previewMatch.minute || 'LIVE'}</div>
+              </div>
+
+              <div className="flex flex-col items-center gap-2">
+                <div className="w-20 h-20 rounded-full bg-zinc-800 border border-zinc-700 p-3 flex items-center justify-center overflow-hidden">
+                  {previewMatch.awayLogo ? <img src={previewMatch.awayLogo} alt={previewMatch.away} className="w-full h-full object-contain" referrerPolicy="no-referrer" /> : <span className="text-xl font-black">{previewMatch.awayShort}</span>}
+                </div>
+                <div className="text-lg font-black text-center line-clamp-1">{previewMatch.away}</div>
+              </div>
+            </div>
+
+            <div className="grid grid-cols-4 gap-2">
+              {[Bookmark, PlayCircle, BarChart3, Share2].map((Icon, i) => (
+                <button key={i} className="h-12 rounded-2xl bg-zinc-800/80 border border-zinc-700 flex items-center justify-center">
+                  <Icon className="w-5 h-5 text-zinc-300" />
+                </button>
+              ))}
+            </div>
+          </div>
+
+          <div className="bg-zinc-900 border border-zinc-800 rounded-[24px] p-5 space-y-4">
+            <div className="flex items-center justify-between">
+              <h3 className="text-2xl font-black">Last news</h3>
+              <span className="text-xs font-bold text-zinc-500">LIVE FEED</span>
+            </div>
+            <div className="rounded-2xl border border-zinc-800 bg-zinc-950/60 p-4 flex items-center justify-between gap-4">
+              <div>
+                <p className="text-lg font-bold leading-tight">{previewMatch.home} pushing hard in transition against {previewMatch.away}.</p>
+                <p className="text-zinc-500 text-sm mt-2">Flash AI feed • just now</p>
+              </div>
+              <div className="w-20 h-20 rounded-xl bg-zinc-800" />
+            </div>
+          </div>
+
+          <div className="bg-zinc-900 border border-zinc-800 rounded-[24px] p-5 space-y-5">
+            <div className="flex items-center justify-between">
+              <h3 className="text-2xl font-black">Statistics</h3>
+              <button className="text-xs font-bold uppercase tracking-widest text-zinc-500">See all</button>
+            </div>
+            {rows.map((row) => (
+              <div key={row.label} className="space-y-1.5">
+                <div className="flex items-center justify-between text-sm font-bold">
+                  <span>{row.home.toFixed(0)}%</span>
+                  <span className="text-zinc-400">{row.label}</span>
+                  <span>{row.away.toFixed(0)}%</span>
+                </div>
+                <div className="grid grid-cols-2 gap-2">
+                  <div className="h-2 rounded-full bg-zinc-800 overflow-hidden"><div className="h-full bg-blue-500" style={{ width: `${row.home}%` }} /></div>
+                  <div className="h-2 rounded-full bg-zinc-800 overflow-hidden"><div className="h-full bg-blue-400" style={{ width: `${row.away}%` }} /></div>
+                </div>
+              </div>
+            ))}
+          </div>
+        </div>
+
+        <button
+          onClick={() => !analyzingLive && handleAnalyzeLive(previewMatch)}
+          className="fixed bottom-24 right-5 z-30 w-14 h-14 rounded-full bg-[#ccff00] text-black shadow-[0_10px_35px_rgba(204,255,0,0.35)] flex items-center justify-center active:scale-95"
+          aria-label="Analyze live match"
+        >
+          {analyzingLive ? <span className="text-xs font-black">...</span> : <Zap className="w-6 h-6" />}
+        </button>
+      </div>
+    );
+  }
+
   return (
     <div className="h-full flex flex-col bg-black relative">
       <div className="flex justify-between items-center px-4 pt-6 pb-2 z-50">
@@ -193,29 +308,13 @@ export const Matches: React.FC<MatchesProps> = ({ onTabChange }) => {
 
       <div className="flex-none p-4 space-y-4">
         <div className="grid grid-cols-2 gap-2 p-1 rounded-2xl bg-zinc-900/60 border border-zinc-800">
-          <button
-            onClick={() => setActiveMatchType('prematch')}
-            className={`py-2.5 rounded-xl text-xs font-black uppercase tracking-wider ${activeMatchType === 'prematch' ? 'bg-[#ccff00] text-black' : 'text-zinc-400'}`}
-          >
-            Prematch
-          </button>
-          <button
-            onClick={() => setActiveMatchType('live')}
-            className={`py-2.5 rounded-xl text-xs font-black uppercase tracking-wider flex items-center justify-center gap-1.5 ${activeMatchType === 'live' ? 'bg-red-500 text-white' : 'text-zinc-400'}`}
-          >
-            <Radio className="w-3.5 h-3.5" /> Live
-          </button>
+          <button onClick={() => setActiveMatchType('prematch')} className={`py-2.5 rounded-xl text-xs font-black uppercase tracking-wider ${activeMatchType === 'prematch' ? 'bg-[#ccff00] text-black' : 'text-zinc-400'}`}>Prematch</button>
+          <button onClick={() => setActiveMatchType('live')} className={`py-2.5 rounded-xl text-xs font-black uppercase tracking-wider flex items-center justify-center gap-1.5 ${activeMatchType === 'live' ? 'bg-red-500 text-white' : 'text-zinc-400'}`}><Radio className="w-3.5 h-3.5" /> Live</button>
         </div>
 
         <div className="relative">
           <Search className="absolute left-4 top-1/2 -translate-y-1/2 w-4 h-4 text-zinc-600" />
-          <input
-            type="text"
-            value={searchQuery}
-            onChange={(e) => setSearchQuery(e.target.value)}
-            placeholder="Search teams or leagues..."
-            className="w-full bg-zinc-900/50 border border-zinc-800 rounded-2xl pl-11 pr-4 py-3 text-sm text-white placeholder:text-zinc-600 focus:outline-none focus:border-[#ccff00]/50 transition-all"
-          />
+          <input value={searchQuery} onChange={(e) => setSearchQuery(e.target.value)} placeholder="Search teams or leagues..." className="w-full bg-zinc-900/50 border border-zinc-800 rounded-2xl pl-11 pr-4 py-3 text-sm text-white placeholder:text-zinc-600 focus:outline-none focus:border-[#ccff00]/50 transition-all" />
         </div>
       </div>
 
