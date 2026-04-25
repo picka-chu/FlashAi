@@ -16,7 +16,7 @@ CREATE TABLE IF NOT EXISTS public.users (
   photo_url TEXT,
   referrer_id BIGINT,
   role TEXT NOT NULL DEFAULT 'user' CHECK (role IN ('user', 'admin')),
-  plan TEXT NOT NULL DEFAULT 'free' CHECK (plan IN ('free', 'weekly', 'monthly')),
+  plan TEXT NOT NULL DEFAULT 'free' CHECK (plan IN ('free', 'weekly', 'monthly', 'monthly_basic', 'monthly_pro', 'admin')),
   credits INTEGER NOT NULL DEFAULT 5 CHECK (credits >= 0),
   win_rate NUMERIC(5,2) NOT NULL DEFAULT 0 CHECK (win_rate >= 0 AND win_rate <= 100),
   predictions_count INTEGER NOT NULL DEFAULT 0 CHECK (predictions_count >= 0),
