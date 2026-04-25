@@ -63,6 +63,8 @@ export const Admin: React.FC = () => {
     subtitle: '', 
     image_url: '', 
     link: '', 
+    is_internal: false,
+    internal_target: 'home',
     active: true, 
     cta: 'Check Out', 
     target_group: 'all',
@@ -276,6 +278,8 @@ export const Admin: React.FC = () => {
           subtitle: '', 
           image_url: '', 
           link: '', 
+          is_internal: false,
+          internal_target: 'home',
           active: true, 
           cta: 'Check Out', 
           target_group: 'all',
@@ -884,8 +888,40 @@ export const Admin: React.FC = () => {
                            <p className="text-[10px] font-bold text-zinc-600 uppercase ml-2">Call to Action</p>
                            <div className="flex gap-4">
                               <input value={newAd.cta} onChange={e => setNewAd({...newAd, cta: e.target.value})} placeholder="Btn Text (Claim)" className="flex-1 bg-zinc-800 border-none rounded-2xl p-4 text-white text-sm font-bold placeholder:text-zinc-600 focus:ring-2 ring-blue-500/50" />
-                              <input value={newAd.link} onChange={e => setNewAd({...newAd, link: e.target.value})} placeholder="Destination URL" className="flex-[2] bg-zinc-800 border-none rounded-2xl p-4 text-white text-sm font-bold placeholder:text-zinc-600 focus:ring-2 ring-blue-500/50" />
+                              {!newAd.is_internal ? (
+                                <input
+                                  value={newAd.link}
+                                  onChange={e => setNewAd({ ...newAd, link: e.target.value })}
+                                  placeholder="Destination URL (https://...)"
+                                  className="flex-[2] bg-zinc-800 border-none rounded-2xl p-4 text-white text-sm font-bold placeholder:text-zinc-600 focus:ring-2 ring-blue-500/50"
+                                />
+                              ) : (
+                                <select
+                                  value={newAd.internal_target}
+                                  onChange={e => setNewAd({ ...newAd, internal_target: e.target.value })}
+                                  className="flex-[2] bg-zinc-800 rounded-2xl p-4 text-white text-sm font-bold focus:outline-none focus:ring-2 ring-blue-500/50"
+                                >
+                                  <option value="home">Home tab</option>
+                                  <option value="analyze">Analyze tab</option>
+                                  <option value="history">History tab</option>
+                                  <option value="profile">Profile tab</option>
+                                  <option value="leaderboard">Leaderboard tab</option>
+                                </select>
+                              )}
                            </div>
+                           <label className="flex items-center gap-2 text-xs text-zinc-400 font-bold ml-1 mt-1">
+                              <input
+                                type="checkbox"
+                                checked={newAd.is_internal}
+                                onChange={(e) => setNewAd({
+                                  ...newAd,
+                                  is_internal: e.target.checked,
+                                  link: e.target.checked ? '' : newAd.link
+                                })}
+                                className="accent-blue-500"
+                              />
+                              Use internal app redirect (tab navigation)
+                           </label>
                         </div>
 
                         <button onClick={handleAddAd} className="w-full py-5 bg-blue-500 text-white font-black uppercase tracking-widest text-xs rounded-2xl shadow-[0_0_30px_rgba(59,130,246,0.3)]">Deploy to Rotation</button>
