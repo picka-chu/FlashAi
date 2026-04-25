@@ -20,6 +20,10 @@ import {
   Users,
   Play,
   Clock,
+  CheckCircle2,
+  XCircle,
+  Percent,
+  History as HistoryIcon,
   UserPlus,
   Megaphone
 } from 'lucide-react';
@@ -95,7 +99,8 @@ export const Home: React.FC<HomeProps> = ({ onTabChange }) => {
   const [upcomingMatches, setUpcomingMatches] = useState<any[]>([]);
   const [trendingMatches, setTrendingMatches] = useState<any[]>([]);
   const [dynamicAds, setDynamicAds] = useState<any[]>([]);
-  const [activities, setActivities] = useState<any[]>([]);
+  const [recentAnalysis, setRecentAnalysis] = useState<any[]>([]);
+  const [historyLoading, setHistoryLoading] = useState(false);
   const [isLoading, setIsLoading] = useState(true);
   
   const topPicksRef = useRef<HTMLDivElement>(null);
@@ -104,6 +109,43 @@ export const Home: React.FC<HomeProps> = ({ onTabChange }) => {
   const [isSignUpOpen, setIsSignUpOpen] = useState(false);
   const { user, setSelectedMatch, setIsAnalyzing, setAnalysisResult } = useUserStore();
   const { hapticFeedback, tg, initData } = useTelegram();
+
+  const getAnalysisStatusUi = (status: string) => {
+    const normalized = String(status || 'pending').toLowerCase();
+    if (normalized === 'won') {
+      return {
+        label: 'Won',
+        className: 'text-green-300 bg-green-500/10 border-green-500/30',
+        icon: <CheckCircle2 className="w-3.5 h-3.5 text-green-400" />
+      };
+    }
+    if (normalized === 'lost') {
+      return {
+        label: 'Lost',
+        className: 'text-red-300 bg-red-500/10 border-red-500/30',
+        icon: <XCircle className="w-3.5 h-3.5 text-red-400" />
+      };
+    }
+    return {
+      label: 'Pending',
+      className: 'text-amber-200 bg-amber-500/10 border-amber-500/30',
+      icon: <Clock className="w-3.5 h-3.5 text-amber-400" />
+    };
+  };
+
+  const formatRelativeTime = (date: string) => {
+    const now = Date.now();
+    const then = new Date(date).getTime();
+    const diff = Math.max(0, now - then);
+    const minute = 60 * 1000;
+    const hour = 60 * minute;
+    const day = 24 * hour;
+
+    if (diff < minute) return 'Just now';
+    if (diff < hour) return `${Math.floor(diff / minute)}m ago`;
+    if (diff < day) return `${Math.floor(diff / hour)}h ago`;
+    return `${Math.floor(diff / day)}d ago`;
+  };
 
   useEffect(() => {
     const activeAd = dynamicAds[adIndex];
@@ -126,7 +168,9 @@ export const Home: React.FC<HomeProps> = ({ onTabChange }) => {
        }).catch(() => {});
     }
     if (ad.link) {
-       if (ad.link.startsWith('http')) {
+       if (ad.link.startsWith('internal:')) {
+         onTabChange(ad.link.replace('internal:', '').replace('/', ''));
+       } else if (ad.link.startsWith('http')) {
          tg.openLink(ad.link);
        } else {
          onTabChange(ad.link.replace('/', ''));
@@ -138,12 +182,13 @@ export const Home: React.FC<HomeProps> = ({ onTabChange }) => {
     const fetchData = async () => {
       try {
         const authInitData = initData || tg?.initData || '';
-        const [upcoming, trending, adsRes, activitiesRes] = await Promise.all([
+        setHistoryLoading(Boolean(authInitData));
+        const [upcoming, trending, adsRes, historyRes] = await Promise.all([
           getUpcomingMatches(),
           getTrendingPicks(),
           fetch('/api/common/ads', { headers: { 'X-TG-Init-Data': authInitData } }).then(r => r.json()),
           authInitData
-            ? fetch('/api/user/activities', { headers: { 'X-TG-Init-Data': authInitData } }).then(r => r.ok ? r.json() : [])
+            ? fetch('/api/user/history', { headers: { 'X-TG-Init-Data': authInitData } }).then(r => r.ok ? r.json() : [])
             : Promise.resolve([])
         ]);
         
@@ -199,29 +244,26 @@ export const Home: React.FC<HomeProps> = ({ onTabChange }) => {
         }
 
         setUpcomingMatches(mappedUpcoming.slice(0, 200));
-        setActivities(Array.isArray(activitiesRes) ? activitiesRes : []);
+        const normalizedHistory = (Array.isArray(historyRes) ? historyRes : []).map((item: any) => ({
+          id: String(item.id),
+          match: item.match || `${item.home || 'Home'} vs ${item.away || 'Away'}`,
+          predictionMarket: item.predictionMarket || 'Unknown market',
+          confidence: Number(item.confidence || 0),
+          status: String(item.status || 'pending').toLowerCase(),
+          created_at: item.created_at || new Date().toISOString()
+        }));
+        setRecentAnalysis(normalizedHistory.slice(0, 5));
       } catch (error) {
         console.error("Failed to fetch matches:", error);
         setUpcomingMatches([]);
+        setRecentAnalysis([]);
       } finally {
+        setHistoryLoading(false);
         setIsLoading(false);
       }
     };
     fetchData();
   }, [initData, tg?.initData, user?.phone]);
-
-  const formatActivityLabel = (endpoint: string, method: string) => {
-    if (endpoint.includes('/api/analyze-betslip')) return 'Bet slip analyzed';
-    if (endpoint.includes('/api/analyze')) return 'Match analyzed';
-    if (endpoint.includes('/api/user/history')) return 'Viewed history';
-    if (endpoint.includes('/api/user/profile')) return 'Profile updated';
-    if (endpoint.includes('/api/tasks/claim')) return 'Task reward claimed';
-    const clean = String(endpoint || '')
-      .replace('/api/', '')
-      .replaceAll('/', ' ')
-      .trim();
-    return clean ? clean.replace(/\b\w/g, (c) => c.toUpperCase()) : 'App activity';
-  };
 
   // Auto-scroll for Top Picks
   useEffect(() => {
@@ -681,13 +723,13 @@ export const Home: React.FC<HomeProps> = ({ onTabChange }) => {
           </div>
         </section>
 
-        {/* Recent Activities Section - Only for registered users */}
+        {/* Recent Analysis Section - Only for registered users */}
         {user?.phone && (
         <section className="space-y-4">
           <div className="flex items-center justify-between px-1">
             <h3 className="text-sm font-black text-white tracking-wider flex items-center gap-2">
-              <Clock className="w-4 h-4 text-[#ccff00]" />
-              Recent activities
+              <HistoryIcon className="w-4 h-4 text-[#ccff00]" />
+              Recent analysis
             </h3>
             <button 
               onClick={() => onTabChange('history')}
@@ -698,51 +740,50 @@ export const Home: React.FC<HomeProps> = ({ onTabChange }) => {
           </div>
 
           <div className="space-y-2">
-            {activities.length === 0 ? (
+            {historyLoading ? (
+              [1, 2, 3].map((idx) => (
+                <div key={idx} className="h-[92px] rounded-[20px] bg-gradient-to-r from-zinc-900/40 to-zinc-800/20 border border-zinc-800/50 animate-pulse" />
+              ))
+            ) : recentAnalysis.length === 0 ? (
               <div className="bg-gradient-to-r from-zinc-900/50 to-zinc-800/30 border border-zinc-800/50 rounded-[24px] p-6 text-center space-y-2">
                 <div className="w-12 h-12 rounded-full bg-zinc-800/50 flex items-center justify-center mx-auto">
-                  <Activity className="w-5 h-5 text-zinc-600" />
+                  <HistoryIcon className="w-5 h-5 text-zinc-600" />
                 </div>
-                <p className="text-xs font-bold text-zinc-500">No recent activities yet</p>
-                <p className="text-[10px] text-zinc-600">Start analyzing matches to see your activity</p>
+                <p className="text-xs font-bold text-zinc-500">No analysis history yet</p>
+                <p className="text-[10px] text-zinc-600">Analyze matches to build your track record</p>
               </div>
-            ) : activities.slice(0, 5).map((activity, idx) => {
-              const getActivityIcon = () => {
-                if (activity.endpoint.includes('/api/analyze-betslip')) return <ImageIcon className="w-4 h-4" />;
-                if (activity.endpoint.includes('/api/analyze')) return <BrainCircuit className="w-4 h-4" />;
-                if (activity.endpoint.includes('/api/user/history')) return <History className="w-4 h-4" />;
-                if (activity.endpoint.includes('/api/user/profile')) return <UserPlus className="w-4 h-4" />;
-                if (activity.endpoint.includes('/api/tasks/claim')) return <Trophy className="w-4 h-4" />;
-                return <Activity className="w-4 h-4" />;
-              };
-              
-              const getStatusColor = (status: number) => {
-                if (status >= 200 && status < 300) return 'bg-green-500/10 text-green-400 border border-green-500/20';
-                if (status >= 400 && status < 500) return 'bg-yellow-500/10 text-yellow-400 border border-yellow-500/20';
-                if (status >= 500) return 'bg-red-500/10 text-red-400 border border-red-500/20';
-                return 'bg-blue-500/10 text-blue-400 border border-blue-500/20';
-              };
+            ) : recentAnalysis.map((analysis, idx) => {
+              const status = getAnalysisStatusUi(analysis.status);
 
               return (
                 <motion.div 
-                  key={activity.id} 
+                  key={analysis.id} 
                   initial={{ opacity: 0, x: -10 }}
                   animate={{ opacity: 1, x: 0 }}
                   transition={{ delay: idx * 0.05 }}
-                  className="bg-gradient-to-r from-zinc-900/40 to-zinc-800/20 border border-zinc-800/50 rounded-[20px] p-4 flex items-center justify-between hover:border-zinc-700/50 transition-all group"
+                  onClick={() => onTabChange('history')}
+                  className="bg-gradient-to-r from-zinc-900/40 to-zinc-800/20 border border-zinc-800/50 rounded-[20px] p-4 hover:border-[#ccff00]/30 transition-all group cursor-pointer"
                 >
-                  <div className="flex items-center gap-3 flex-1 min-w-0">
-                    <div className="w-10 h-10 rounded-xl bg-gradient-to-br from-[#ccff00]/20 to-[#88aa00]/10 flex items-center justify-center flex-shrink-0 group-hover:from-[#ccff00]/30 group-hover:to-[#88aa00]/20 transition-all">
-                      <div className="text-[#ccff00]">{getActivityIcon()}</div>
+                  <div className="space-y-3">
+                    <div className="flex items-start justify-between gap-3">
+                      <div className="space-y-1 min-w-0">
+                        <p className="text-xs font-black text-white truncate">{analysis.match}</p>
+                        <p className="text-[10px] font-bold text-zinc-400 truncate">{analysis.predictionMarket}</p>
+                      </div>
+                      <span className={`inline-flex items-center gap-1.5 px-2 py-1 rounded-full border text-[9px] font-black tracking-wide ${status.className}`}>
+                        {status.icon}
+                        {status.label}
+                      </span>
                     </div>
-                    <div className="min-w-0 flex-1">
-                      <p className="text-xs font-black text-white truncate">{formatActivityLabel(activity.endpoint, activity.method)}</p>
-                      <p className="text-[9px] font-bold text-zinc-500 mt-0.5">{new Date(activity.created_at).toLocaleTimeString('en-GB', { hour: '2-digit', minute: '2-digit' })}</p>
+
+                    <div className="pt-2 border-t border-zinc-800/60 flex items-center justify-between">
+                      <div className="flex items-center gap-1.5 text-zinc-300">
+                        <Percent className="w-3.5 h-3.5" />
+                        <span className="text-[11px] font-black">{analysis.confidence}% confidence</span>
+                      </div>
+                      <span className="text-[10px] font-bold text-zinc-500">{formatRelativeTime(analysis.created_at)}</span>
                     </div>
                   </div>
-                  <span className={`text-[9px] font-black px-3 py-1.5 rounded-lg flex-shrink-0 ml-2 ${getStatusColor(activity.status)}`}>
-                    {activity.status}
-                  </span>
                 </motion.div>
               );
             })}

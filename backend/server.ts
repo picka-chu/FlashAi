@@ -56,6 +56,9 @@ const PLAN_DAILY_LIMITS: Record<string, { credits: number; betSlipAnalysis: numb
 
 const signupCreditsRaw = Number(process.env.SIGNUP_CREDITS ?? 3);
 const signupCredits = Number.isFinite(signupCreditsRaw) && signupCreditsRaw >= 0 ? Math.floor(signupCreditsRaw) : 3;
+const referralRewardRaw = Number(process.env.REFERRAL_REWARD_CREDITS ?? 2);
+const referralRewardCredits = Number.isFinite(referralRewardRaw) && referralRewardRaw >= 0 ? Math.floor(referralRewardRaw) : 2;
+const DEFAULT_APP_URL = process.env.DEFAULT_APP_URL || "https://flashai-siuj.onrender.com";
 
 function getPlanCreditAllocation(planId: string) {
   return PLAN_CREDITS[planId] ?? 0;
@@ -1224,12 +1227,15 @@ async function startServer() {
           .maybeSingle();
 
         const isNewRegistration = !existingUser?.phone;
+        const hasValidReferrer = Boolean(existingUser?.referrer_id && existingUser.referrer_id !== telegramId);
         
         // Check if referral was already rewarded (prevent race condition/duplicate reward)
         const referralAlreadyRewarded = existingUser?.referral_rewarded === true;
 
         // Define signup credits for new users (default: 3, configurable via SIGNUP_CREDITS)
-        const signupCreditsToApply = isNewRegistration ? signupCredits : (existingUser?.credits || 0);
+        const signupCreditsToApply = isNewRegistration
+          ? (hasValidReferrer ? referralRewardCredits : signupCredits)
+          : (existingUser?.credits || 0);
 
         // 2. Perform registration/update with atomic credit handling
         const profilePhoto = await getTelegramProfilePhotoUrl(telegramId, bot);
@@ -1295,63 +1301,104 @@ async function startServer() {
         }
 
         // 3. Handle Referral Reward - ATOMIC operation to prevent race conditions
-        if (isNewRegistration && existingUser?.referrer_id && !referralAlreadyRewarded) {
-           const rewardAmount = 50; 
+        if (isNewRegistration && hasValidReferrer && !referralAlreadyRewarded) {
+           const rewardAmount = referralRewardCredits; 
            
            try {
-             // 1. Mark the NEW user as rewarded FIRST (The "Ticket" is used)
-             const { error: markError } = await supabase.from("users")
+             // 1. Mark the NEW user as rewarded FIRST (ticket lock to prevent duplicate rewards)
+             const { data: markedUser, error: markError } = await supabase.from("users")
                .update({ referral_rewarded: true })
-               .eq("telegram_id", telegramId);
+               .eq("telegram_id", telegramId)
+               .neq("referral_rewarded", true)
+               .select("telegram_id")
+               .maybeSingle();
              
              if (markError) throw markError;
+             if (!markedUser) {
+               // Another concurrent request already handled referral crediting.
+               console.log(`Referral reward already processed for ${telegramId}`);
+             } else {
+               let rewardApplied = false;
 
-             // 2. Credit the REFERRER
-             const { error: rewardError } = await supabase.rpc('add_credits_to_user', {
-               user_telegram_id: existingUser.referrer_id,
-               credits_amount: rewardAmount
-             });
-             
-             if (rewardError) {
-               // Fallback: Use direct increment if RPC differs
-               await supabase.rpc('increment_user_credits', {
-                 target_telegram_id: existingUser.referrer_id,
-                 amount: rewardAmount
-               }).catch(() => {}); 
-             }
+               // 2. Credit the REFERRER
+               const { error: rewardError } = await supabase.rpc('add_credits_to_user', {
+                 user_telegram_id: existingUser.referrer_id,
+                 credits_amount: rewardAmount
+               });
+               rewardApplied = !rewardError;
 
-             // 3. Production Tracking (Referrals table)
-             await supabase.from("referrals").upsert({
-               referrer_telegram_id: existingUser.referrer_id,
-               referred_telegram_id: telegramId,
-               reward_given: true,
-               reward_amount: rewardAmount,
-               created_at: new Date().toISOString()
-             }, { onConflict: 'referred_telegram_id' }).catch(() => {});
+               if (!rewardApplied) {
+                 const { error: incrementError } = await supabase.rpc('increment_user_credits', {
+                   target_telegram_id: existingUser.referrer_id,
+                   amount: rewardAmount
+                 });
+                 rewardApplied = !incrementError;
+               }
 
-             // 4. Audit Trail (Transactions table)
-             await supabase.from("transactions").insert({
-               telegram_id: existingUser.referrer_id,
-               amount: rewardAmount,
-               currency: 'CREDITS',
-               status: 'completed',
-               type: 'referral_reward',
-               provider_payment_charge_id: `ref_${telegramId}`
-             }).catch(() => {});
+               if (!rewardApplied) {
+                 const { data: referrerUser, error: referrerFetchError } = await supabase
+                   .from("users")
+                   .select("credits")
+                   .eq("telegram_id", existingUser.referrer_id)
+                   .maybeSingle();
+                 if (!referrerFetchError && referrerUser) {
+                   const { error: directUpdateError } = await supabase
+                     .from("users")
+                     .update({ credits: Number(referrerUser.credits || 0) + rewardAmount })
+                     .eq("telegram_id", existingUser.referrer_id);
+                   rewardApplied = !directUpdateError;
+                 }
+               }
 
-             // 5. Notify Referrer
-             if (bot) {
-               bot.telegram.sendMessage(existingUser.referrer_id, `👥 A friend joined Flash AI using your link! You've been rewarded with ${rewardAmount} credits. 🔥`).catch(() => {});
+               if (!rewardApplied) {
+                 // Revert ticket lock so reward can be retried later.
+                 await supabase
+                   .from("users")
+                   .update({ referral_rewarded: false })
+                   .eq("telegram_id", telegramId);
+                 throw new Error(`Failed to apply referral reward for referrer ${existingUser.referrer_id}`);
+               }
+
+               // 3. Production Tracking (Referrals table)
+               const { error: referralLogError } = await supabase.from("referrals").upsert({
+                 referrer_telegram_id: existingUser.referrer_id,
+                 referred_telegram_id: telegramId,
+                 reward_given: true,
+                 reward_amount: rewardAmount,
+                 created_at: new Date().toISOString()
+               }, { onConflict: 'referred_telegram_id' });
+               if (referralLogError) {
+                 console.error("Referral table logging error:", referralLogError);
+               }
+
+               // 4. Audit Trail (Transactions table)
+               const { error: txError } = await supabase.from("transactions").insert({
+                 telegram_id: existingUser.referrer_id,
+                 amount: rewardAmount,
+                 currency: 'CREDITS',
+                 status: 'completed',
+                 type: 'referral_reward',
+                 provider_payment_charge_id: `ref_${telegramId}`
+               });
+               if (txError) {
+                 console.error("Referral transaction logging error:", txError);
+               }
+
+               // 5. Notify Referrer
+               if (bot) {
+                 bot.telegram.sendMessage(existingUser.referrer_id, `👥 A friend joined Flash AI using your link! You've been rewarded with ${rewardAmount} credits. 🔥`).catch(() => {});
+               }
              }
            } catch (rewardErr) {
              console.error("Referral reward error:", rewardErr);
            }
         }
 
-        const rewardText = isNewRegistration && existingUser?.referrer_id
-          ? "5 credits (3 signup + 2 referral bonus)"
-          : "3 free credits";
-        ctx.reply(`✅ Registration successful, ${firstName}!\n\nYou've been rewarded with ${rewardText}. Welcome to the elite squad! ⚽🔥`, {
+        const rewardText = `${signupCreditsToApply} free credits`;
+        const referralBonusText = isNewRegistration && existingUser?.referrer_id
+          ? `\nYour referrer received ${referralRewardCredits} bonus credits.`
+          : "";
+        ctx.reply(`✅ Registration successful, ${firstName}!\n\nYou've been rewarded with ${rewardText}.${referralBonusText}\nWelcome to the elite squad! ⚽🔥`, {
           reply_markup: {
             remove_keyboard: true
           }
@@ -1633,7 +1680,7 @@ async function startServer() {
       ]);
 
       const totalReferred = referredCount || 0;
-      const earnedCredits = totalReferred * 2;
+      const earnedCredits = totalReferred * referralRewardCredits;
       const referralLink = `https://t.me/${botUsername}?start=${tgUser.id}`;
 
       return c.json({
@@ -1852,9 +1899,9 @@ async function startServer() {
             type: 'checkouts',
             attributes: {
               product_options: {
-                redirect_url: process.env.LEMONSQUEEZY_REDIRECT_URL || process.env.APP_URL || 'https://t.me/Deepflashaibot',
+                redirect_url: process.env.LEMONSQUEEZY_REDIRECT_URL || process.env.APP_URL || DEFAULT_APP_URL,
                 receipt_button_text: 'Back to Flash AI',
-                receipt_link_url: process.env.APP_URL || 'https://t.me/Deepflashaibot',
+                receipt_link_url: process.env.APP_URL || DEFAULT_APP_URL,
               },
               checkout_data: {
                 name: planName ? `Flash AI — ${planName}` : undefined,
@@ -2277,13 +2324,21 @@ async function startServer() {
   app.post("/api/admin/ads", adminOnly, async (c) => {
     const body = await c.req.json();
     const ads = await getCachedCollection<any>(ADMIN_ADS_KEY);
+    const isInternal = body.is_internal === true;
+    const internalTarget = String(body.internal_target || "").trim().toLowerCase();
+    const externalLink = String(body.link || "").trim();
+    const normalizedLink = isInternal
+      ? (internalTarget ? `internal:${internalTarget}` : "")
+      : externalLink;
+    if (isInternal && !internalTarget) return c.json({ error: "Internal redirect target is required" }, 400);
+    if (!isInternal && !externalLink) return c.json({ error: "External redirect URL is required" }, 400);
 
     const ad = {
       id: crypto.randomUUID(),
       title: String(body.title || "").trim(),
       subtitle: String(body.subtitle || "").trim(),
       image_url: String(body.image_url || "").trim(),
-      link: String(body.link || "").trim(),
+      link: normalizedLink,
       cta: String(body.cta || "Check Out").trim(),
       active: body.active !== false,
       target_group: normalizeAudience(body.target_group || body.target_plan || "all"),
@@ -2337,7 +2392,10 @@ async function startServer() {
           const message = `*${ad.title}*
 
 ${ad.subtitle}`;
-          const keyboard = ad.link ? Markup.inlineKeyboard([[Markup.button.url(ad.cta || "Check it Out", ad.link)]]) : undefined;
+          const isExternalLink = typeof ad.link === "string" && /^https?:\/\//i.test(ad.link);
+          const keyboard = isExternalLink
+            ? Markup.inlineKeyboard([[Markup.button.url(ad.cta || "Check it Out", ad.link)]])
+            : undefined;
           if (ad.image_url) {
             await bot.telegram.sendPhoto(user.telegram_id, ad.image_url, { caption: message, parse_mode: 'Markdown', ...keyboard });
           } else {
