@@ -645,30 +645,27 @@ export const Home: React.FC<HomeProps> = ({ onTabChange }) => {
                       <span className="text-[9px] font-medium text-zinc-400">{match.time}</span>
                     </div>
                     
-                    {/* Teams */}
-                    <div className="space-y-3 py-1">
-                      <div className="flex items-center justify-between">
-                        <div className="flex items-center gap-3">
-                          <div className="w-7 h-7 rounded-lg bg-zinc-800/50 flex items-center justify-center overflow-hidden border border-white/5">
-                            {match.homeLogo ? (
-                              <img src={match.homeLogo} alt="" className="w-5 h-5 object-contain" referrerPolicy="no-referrer" />
-                            ) : (
-                              <span className="text-[8px] font-bold text-zinc-500">{match.homeShort}</span>
-                            )}
-                          </div>
-                          <span className="text-sm font-bold text-zinc-100 line-clamp-1">{match.home}</span>
+                    {/* Teams side-by-side */}
+                    <div className="grid grid-cols-[1fr_auto_1fr] items-center gap-2 py-1">
+                      <div className="flex items-center gap-2 min-w-0">
+                        <div className="w-7 h-7 rounded-lg bg-zinc-800/50 flex items-center justify-center overflow-hidden border border-white/5">
+                          {match.homeLogo ? (
+                            <img src={match.homeLogo} alt="" className="w-5 h-5 object-contain" referrerPolicy="no-referrer" />
+                          ) : (
+                            <span className="text-[8px] font-bold text-zinc-500">{match.homeShort}</span>
+                          )}
                         </div>
+                        <span className="text-sm font-bold text-zinc-100 truncate">{match.home}</span>
                       </div>
-                      <div className="flex items-center justify-between">
-                        <div className="flex items-center gap-3">
-                          <div className="w-7 h-7 rounded-lg bg-zinc-800/50 flex items-center justify-center overflow-hidden border border-white/5">
-                            {match.awayLogo ? (
-                              <img src={match.awayLogo} alt="" className="w-5 h-5 object-contain" referrerPolicy="no-referrer" />
-                            ) : (
-                              <span className="text-[8px] font-bold text-zinc-500">{match.awayShort}</span>
-                            )}
-                          </div>
-                          <span className="text-sm font-bold text-zinc-100 line-clamp-1">{match.away}</span>
+                      <div className="text-[10px] font-black text-zinc-500 uppercase tracking-widest">VS</div>
+                      <div className="flex items-center justify-end gap-2 min-w-0">
+                        <span className="text-sm font-bold text-zinc-100 truncate text-right">{match.away}</span>
+                        <div className="w-7 h-7 rounded-lg bg-zinc-800/50 flex items-center justify-center overflow-hidden border border-white/5">
+                          {match.awayLogo ? (
+                            <img src={match.awayLogo} alt="" className="w-5 h-5 object-contain" referrerPolicy="no-referrer" />
+                          ) : (
+                            <span className="text-[8px] font-bold text-zinc-500">{match.awayShort}</span>
+                          )}
                         </div>
                       </div>
                     </div>
@@ -719,15 +716,13 @@ export const Home: React.FC<HomeProps> = ({ onTabChange }) => {
                       <span className="text-[9px] font-bold text-zinc-500 uppercase tracking-[0.1em] line-clamp-1 max-w-[150px]">{match.league}</span>
                       <span className="text-[9px] font-black text-red-500">{match.minute || 'LIVE'}</span>
                     </div>
-                    <div className="space-y-3">
-                      <div className="flex items-center justify-between text-sm font-bold text-zinc-100">
-                        <span className="line-clamp-1">{match.home}</span>
-                        <span>{match.score}</span>
+                    <div className="grid grid-cols-[1fr_auto_1fr] items-center gap-2">
+                      <span className="text-sm font-bold text-zinc-100 truncate">{match.home}</span>
+                      <div className="text-center">
+                        <div className="text-lg font-black text-white leading-none">{match.score || '0-0'}</div>
+                        <div className="text-[9px] font-bold text-red-500 mt-1">LIVE</div>
                       </div>
-                      <div className="flex items-center justify-between text-sm font-bold text-zinc-100">
-                        <span className="line-clamp-1">{match.away}</span>
-                        <span className="text-red-500">LIVE</span>
-                      </div>
+                      <span className="text-sm font-bold text-zinc-100 truncate text-right">{match.away}</span>
                     </div>
                   </motion.div>
                 ))

@@ -759,7 +759,11 @@ async function startServer() {
       }
 
       const fixtureId = c.req.param("fixtureId");
-      const preview = await getLiveMatchPreview(fixtureId);
+      let preview: any = await getLiveMatchPreview(fixtureId);
+      if (!preview) {
+        const liveMatches = await getLiveMatches();
+        preview = liveMatches.find((m: any) => String(m?.fixture?.id || "") === String(fixtureId || ""));
+      }
       if (!preview) {
         return c.json({ error: "Live match preview is unavailable right now." }, 404);
       }
