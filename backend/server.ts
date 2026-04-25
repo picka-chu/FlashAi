@@ -2475,6 +2475,15 @@ ${ad.subtitle}`;
       // Delete credit transactions
       await supabase.from("credit_transactions").delete().eq("telegram_id", targetId);
 
+      // Delete reports
+      await supabase.from("reports").delete().eq("telegram_id", targetId);
+
+      // Delete notification logs
+      await supabase.from("notification_logs").delete().eq("telegram_id", targetId);
+
+      // Delete referrals (where user is either referrer or referred)
+      await supabase.from("referrals").delete().or(`referrer_telegram_id.eq.${targetId},referred_telegram_id.eq.${targetId}`);
+
       // Delete user
       const { error } = await supabase
         .from("users")

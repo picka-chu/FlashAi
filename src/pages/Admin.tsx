@@ -124,51 +124,53 @@ export const Admin: React.FC = () => {
       setUsers([]);
       setUsersHasMore(false);
     }
- 
+  };
 
   const suspendUser = async (telegramId: number) => {
-    const confirmed = await showConfirm('Suspend this user? They will not be able to access the app.');
-    if (!confirmed) return;
+    showConfirm('Suspend this user? They will not be able to access the app.', async (confirmed) => {
+      if (!confirmed) return;
 
-    try {
-      const res = await fetch('/api/admin/users/suspend', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json', 'X-TG-Init-Data': initData },
-        body: JSON.stringify({ telegramId })
-      });
-      const data = await res.json().catch(() => ({}));
-      if (res.ok) {
-        fetchUsers(userSearch, usersPage);
-        showAlert('User suspended successfully.');
-      } else {
-        showAlert(data.error || 'Failed to suspend user');
+      try {
+        const res = await fetch('/api/admin/users/suspend', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json', 'X-TG-Init-Data': initData },
+          body: JSON.stringify({ telegramId })
+        });
+        const data = await res.json().catch(() => ({}));
+        if (res.ok) {
+          fetchUsers(userSearch, usersPage);
+          showAlert('User suspended successfully.');
+        } else {
+          showAlert(data.error || 'Failed to suspend user');
+        }
+      } catch (e) {
+        showAlert('Error suspending user');
       }
-    } catch (e) {
-      showAlert('Error suspending user');
-    }
+    });
   };
 
   const deleteUser = async (telegramId: number) => {
-    const confirmed = await showConfirm('Delete this user and all their data? This action cannot be undone.');
-    if (!confirmed) return;
+    showConfirm('Delete this user and all their data? This action cannot be undone.', async (confirmed) => {
+      if (!confirmed) return;
 
-    try {
-      const res = await fetch('/api/admin/users/delete', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json', 'X-TG-Init-Data': initData },
-        body: JSON.stringify({ telegramId })
-      });
-      const data = await res.json().catch(() => ({}));
-      if (res.ok) {
-        fetchUsers(userSearch, usersPage);
-        showAlert('User and all data deleted successfully.');
-      } else {
-        showAlert(data.error || 'Failed to delete user');
+      try {
+        const res = await fetch('/api/admin/users/delete', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json', 'X-TG-Init-Data': initData },
+          body: JSON.stringify({ telegramId })
+        });
+        const data = await res.json().catch(() => ({}));
+        if (res.ok) {
+          fetchUsers(userSearch, usersPage);
+          showAlert('User and all data deleted successfully.');
+        } else {
+          showAlert(data.error || 'Failed to delete user');
+        }
+      } catch (e) {
+        showAlert('Error deleting user');
       }
-    } catch (e) {
-      showAlert('Error deleting user');
-    }
-  }; };
+    });
+  };
 
   const fetchDashboard = async () => {
     try {
@@ -962,8 +964,6 @@ export const Admin: React.FC = () => {
                          <option value="free">Free Trial</option>
                          <option value="monthly_basic">Monthly Basic</option>
                          <option value="monthly_pro">Monthly Pro</option>
-                         <option value="weekly">Weekly (Legacy)</option>
-                         <option value="monthly">Monthly (Legacy)</option>
                          <option value="admin">Admin</option>
                        </select>
                        <button
