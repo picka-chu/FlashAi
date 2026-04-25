@@ -117,7 +117,10 @@ export async function analyzeMatchWithSearch(matchString: string): Promise<Predi
         const result = await ai.models.generateContent({
           model,
           contents: [{ role: "user", parts: [{ text: prompt }] }],
-          config: { tools: [{ googleSearch: {} }] as any }
+          config: {
+            tools: [{ googleSearch: {} }] as any,
+            responseMimeType: "application/json"
+          }
         });
 
         const rawText = result.text || "";
@@ -203,6 +206,9 @@ export async function fetchMatchH2H(home: string, away: string): Promise<any> {
     const result = await ai.models.generateContent({
       model: "gemini-2.5-flash-lite",
       contents: [{ role: "user", parts: [{ text: prompt }] }],
+      config: {
+        responseMimeType: "application/json"
+      }
     });
     return parseJsonFromText(result.text);
   }, {
