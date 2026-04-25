@@ -118,8 +118,7 @@ export async function analyzeMatchWithSearch(matchString: string): Promise<Predi
           model,
           contents: [{ role: "user", parts: [{ text: prompt }] }],
           config: {
-            tools: [{ googleSearch: {} }] as any,
-            responseMimeType: "application/json"
+            tools: [{ googleSearch: {} }] as any
           }
         });
 
@@ -302,7 +301,7 @@ export async function fetchLiveMatchesFallback(): Promise<any[]> {
     const result = await ai.models.generateContent({
       model: "gemini-2.5-flash-lite",
       contents: [{ role: "user", parts: [{ text: prompt }] }],
-      config: { tools: [{ googleSearch: {} }] as any, responseMimeType: "application/json" }
+      config: { tools: [{ googleSearch: {} }] as any }
     });
 
     const parsed = parseJsonFromText(result.text || "");
