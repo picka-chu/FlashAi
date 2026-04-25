@@ -787,6 +787,8 @@ async function startServer() {
     free: { dailyCredits: 3, name: "Free" },
     weekly: { dailyCredits: 35, name: "Pro Weekly" },
     monthly: { dailyCredits: 120, name: "Elite Monthly" },
+    monthly_basic: { dailyCredits: 10, name: "Monthly Basic" },
+    monthly_pro: { dailyCredits: 16, name: "Monthly Pro" },
     admin: { dailyCredits: 999, name: "Administrator" }
   };
 
@@ -801,7 +803,14 @@ async function startServer() {
     let effectivePlan = userData.plan || "free";
 
     // Auto-downgrade expired subscriptions.
-    if ((effectivePlan === "weekly" || effectivePlan === "monthly") && planExpiresAt && planExpiresAt.getTime() <= now.getTime()) {
+    if (
+      (effectivePlan === "weekly" ||
+        effectivePlan === "monthly" ||
+        effectivePlan === "monthly_basic" ||
+        effectivePlan === "monthly_pro") &&
+      planExpiresAt &&
+      planExpiresAt.getTime() <= now.getTime()
+    ) {
       effectivePlan = "free";
       const { error: downgradeError } = await supabase
         .from("users")
@@ -954,21 +963,30 @@ async function startServer() {
       }
 
       // 3. Deduct Credits
-      const { error: updateError } = await supabase
+      const { data: updatedUser, error: updateError } = await supabase
         .from("users")
         .update({ 
           credits: credits - cost,
           last_active: new Date().toISOString()
         })
-        .eq("telegram_id", telegramId);
+        .eq("telegram_id", telegramId)
+        .eq("credits", credits)
+        .gte("credits", cost)
+        .select("credits")
+        .maybeSingle();
 
       if (updateError) {
         console.error("CRITICAL: Credit deduction error:", updateError);
         // In production, we might want to fail the request if credits can't be deducted,
         // but for now we'll log it as a critical error since the schema is consolidated.
+        return c.json({ error: "Failed to deduct credits. Please retry." }, 500);
       }
 
-      return c.json({ result, newCredits: credits - cost });
+      if (!updatedUser) {
+        return c.json({ error: "Credits changed during analysis. Please retry.", code: "CREDITS_CONFLICT" }, 409);
+      }
+
+      return c.json({ result, newCredits: Number(updatedUser.credits || 0) });
     } catch (e: any) {
       console.error("Analysis API error:", e.message);
       const message = String(e?.message || "");
@@ -1050,19 +1068,27 @@ async function startServer() {
       const result = await analyzeBetSlip(images);
 
       // 3. Deduct Credits
-      const { error: updateError } = await supabase
+      const { data: updatedUser, error: updateError } = await supabase
         .from("users")
         .update({ 
           credits: credits - cost,
           last_active: new Date().toISOString()
         })
-        .eq("telegram_id", telegramId);
+        .eq("telegram_id", telegramId)
+        .eq("credits", credits)
+        .gte("credits", cost)
+        .select("credits")
+        .maybeSingle();
 
       if (updateError) {
         console.error("CRITICAL: Betslip credit deduction error:", updateError);
+        return c.json({ error: "Failed to deduct credits. Please retry." }, 500);
+      }
+      if (!updatedUser) {
+        return c.json({ error: "Credits changed during bet slip analysis. Please retry.", code: "CREDITS_CONFLICT" }, 409);
       }
 
-      return c.json({ result, newCredits: credits - cost });
+      return c.json({ result, newCredits: Number(updatedUser.credits || 0) });
     } catch (e: any) {
       console.error("Bet Slip Analysis API error:", e.message);
       return c.json({ error: "Failed to analyze bet slip" }, 500);
