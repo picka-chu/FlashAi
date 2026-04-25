@@ -58,6 +58,7 @@ const signupCreditsRaw = Number(process.env.SIGNUP_CREDITS ?? 3);
 const signupCredits = Number.isFinite(signupCreditsRaw) && signupCreditsRaw >= 0 ? Math.floor(signupCreditsRaw) : 3;
 const referralRewardRaw = Number(process.env.REFERRAL_REWARD_CREDITS ?? 2);
 const referralRewardCredits = Number.isFinite(referralRewardRaw) && referralRewardRaw >= 0 ? Math.floor(referralRewardRaw) : 2;
+const DEFAULT_APP_URL = process.env.DEFAULT_APP_URL || "https://flashai-siuj.onrender.com";
 
 function getPlanCreditAllocation(planId: string) {
   return PLAN_CREDITS[planId] ?? 0;
@@ -1226,12 +1227,15 @@ async function startServer() {
           .maybeSingle();
 
         const isNewRegistration = !existingUser?.phone;
+        const hasValidReferrer = Boolean(existingUser?.referrer_id && existingUser.referrer_id !== telegramId);
         
         // Check if referral was already rewarded (prevent race condition/duplicate reward)
         const referralAlreadyRewarded = existingUser?.referral_rewarded === true;
 
         // Define signup credits for new users (default: 3, configurable via SIGNUP_CREDITS)
-        const signupCreditsToApply = isNewRegistration ? signupCredits : (existingUser?.credits || 0);
+        const signupCreditsToApply = isNewRegistration
+          ? (hasValidReferrer ? referralRewardCredits : signupCredits)
+          : (existingUser?.credits || 0);
 
         // 2. Perform registration/update with atomic credit handling
         const profilePhoto = await getTelegramProfilePhotoUrl(telegramId, bot);
@@ -1297,7 +1301,7 @@ async function startServer() {
         }
 
         // 3. Handle Referral Reward - ATOMIC operation to prevent race conditions
-        if (isNewRegistration && existingUser?.referrer_id && existingUser.referrer_id !== telegramId && !referralAlreadyRewarded) {
+        if (isNewRegistration && hasValidReferrer && !referralAlreadyRewarded) {
            const rewardAmount = referralRewardCredits; 
            
            try {
@@ -1390,7 +1394,7 @@ async function startServer() {
            }
         }
 
-        const rewardText = `${signupCredits} free credits`;
+        const rewardText = `${signupCreditsToApply} free credits`;
         const referralBonusText = isNewRegistration && existingUser?.referrer_id
           ? `\nYour referrer received ${referralRewardCredits} bonus credits.`
           : "";
@@ -1895,9 +1899,9 @@ async function startServer() {
             type: 'checkouts',
             attributes: {
               product_options: {
-                redirect_url: process.env.LEMONSQUEEZY_REDIRECT_URL || process.env.APP_URL || 'https://t.me/Deepflashaibot',
+                redirect_url: process.env.LEMONSQUEEZY_REDIRECT_URL || process.env.APP_URL || DEFAULT_APP_URL,
                 receipt_button_text: 'Back to Flash AI',
-                receipt_link_url: process.env.APP_URL || 'https://t.me/Deepflashaibot',
+                receipt_link_url: process.env.APP_URL || DEFAULT_APP_URL,
               },
               checkout_data: {
                 name: planName ? `Flash AI — ${planName}` : undefined,
@@ -2320,13 +2324,21 @@ async function startServer() {
   app.post("/api/admin/ads", adminOnly, async (c) => {
     const body = await c.req.json();
     const ads = await getCachedCollection<any>(ADMIN_ADS_KEY);
+    const isInternal = body.is_internal === true;
+    const internalTarget = String(body.internal_target || "").trim().toLowerCase();
+    const externalLink = String(body.link || "").trim();
+    const normalizedLink = isInternal
+      ? (internalTarget ? `internal:${internalTarget}` : "")
+      : externalLink;
+    if (isInternal && !internalTarget) return c.json({ error: "Internal redirect target is required" }, 400);
+    if (!isInternal && !externalLink) return c.json({ error: "External redirect URL is required" }, 400);
 
     const ad = {
       id: crypto.randomUUID(),
       title: String(body.title || "").trim(),
       subtitle: String(body.subtitle || "").trim(),
       image_url: String(body.image_url || "").trim(),
-      link: String(body.link || "").trim(),
+      link: normalizedLink,
       cta: String(body.cta || "Check Out").trim(),
       active: body.active !== false,
       target_group: normalizeAudience(body.target_group || body.target_plan || "all"),
@@ -2380,7 +2392,10 @@ async function startServer() {
           const message = `*${ad.title}*
 
 ${ad.subtitle}`;
-          const keyboard = ad.link ? Markup.inlineKeyboard([[Markup.button.url(ad.cta || "Check it Out", ad.link)]]) : undefined;
+          const isExternalLink = typeof ad.link === "string" && /^https?:\/\//i.test(ad.link);
+          const keyboard = isExternalLink
+            ? Markup.inlineKeyboard([[Markup.button.url(ad.cta || "Check it Out", ad.link)]])
+            : undefined;
           if (ad.image_url) {
             await bot.telegram.sendPhoto(user.telegram_id, ad.image_url, { caption: message, parse_mode: 'Markdown', ...keyboard });
           } else {

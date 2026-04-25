@@ -168,7 +168,9 @@ export const Home: React.FC<HomeProps> = ({ onTabChange }) => {
        }).catch(() => {});
     }
     if (ad.link) {
-       if (ad.link.startsWith('http')) {
+       if (ad.link.startsWith('internal:')) {
+         onTabChange(ad.link.replace('internal:', '').replace('/', ''));
+       } else if (ad.link.startsWith('http')) {
          tg.openLink(ad.link);
        } else {
          onTabChange(ad.link.replace('/', ''));
