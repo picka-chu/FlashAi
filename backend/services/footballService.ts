@@ -4,6 +4,9 @@ import { MatchData, TeamStats } from '../../src/types/prediction';
 const API_KEY = process.env.SPORTS_API_KEY || '';
 const API_BASE = 'https://v2.football.sportsapipro.com/api';
 const HEADERS = API_KEY ? { 'x-api-key': API_KEY } : {};
+const BSD_API_KEY = process.env.BSD_API_KEY || process.env.BSD_FOOTBALL_API_KEY || '';
+const BSD_API_BASE = process.env.BSD_API_BASE || 'https://sports.bzzoiro.com/api';
+const BSD_HEADERS = BSD_API_KEY ? { 'x-api-key': BSD_API_KEY, authorization: `Bearer ${BSD_API_KEY}` } : {};
 
 const ESPN_BASE = 'https://site.api.espn.com/apis/site/v2/sports/soccer';
 
@@ -139,6 +142,95 @@ function mapSportsApiEvent(e: any) {
   };
 }
 
+function mapBSDEvent(e: any) {
+  const homeName = e?.homeTeam?.name || e?.home?.name || e?.homeTeam || e?.teams?.home?.name || 'Home';
+  const awayName = e?.awayTeam?.name || e?.away?.name || e?.awayTeam || e?.teams?.away?.name || 'Away';
+  const homeGoals = Number(e?.score?.home ?? e?.homeScore ?? e?.goals?.home ?? 0);
+  const awayGoals = Number(e?.score?.away ?? e?.awayScore ?? e?.goals?.away ?? 0);
+  const elapsed = Number(e?.status?.elapsed ?? e?.elapsed ?? e?.minute ?? 0);
+  const possessionHome = String(e?.stats?.possession?.home ?? e?.statistics?.possession?.home ?? '50%');
+  const possessionAway = String(e?.stats?.possession?.away ?? e?.statistics?.possession?.away ?? '50%');
+  const shotsOnTargetHome = String(e?.stats?.shotsOnTarget?.home ?? e?.statistics?.shotsOnTarget?.home ?? '0');
+  const shotsOnTargetAway = String(e?.stats?.shotsOnTarget?.away ?? e?.statistics?.shotsOnTarget?.away ?? '0');
+  const shotsHome = String(e?.stats?.shots?.home ?? e?.statistics?.shots?.home ?? '0');
+  const shotsAway = String(e?.stats?.shots?.away ?? e?.statistics?.shots?.away ?? '0');
+  const cornersHome = String(e?.stats?.corners?.home ?? e?.statistics?.corners?.home ?? '0');
+  const cornersAway = String(e?.stats?.corners?.away ?? e?.statistics?.corners?.away ?? '0');
+  const startAt = e?.startTime || e?.date || e?.kickoff || e?.timestamp || Date.now();
+  const startIso = typeof startAt === 'number'
+    ? new Date(startAt > 9999999999 ? startAt : startAt * 1000).toISOString()
+    : new Date(startAt).toISOString();
+  const id = e?.id || e?.eventId || e?.matchId || `${homeName}-${awayName}-${startIso}`;
+  const leagueName = e?.league?.name || e?.competition?.name || e?.tournament?.name || e?.league || 'Live Football';
+  const state = String(e?.status?.state || e?.status?.short || e?.status || 'in').toLowerCase().includes('pre') ? 'pre' : 'in';
+
+  return {
+    fixture: {
+      id: `bsd_${id}`,
+      date: startIso,
+      status: {
+        short: e?.status?.short || e?.status?.label || 'LIVE',
+        elapsed: Number.isFinite(elapsed) ? elapsed : 0,
+        state,
+      },
+    },
+    teams: {
+      home: { name: homeName, id: e?.homeTeam?.id || homeName, logo: e?.homeTeam?.logo || e?.teams?.home?.logo || null },
+      away: { name: awayName, id: e?.awayTeam?.id || awayName, logo: e?.awayTeam?.logo || e?.teams?.away?.logo || null },
+    },
+    league: { name: leagueName, id: e?.league?.id || leagueName, slug: e?.league?.slug || leagueName },
+    goals: { home: homeGoals, away: awayGoals },
+    stats: {
+      possession: { home: possessionHome, away: possessionAway },
+      shotsOnTarget: { home: shotsOnTargetHome, away: shotsOnTargetAway },
+      shots: { home: shotsHome, away: shotsAway },
+      corners: { home: cornersHome, away: cornersAway },
+    },
+    xG: {
+      home: Number(e?.xg?.home ?? e?.stats?.xg?.home ?? 0),
+      away: Number(e?.xg?.away ?? e?.stats?.xg?.away ?? 0),
+    },
+    odds: e?.odds || e?.markets || null,
+    provider: "bsd",
+  };
+}
+
+async function fetchBsdLiveEvents() {
+  if (!BSD_API_KEY) return [];
+  const urls = [`${BSD_API_BASE}/live/`, `${BSD_API_BASE}/live`];
+  for (const url of urls) {
+    try {
+      const res = await axios.get(url, { headers: BSD_HEADERS, timeout: 8000 });
+      const events = res.data?.events || res.data?.matches || res.data?.data || [];
+      if (Array.isArray(events) && events.length > 0) return events;
+    } catch {
+      // try next url
+    }
+  }
+  return [];
+}
+
+export async function getLiveMatchPreview(fixtureId: string) {
+  const normalizedId = String(fixtureId || "").replace(/^bsd_/, "").trim();
+  if (!normalizedId || !BSD_API_KEY) return null;
+  const urls = [
+    `${BSD_API_BASE}/events/${encodeURIComponent(normalizedId)}/`,
+    `${BSD_API_BASE}/events/${encodeURIComponent(normalizedId)}`,
+    `${BSD_API_BASE}/matches/${encodeURIComponent(normalizedId)}/`,
+    `${BSD_API_BASE}/matches/${encodeURIComponent(normalizedId)}`
+  ];
+  for (const url of urls) {
+    try {
+      const res = await axios.get(url, { headers: BSD_HEADERS, timeout: 8000 });
+      const event = res.data?.event || res.data?.data || res.data;
+      if (event && typeof event === "object") return mapBSDEvent(event);
+    } catch {
+      // try next url
+    }
+  }
+  return null;
+}
+
 export async function searchMatches(query: string) {
   const today = getTodayDateString();
   const promises = POPULAR_LEAGUES.map((league) =>
@@ -180,6 +272,13 @@ export async function getMatchDetails(fixtureId: number | string, match?: any): 
 }
 
 export async function getLiveMatches() {
+  if (BSD_API_KEY) {
+    const bsdEvents = await fetchBsdLiveEvents();
+    if (bsdEvents.length > 0) {
+      return bsdEvents.map(mapBSDEvent).filter(Boolean);
+    }
+  }
+
   const today = getTodayDateString();
   const promises = POPULAR_LEAGUES.map((league) =>
     axios.get(`${ESPN_BASE}/${league}/scoreboard?dates=${today}`).then((res) => (res.data.events || []).map((e: any) => ({ ...e, _leagueSlug: league }))).catch(() => []),
