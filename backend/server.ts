@@ -54,6 +54,14 @@ const PLAN_DAILY_LIMITS: Record<string, { credits: number; betSlipAnalysis: numb
   admin: { credits: 999, betSlipAnalysis: 999 },
 };
 
+const PLAN_PRICE_USD: Record<string, number> = {
+  weekly: 3.99,
+  monthly: 12.99,
+  monthly_basic: 8.99,
+  monthly_pro: 14.99,
+};
+const USD_TO_STARS_RATE = 15;
+
 const signupCreditsRaw = Number(process.env.SIGNUP_CREDITS ?? 3);
 const signupCredits = Number.isFinite(signupCreditsRaw) && signupCreditsRaw >= 0 ? Math.floor(signupCreditsRaw) : 3;
 const referralRewardRaw = Number(process.env.REFERRAL_REWARD_CREDITS ?? 2);
@@ -502,6 +510,34 @@ async function startServer() {
       return c.json({ error: "Failed to fetch market rates" }, 503);
     }
   });
+
+  const getPlanUsdPrice = (planId: string): number => PLAN_PRICE_USD[String(planId || "").trim()] || 0;
+  const getExpectedStarsAmount = (planId: string): number => Math.ceil(getPlanUsdPrice(planId) * USD_TO_STARS_RATE);
+  const getExpectedTonAmount = (planId: string, tonPerUsdRate: number): number => {
+    const usd = getPlanUsdPrice(planId);
+    if (!usd || !Number.isFinite(tonPerUsdRate) || tonPerUsdRate <= 0) return 0;
+    return Number((usd * tonPerUsdRate).toFixed(2));
+  };
+  const getTonPerUsdRate = async (): Promise<number> => {
+    const envRate = Number(process.env.USD_TO_TON_RATE || 0);
+    if (Number.isFinite(envRate) && envRate > 0) return envRate;
+
+    const now = Date.now();
+    if (cachedRates && now - cachedRates.updatedAt < RATES_TTL_MS && cachedRates.tonUsd > 0) {
+      return 1 / cachedRates.tonUsd;
+    }
+
+    const response = await axios.get(
+      "https://api.coingecko.com/api/v3/simple/price?ids=the-open-network&vs_currencies=usd",
+      { timeout: 10_000 },
+    );
+    const tonUsd = Number(response?.data?.["the-open-network"]?.usd || 0);
+    if (!Number.isFinite(tonUsd) || tonUsd <= 0) {
+      throw new Error("Invalid TON/USD rate response");
+    }
+    cachedRates = { tonUsd, updatedAt: now };
+    return 1 / tonUsd;
+  };
 
   const getCachedCollection = async <T = any>(key: string): Promise<T[]> => {
     try {
@@ -1430,6 +1466,16 @@ async function startServer() {
 
       // Extract plan from payload (e.g., "plan_weekly")
       const planId = payload.startsWith('plan_') ? payload.replace('plan_', '') : 'free';
+      const expectedStars = getExpectedStarsAmount(planId);
+      if (!expectedStars) {
+        await ctx.reply("⚠️ Unknown plan in payment payload. Please contact support.");
+        return;
+      }
+      if (Number(amount || 0) < expectedStars) {
+        console.error(`Stars payment mismatch for ${telegramId}: paid=${amount}, expected=${expectedStars}, plan=${planId}`);
+        await ctx.reply("⚠️ Payment amount mismatch detected. Please contact support before retrying.");
+        return;
+      }
 
       try {
         const creditsToAdd = await applyPlanCredits(telegramId, planId);
@@ -1830,24 +1876,31 @@ async function startServer() {
     }
 
     try {
-      const { telegramId, planId, amount, title, description } = await c.req.json();
-      
-      if (!bot || !telegramId || !planId || !amount) {
+      const { telegramId, planId, title, description } = await c.req.json();
+      const tgUser = initData ? getTelegramUserFromInitData(initData) : null;
+      const effectiveTelegramId = tgUser?.id || Number(telegramId || 0);
+      const normalizedPlanId = String(planId || "").trim();
+      const expectedAmount = getExpectedStarsAmount(normalizedPlanId);
+
+      if (!bot || !effectiveTelegramId || !normalizedPlanId || !expectedAmount) {
         return c.json({ error: "Missing required parameters" }, 400);
+      }
+      if (tgUser?.id && Number(telegramId || 0) && tgUser.id !== Number(telegramId || 0)) {
+        return c.json({ error: "Telegram identity mismatch" }, 403);
       }
 
       // Create Stars Invoice Link
       // Currency for Telegram Stars is 'XTR'
       const invoiceLink = await bot.telegram.createInvoiceLink({
-        title: title || `Flash AI - ${planId.toUpperCase()} Plan`,
+        title: title || `Flash AI - ${normalizedPlanId.toUpperCase()} Plan`,
         description: description || `Access to premium football predictions and analyses.`,
-        payload: `plan_${planId}`,
+        payload: `plan_${normalizedPlanId}`,
         provider_token: "", // Empty for Telegram Stars
         currency: "XTR",
-        prices: [{ label: "Stars", amount: amount }],
+        prices: [{ label: "Stars", amount: expectedAmount }],
       });
 
-      return c.json({ invoiceLink });
+      return c.json({ invoiceLink, amount: expectedAmount });
     } catch (e: any) {
       console.error("Create invoice error:", e.message);
       return c.json({ error: "Failed to create invoice link" }, 500);
@@ -1873,9 +1926,10 @@ async function startServer() {
       const LEMONSQUEEZY_API_KEY = process.env.LEMONSQUEEZY_API_KEY;
 
       if (!LEMONSQUEEZY_STORE_ID || !LEMONSQUEEZY_API_KEY) {
-        // Fallback: Generate a payment link with user info for manual verification
-        const checkoutUrl = `https://flashai-payment.vercel.app/checkout?plan=${planId}&tg_id=${telegramId}`;
-        return c.json({ checkoutUrl });
+        return c.json({
+          error: "Lemon Squeezy checkout is coming soon.",
+          code: "LEMONSQUEEZY_COMING_SOON",
+        }, 503);
       }
 
       // Map plan IDs to product/variant IDs in Lemon Squeezy
@@ -2093,16 +2147,57 @@ async function startServer() {
     }
 
     try {
-      const { telegramId, planId, boc, amount, txHash: rawTxHash } = await c.req.json();
+      const { telegramId, planId, amount, txHash: rawTxHash } = await c.req.json();
       const tgUser = initData ? getTelegramUserFromInitData(initData) : null;
       const effectiveTelegramId = tgUser?.id || Number(telegramId || 0);
-      const txHash = String(rawTxHash || boc || "").trim().slice(0, 256);
+      const normalizedPlanId = String(planId || "").trim();
+      const txHash = String(rawTxHash || "").trim().slice(0, 256);
+      const tonReceiverAddress = process.env.TON_RECEIVER_ADDRESS;
+      const toncenterApiKey = process.env.TONCENTER_API_KEY;
       
-      if (!effectiveTelegramId || !planId || !txHash) {
+      if (!effectiveTelegramId || !normalizedPlanId || !txHash) {
         return c.json({ error: "Missing required parameters" }, 400);
+      }
+      if (!tonReceiverAddress || !toncenterApiKey) {
+        return c.json({ error: "TON payments are coming soon." }, 503);
       }
       if (tgUser?.id && Number(telegramId || 0) && tgUser.id !== Number(telegramId || 0)) {
         return c.json({ error: "Telegram identity mismatch" }, 403);
+      }
+
+      const tonPerUsdRate = await getTonPerUsdRate();
+      const expectedTonAmount = getExpectedTonAmount(normalizedPlanId, tonPerUsdRate);
+      if (!expectedTonAmount) {
+        return c.json({ error: "Unsupported or invalid plan for TON payment" }, 400);
+      }
+      const expectedNanoTon = BigInt(Math.round(expectedTonAmount * 1e9));
+
+      const txLookup = await axios.get("https://toncenter.com/api/v2/getTransactions", {
+        params: {
+          address: tonReceiverAddress,
+          limit: 100,
+        },
+        headers: {
+          "X-API-Key": toncenterApiKey,
+        },
+        timeout: 12_000,
+      });
+
+      const chainTransactions = Array.isArray(txLookup?.data?.result) ? txLookup.data.result : [];
+      const matchingTx = chainTransactions.find((chainTx: any) => {
+        const chainHash = String(chainTx?.transaction_id?.hash || "");
+        if (!chainHash || !(chainHash === txHash || chainHash.includes(txHash) || txHash.includes(chainHash))) {
+          return false;
+        }
+        const inMsg = chainTx?.in_msg || {};
+        const destination = String(inMsg?.destination || chainTx?.account || "").toLowerCase();
+        const value = BigInt(String(inMsg?.value || 0));
+        if (destination && destination !== String(tonReceiverAddress).toLowerCase()) return false;
+        return value >= expectedNanoTon;
+      });
+
+      if (!matchingTx) {
+        return c.json({ error: "TON transaction not confirmed for expected receiver/amount." }, 400);
       }
 
       // 1) Replay protection: reject already-processed TON tx hashes
@@ -2124,7 +2219,7 @@ async function startServer() {
         .insert({
           tx_hash: txHash,
           telegram_id: effectiveTelegramId,
-          plan_id: String(planId),
+          plan_id: normalizedPlanId,
           provider: "ton",
           processed_at: new Date().toISOString(),
         });
@@ -2139,7 +2234,7 @@ async function startServer() {
         // 2. Log the transaction in the database
         const { error: txError } = await supabase.from('transactions').insert({
           telegram_id: effectiveTelegramId,
-          amount: amount,
+          amount: Number(amount || expectedTonAmount || 0),
           currency: 'TON',
           status: 'completed',
           provider_payment_charge_id: txHash.substring(0, 100),
@@ -2149,11 +2244,11 @@ async function startServer() {
         if (txError) throw txError;
 
         // 3. Apply plan + credits consistently
-        await applyPlanCredits(effectiveTelegramId, planId);
+        await applyPlanCredits(effectiveTelegramId, normalizedPlanId);
 
         // 4. Notify the user via Bot
         if (bot) {
-          await bot.telegram.sendMessage(effectiveTelegramId, `✅ TON payment received! Your account is now on ${planId.toUpperCase()} plan.`);
+          await bot.telegram.sendMessage(effectiveTelegramId, `✅ TON payment received! Your account is now on ${normalizedPlanId.toUpperCase()} plan.`);
         }
       } catch (processingError) {
         // Compensating action: release tx hash reservation so user can retry safely.

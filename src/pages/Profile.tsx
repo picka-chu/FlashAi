@@ -412,6 +412,15 @@ export const Profile: React.FC = () => {
       };
 
       const result = await tonConnectUI.sendTransaction(transaction);
+      const txHashCandidate = String(
+        (result as any)?.txHash ||
+        (result as any)?.transaction?.hash ||
+        (result as any)?.hash ||
+        ''
+      ).trim();
+      if (!txHashCandidate) {
+        throw new Error('Unable to read transaction hash from wallet response. Please try another wallet.');
+      }
       
       // Verify with backend
       const verifyRes = await fetch('/api/payments/verify-ton-payment', {
@@ -423,7 +432,7 @@ export const Profile: React.FC = () => {
         body: JSON.stringify({
           telegramId: user.telegram_id,
           planId: selectedPlanForPayment.id,
-          boc: result.boc,
+          txHash: txHashCandidate,
           amount: tonPrice
         })
       });
@@ -470,7 +479,6 @@ export const Profile: React.FC = () => {
         body: JSON.stringify({
           telegramId: user.telegram_id,
           planId: selectedPlanForPayment.id,
-          amount: starsPrice,
           title: `Flash AI - ${selectedPlanForPayment.name} Plan`,
           description: `Unlock premium football predictions with ${selectedPlanForPayment.id === 'monthly_basic' ? 'Flash AI Lite' : 'Flash AI Pro'} for 1 month.`
         }),
@@ -533,6 +541,10 @@ export const Profile: React.FC = () => {
       });
 
       const data = await response.json();
+      if (!response.ok && data?.code === 'LEMONSQUEEZY_COMING_SOON') {
+        showAlert('Lemon Squeezy checkout is coming soon.');
+        return;
+      }
 
       if (data.checkoutUrl) {
         // Open Lemon Squeezy checkout in browser/webview
