@@ -25,7 +25,7 @@ export const INITIAL_FAQS: FAQ[] = [
   },
   {
     question: 'How does the Referral system work?',
-    answer: "Share your unique referral link with friends. When they join Flash AI, you instantly receive 50 bonus credits. You can track your referrals in the 'Referral and Earn' section.",
+    answer: "Share your unique referral link with friends. When they join Flash AI, you receive referral bonus credits. You can track your referrals in the 'Referral and Earn' section.",
     category: 'referral',
   },
 ];
