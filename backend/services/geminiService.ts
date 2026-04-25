@@ -88,16 +88,20 @@ function parseJsonFromText(text: string) {
 /**
  * BACKEND ONLY: Performs deep match analysis using Gemini with Search.
  */
-export async function analyzeMatchWithSearch(matchString: string): Promise<PredictionResult> {
-  const cacheKey = predictionCache.generateKey('match_analysis', { matchString });
+export async function analyzeMatchWithSearch(matchString: string, structuredContext?: string): Promise<PredictionResult> {
+  const cacheKey = predictionCache.generateKey('match_analysis', { matchString, structuredContext: structuredContext || null });
   
   return executeWithRetry(async (apiKey, keyIndex) => {
     for (const model of PREDICTION_MODELS) {
       try {
         const ai = new GoogleGenAI({ apiKey });
+        const structuredDataPrompt = structuredContext
+          ? `\nUse this structured football dataset as your PRIMARY source of truth:\n${structuredContext}\nOnly use Google Search to fill missing fields or confirm news.`
+          : '';
         const prompt = `
           You are an expert sports betting analyst.
           Use Google Search to find the latest news, form, injuries, and betting odds for the upcoming match: ${matchString}.
+          ${structuredDataPrompt}
           Based on your search, generate exactly 10 different betting predictions (e.g., Match Winner, Over/Under Goals, BTTS, Player to Score, Corners, etc.).
           Evaluate the confidence of each prediction from 0 to 100.
           

@@ -97,6 +97,7 @@ export const Home: React.FC<HomeProps> = ({ onTabChange }) => {
   const [topPickIndex, setTopPickIndex] = useState(0);
   const [adIndex, setAdIndex] = useState(0);
   const [upcomingMatches, setUpcomingMatches] = useState<any[]>([]);
+  const [liveMatches, setLiveMatches] = useState<any[]>([]);
   const [trendingMatches, setTrendingMatches] = useState<any[]>([]);
   const [dynamicAds, setDynamicAds] = useState<any[]>([]);
   const [recentAnalysis, setRecentAnalysis] = useState<any[]>([]);
@@ -183,12 +184,15 @@ export const Home: React.FC<HomeProps> = ({ onTabChange }) => {
       try {
         const authInitData = initData || tg?.initData || '';
         setHistoryLoading(Boolean(authInitData));
-        const [upcoming, trending, adsRes, historyRes] = await Promise.all([
+        const [upcoming, trending, adsRes, historyRes, live] = await Promise.all([
           getUpcomingMatches(),
           getTrendingPicks(),
           fetch('/api/common/ads', { headers: { 'X-TG-Init-Data': authInitData } }).then(r => r.json()),
           authInitData
             ? fetch('/api/user/history', { headers: { 'X-TG-Init-Data': authInitData } }).then(r => r.ok ? r.json() : [])
+            : Promise.resolve([]),
+          user?.plan && user.plan !== 'free'
+            ? getLiveMatches(authInitData).catch(() => [])
             : Promise.resolve([])
         ]);
         
@@ -224,6 +228,22 @@ export const Home: React.FC<HomeProps> = ({ onTabChange }) => {
           };
         });
 
+        const mappedLive = (Array.isArray(live) ? live : []).map((m: any, i: number) => ({
+          ...m,
+          id: m.fixture?.id || `live_${i}`,
+          home: m.teams?.home?.name || 'Home',
+          away: m.teams?.away?.name || 'Away',
+          homeShort: (m.teams?.home?.name || 'H').substring(0, 3).toUpperCase(),
+          awayShort: (m.teams?.away?.name || 'A').substring(0, 3).toUpperCase(),
+          homeLogo: m.teams?.home?.logo,
+          awayLogo: m.teams?.away?.logo,
+          league: m.league?.name || 'Live Football',
+          score: `${m.goals?.home ?? 0}-${m.goals?.away ?? 0}`,
+          minute: `${Math.floor(Number(m.fixture?.status?.elapsed || 0))}'`,
+          status: 'Live'
+        }));
+        setLiveMatches(mappedLive.slice(0, 20));
+
         if (trending && trending.length > 0) {
           setTrendingMatches(trending.map((t: any) => {
             return {
@@ -256,6 +276,7 @@ export const Home: React.FC<HomeProps> = ({ onTabChange }) => {
       } catch (error) {
         console.error("Failed to fetch matches:", error);
         setUpcomingMatches([]);
+        setLiveMatches([]);
         setRecentAnalysis([]);
       } finally {
         setHistoryLoading(false);
@@ -263,7 +284,7 @@ export const Home: React.FC<HomeProps> = ({ onTabChange }) => {
       }
     };
     fetchData();
-  }, [initData, tg?.initData, user?.phone]);
+  }, [initData, tg?.initData, user?.phone, user?.plan]);
 
   // Auto-scroll for Top Picks
   useEffect(() => {
@@ -669,6 +690,59 @@ export const Home: React.FC<HomeProps> = ({ onTabChange }) => {
               ))
             )}
           </div>
+        </section>
+
+        {/* Top Live Matches */}
+        <section className="space-y-4">
+          <div className="flex items-center justify-between">
+            <h3 className="text-xs font-black text-zinc-400 uppercase tracking-[0.15em]">Top live matches</h3>
+            <button
+              onClick={() => onTabChange('matches')}
+              className="text-[10px] font-black text-[#ccff00] uppercase tracking-wider"
+            >
+              Open live
+            </button>
+          </div>
+
+          {user?.plan && user.plan !== 'free' ? (
+            <div className="flex gap-3 overflow-x-auto no-scrollbar snap-x pb-2">
+              {liveMatches.length > 0 ? (
+                liveMatches.slice(0, 10).map((match) => (
+                  <motion.div
+                    key={match.id}
+                    initial={{ opacity: 0, scale: 0.95 }}
+                    animate={{ opacity: 1, scale: 1 }}
+                    onClick={() => onTabChange('matches')}
+                    className="shrink-0 w-[260px] snap-center relative bg-[#141414] border border-red-500/20 rounded-2xl p-4 active:scale-[0.98] transition-all cursor-pointer"
+                  >
+                    <div className="flex items-center justify-between mb-3">
+                      <span className="text-[9px] font-bold text-zinc-500 uppercase tracking-[0.1em] line-clamp-1 max-w-[150px]">{match.league}</span>
+                      <span className="text-[9px] font-black text-red-500">{match.minute || 'LIVE'}</span>
+                    </div>
+                    <div className="space-y-3">
+                      <div className="flex items-center justify-between text-sm font-bold text-zinc-100">
+                        <span className="line-clamp-1">{match.home}</span>
+                        <span>{match.score}</span>
+                      </div>
+                      <div className="flex items-center justify-between text-sm font-bold text-zinc-100">
+                        <span className="line-clamp-1">{match.away}</span>
+                        <span className="text-red-500">LIVE</span>
+                      </div>
+                    </div>
+                  </motion.div>
+                ))
+              ) : (
+                <div className="w-full bg-[#141414] border border-white/[0.03] rounded-2xl p-4 text-center text-xs text-zinc-500">
+                  No live fixtures right now.
+                </div>
+              )}
+            </div>
+          ) : (
+            <div className="w-full bg-[#141414] border border-zinc-800 rounded-2xl p-4 text-center">
+              <p className="text-xs font-black text-white uppercase tracking-wider">Premium only</p>
+              <p className="text-[11px] text-zinc-500 mt-1">Upgrade to Monthly Basic or Pro to unlock live match feed and live AI analysis.</p>
+            </div>
+          )}
         </section>
 
         {/* Live & Trending Matches (Glassmorphism) */}

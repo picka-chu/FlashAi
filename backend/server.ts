@@ -9,7 +9,7 @@ import path from "path";
 import { fileURLToPath } from "url";
 import fs from "fs";
 import crypto from "crypto";
-import { getLiveMatches, getMatchDetails, getUpcomingMatches, searchMatches } from "./services/footballService";
+import { getLiveMatchPreview, getLiveMatches, getMatchDetails, getUpcomingMatches, searchMatches } from "./services/footballService";
 import { generateSupportReply, getDefaultFaqs } from "./services/supportService";
 import CreditResetScheduler from "./tasks/creditResetScheduler.js";
 import { InMemoryRateLimiter } from "./middleware/rateLimit";
@@ -712,7 +712,23 @@ async function startServer() {
 
 
   app.get("/api/football/live", async (c) => {
+    const initData = c.req.header("X-TG-Init-Data");
+    if (!hasValidTelegramAuth(initData)) {
+      return c.json({ error: "Invalid Telegram authentication" }, 401);
+    }
     try {
+      const tgUser = initData ? getTelegramUserFromInitData(initData) : null;
+      if (!tgUser?.id) return c.json({ error: "User not identified" }, 401);
+      const { data: user } = await supabase
+        .from("users")
+        .select("plan")
+        .eq("telegram_id", tgUser.id)
+        .maybeSingle();
+      const plan = user?.plan || "free";
+      if (plan === "free") {
+        return c.json({ error: "Live matches are available on paid plans only." }, 403);
+      }
+
       const matches = await getLiveMatches();
       if (matches.length > 0) return c.json(matches);
 
@@ -721,6 +737,36 @@ async function startServer() {
     } catch (error: any) {
       console.error("Football live API error:", error?.message || error);
       return c.json({ error: "Failed to fetch live matches" }, 500);
+    }
+  });
+
+  app.get("/api/football/live/:fixtureId/preview", async (c) => {
+    const initData = c.req.header("X-TG-Init-Data");
+    if (!hasValidTelegramAuth(initData)) {
+      return c.json({ error: "Invalid Telegram authentication" }, 401);
+    }
+    try {
+      const tgUser = initData ? getTelegramUserFromInitData(initData) : null;
+      if (!tgUser?.id) return c.json({ error: "User not identified" }, 401);
+      const { data: user } = await supabase
+        .from("users")
+        .select("plan")
+        .eq("telegram_id", tgUser.id)
+        .maybeSingle();
+      const plan = user?.plan || "free";
+      if (plan === "free") {
+        return c.json({ error: "Live previews are available on paid plans only." }, 403);
+      }
+
+      const fixtureId = c.req.param("fixtureId");
+      const preview = await getLiveMatchPreview(fixtureId);
+      if (!preview) {
+        return c.json({ error: "Live match preview is unavailable right now." }, 404);
+      }
+      return c.json(preview);
+    } catch (error: any) {
+      console.error("Football live preview API error:", error?.message || error);
+      return c.json({ error: "Failed to fetch live preview" }, 500);
     }
   });
 
@@ -1082,6 +1128,97 @@ async function startServer() {
     } catch (e: any) {
       console.error("Bet Slip Analysis API error:", e.message);
       return c.json({ error: "Failed to analyze bet slip" }, 500);
+    }
+  });
+
+  app.post("/api/analyze-live", async (c) => {
+    const initData = c.req.header("X-TG-Init-Data");
+    const tgUserForRateLimit = initData ? getTelegramUserFromInitData(initData) : null;
+    const rateIdentifier = `analyze-live:${tgUserForRateLimit?.id || getRequestIp(c)}`;
+    if (isRateLimited(rateIdentifier)) {
+      return c.json({ error: "Too many requests. Please try again shortly." }, 429);
+    }
+    if (!hasValidTelegramAuth(initData)) {
+      return c.json({ error: "Invalid Telegram authentication" }, 401);
+    }
+
+    try {
+      const tgUser = initData ? getTelegramUserFromInitData(initData) : null;
+      if (!tgUser?.id) return c.json({ error: "User not identified" }, 401);
+      const { fixtureId, liveSnapshot } = await c.req.json().catch(() => ({} as any));
+      const normalizedFixtureId = String(fixtureId || liveSnapshot?.fixture?.id || "").trim();
+      if (!normalizedFixtureId) return c.json({ error: "fixtureId is required" }, 400);
+
+      const { data: user, error: userError } = await supabase
+        .from("users")
+        .select("*")
+        .eq("telegram_id", tgUser.id)
+        .single();
+      if (userError || !user) return c.json({ error: "User profile not found" }, 404);
+      if ((user?.plan || "free") === "free") {
+        return c.json({ error: "Live match analysis is available on paid plans only." }, 403);
+      }
+
+      const credits = await syncUserCredits(user);
+      const cost = 2;
+      if (credits < cost) {
+        return c.json({
+          error: "Insufficient credits for live analysis",
+          required: cost,
+          current: credits,
+          plan: user.plan,
+          nextReset: "Tomorrow morning"
+        }, 402);
+      }
+
+      const liveData = (await getLiveMatchPreview(normalizedFixtureId)) || liveSnapshot || null;
+      if (!liveData?.teams?.home?.name || !liveData?.teams?.away?.name) {
+        return c.json({ error: "Live match data unavailable. Try again in a few moments." }, 503);
+      }
+
+      const matchString = `${liveData.teams.home.name} vs ${liveData.teams.away.name}`;
+      const structuredContext = JSON.stringify({
+        fixtureId: liveData.fixture?.id || normalizedFixtureId,
+        score: liveData.goals,
+        status: liveData.fixture?.status,
+        league: liveData.league,
+        stats: liveData.stats,
+        xG: liveData.xG,
+        odds: liveData.odds,
+      });
+
+      const { analyzeMatchWithSearch } = await import("./services/geminiService.js");
+      const result = await analyzeMatchWithSearch(`${matchString} (LIVE)`, structuredContext);
+
+      const { data: updatedUser, error: updateError } = await supabase
+        .from("users")
+        .update({
+          credits: credits - cost,
+          last_active: new Date().toISOString()
+        })
+        .eq("telegram_id", tgUser.id)
+        .eq("credits", credits)
+        .gte("credits", cost)
+        .select("credits")
+        .maybeSingle();
+
+      if (updateError) {
+        console.error("CRITICAL: Live analysis credit deduction error:", updateError);
+        return c.json({ error: "Failed to deduct credits. Please retry." }, 500);
+      }
+      if (!updatedUser) {
+        return c.json({ error: "Credits changed during live analysis. Please retry.", code: "CREDITS_CONFLICT" }, 409);
+      }
+
+      return c.json({
+        result,
+        newCredits: Number(updatedUser.credits || 0),
+        liveData,
+        analysisType: "live"
+      });
+    } catch (error: any) {
+      console.error("Analyze live API error:", error?.message || error);
+      return c.json({ error: "Failed to analyze live match" }, 500);
     }
   });
 
