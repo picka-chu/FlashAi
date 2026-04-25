@@ -2,7 +2,7 @@
   "rewrites": [
     {
       "source": "/api/:path*",
-      "destination": "https://flashai-axli.onrender.com/api/:path*"
+      "destination": "https://flashai-siuj.onrender.com/api/:path*"
     }
   ]
 }
