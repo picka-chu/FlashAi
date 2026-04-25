@@ -9,6 +9,7 @@
     "preview": "vite preview",
     "clean": "rm -rf dist",
     "lint": "tsc --noEmit",
+    "test": "npm run lint",
     "dev:frontend": "vite",
     "start": "tsx backend/server.ts"
   },

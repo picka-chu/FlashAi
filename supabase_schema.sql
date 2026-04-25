@@ -8,7 +8,7 @@ CREATE TABLE IF NOT EXISTS public.users (
     name TEXT,
     username TEXT,
     photo_url TEXT,
-    plan TEXT DEFAULT 'free' CHECK (plan IN ('free', 'weekly', 'monthly')),
+    plan TEXT DEFAULT 'free' CHECK (plan IN ('free', 'weekly', 'monthly', 'monthly_basic', 'monthly_pro', 'admin')),
     credits INTEGER DEFAULT 5,
     win_rate NUMERIC DEFAULT 0,
     predictions_count INTEGER DEFAULT 0,

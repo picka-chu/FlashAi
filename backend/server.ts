@@ -9,7 +9,7 @@ import path from "path";
 import { fileURLToPath } from "url";
 import fs from "fs";
 import crypto from "crypto";
-import { getLiveMatches, getMatchDetails, getUpcomingMatches, searchMatches } from "./services/footballService";
+import { getLiveMatchPreview, getLiveMatches, getMatchDetails, getUpcomingMatches, searchMatches } from "./services/footballService";
 import { generateSupportReply, getDefaultFaqs } from "./services/supportService";
 import CreditResetScheduler from "./tasks/creditResetScheduler.js";
 import { InMemoryRateLimiter } from "./middleware/rateLimit";
@@ -38,8 +38,6 @@ console.log("✅ Supabase service role key initialized for backend operations.")
 
 const PLAN_CREDITS: Record<string, number> = {
   free: 3,
-  weekly: 35,
-  monthly: 120,
   monthly_basic: 10,
   monthly_pro: 16,
   admin: 0,
@@ -47,16 +45,12 @@ const PLAN_CREDITS: Record<string, number> = {
 
 const PLAN_DAILY_LIMITS: Record<string, { credits: number; betSlipAnalysis: number }> = {
   free: { credits: 3, betSlipAnalysis: 1 },
-  weekly: { credits: 35, betSlipAnalysis: 3 },
-  monthly: { credits: 120, betSlipAnalysis: 10 },
   monthly_basic: { credits: 10, betSlipAnalysis: 2 },
   monthly_pro: { credits: 16, betSlipAnalysis: 6 },
   admin: { credits: 999, betSlipAnalysis: 999 },
 };
 
 const PLAN_PRICE_USD: Record<string, number> = {
-  weekly: 3.99,
-  monthly: 12.99,
   monthly_basic: 8.99,
   monthly_pro: 14.99,
 };
@@ -563,7 +557,7 @@ async function startServer() {
 
   const normalizeAudience = (value: string) => {
     const v = String(value || "all").toLowerCase();
-    if (["all", "subscribed", "unsubscribed", "weekly", "monthly", "admin"].includes(v)) return v;
+    if (["all", "subscribed", "unsubscribed", "monthly_basic", "monthly_pro", "admin"].includes(v)) return v;
     return "all";
   };
 
@@ -718,7 +712,23 @@ async function startServer() {
 
 
   app.get("/api/football/live", async (c) => {
+    const initData = c.req.header("X-TG-Init-Data");
+    if (!hasValidTelegramAuth(initData)) {
+      return c.json({ error: "Invalid Telegram authentication" }, 401);
+    }
     try {
+      const tgUser = initData ? getTelegramUserFromInitData(initData) : null;
+      if (!tgUser?.id) return c.json({ error: "User not identified" }, 401);
+      const { data: user } = await supabase
+        .from("users")
+        .select("plan")
+        .eq("telegram_id", tgUser.id)
+        .maybeSingle();
+      const plan = user?.plan || "free";
+      if (plan === "free") {
+        return c.json({ error: "Live matches are available on paid plans only." }, 403);
+      }
+
       const matches = await getLiveMatches();
       if (matches.length > 0) return c.json(matches);
 
@@ -727,6 +737,40 @@ async function startServer() {
     } catch (error: any) {
       console.error("Football live API error:", error?.message || error);
       return c.json({ error: "Failed to fetch live matches" }, 500);
+    }
+  });
+
+  app.get("/api/football/live/:fixtureId/preview", async (c) => {
+    const initData = c.req.header("X-TG-Init-Data");
+    if (!hasValidTelegramAuth(initData)) {
+      return c.json({ error: "Invalid Telegram authentication" }, 401);
+    }
+    try {
+      const tgUser = initData ? getTelegramUserFromInitData(initData) : null;
+      if (!tgUser?.id) return c.json({ error: "User not identified" }, 401);
+      const { data: user } = await supabase
+        .from("users")
+        .select("plan")
+        .eq("telegram_id", tgUser.id)
+        .maybeSingle();
+      const plan = user?.plan || "free";
+      if (plan === "free") {
+        return c.json({ error: "Live previews are available on paid plans only." }, 403);
+      }
+
+      const fixtureId = c.req.param("fixtureId");
+      let preview: any = await getLiveMatchPreview(fixtureId);
+      if (!preview) {
+        const liveMatches = await getLiveMatches();
+        preview = liveMatches.find((m: any) => String(m?.fixture?.id || "") === String(fixtureId || ""));
+      }
+      if (!preview) {
+        return c.json({ error: "Live match preview is unavailable right now." }, 404);
+      }
+      return c.json(preview);
+    } catch (error: any) {
+      console.error("Football live preview API error:", error?.message || error);
+      return c.json({ error: "Failed to fetch live preview" }, 500);
     }
   });
 
@@ -785,8 +829,6 @@ async function startServer() {
   // Updated to match frontend UI promises and professional tier structure
   const PLAN_CONFIG: Record<string, { dailyCredits: number; name: string }> = {
     free: { dailyCredits: 3, name: "Free" },
-    weekly: { dailyCredits: 35, name: "Pro Weekly" },
-    monthly: { dailyCredits: 120, name: "Elite Monthly" },
     monthly_basic: { dailyCredits: 10, name: "Monthly Basic" },
     monthly_pro: { dailyCredits: 16, name: "Monthly Pro" },
     admin: { dailyCredits: 999, name: "Administrator" }
@@ -804,9 +846,7 @@ async function startServer() {
 
     // Auto-downgrade expired subscriptions.
     if (
-      (effectivePlan === "weekly" ||
-        effectivePlan === "monthly" ||
-        effectivePlan === "monthly_basic" ||
+      (effectivePlan === "monthly_basic" ||
         effectivePlan === "monthly_pro") &&
       planExpiresAt &&
       planExpiresAt.getTime() <= now.getTime()
@@ -1039,8 +1079,8 @@ async function startServer() {
       const plan = user.plan || "free";
       const maxImagesByPlan: Record<string, number> = {
         free: 1,
-        weekly: 2,
-        monthly: 5,
+        monthly_basic: 2,
+        monthly_pro: 6,
         admin: 10,
       };
       const maxImages = maxImagesByPlan[plan] ?? 1;
@@ -1092,6 +1132,97 @@ async function startServer() {
     } catch (e: any) {
       console.error("Bet Slip Analysis API error:", e.message);
       return c.json({ error: "Failed to analyze bet slip" }, 500);
+    }
+  });
+
+  app.post("/api/analyze-live", async (c) => {
+    const initData = c.req.header("X-TG-Init-Data");
+    const tgUserForRateLimit = initData ? getTelegramUserFromInitData(initData) : null;
+    const rateIdentifier = `analyze-live:${tgUserForRateLimit?.id || getRequestIp(c)}`;
+    if (isRateLimited(rateIdentifier)) {
+      return c.json({ error: "Too many requests. Please try again shortly." }, 429);
+    }
+    if (!hasValidTelegramAuth(initData)) {
+      return c.json({ error: "Invalid Telegram authentication" }, 401);
+    }
+
+    try {
+      const tgUser = initData ? getTelegramUserFromInitData(initData) : null;
+      if (!tgUser?.id) return c.json({ error: "User not identified" }, 401);
+      const { fixtureId, liveSnapshot } = await c.req.json().catch(() => ({} as any));
+      const normalizedFixtureId = String(fixtureId || liveSnapshot?.fixture?.id || "").trim();
+      if (!normalizedFixtureId) return c.json({ error: "fixtureId is required" }, 400);
+
+      const { data: user, error: userError } = await supabase
+        .from("users")
+        .select("*")
+        .eq("telegram_id", tgUser.id)
+        .single();
+      if (userError || !user) return c.json({ error: "User profile not found" }, 404);
+      if ((user?.plan || "free") === "free") {
+        return c.json({ error: "Live match analysis is available on paid plans only." }, 403);
+      }
+
+      const credits = await syncUserCredits(user);
+      const cost = 2;
+      if (credits < cost) {
+        return c.json({
+          error: "Insufficient credits for live analysis",
+          required: cost,
+          current: credits,
+          plan: user.plan,
+          nextReset: "Tomorrow morning"
+        }, 402);
+      }
+
+      const liveData = (await getLiveMatchPreview(normalizedFixtureId)) || liveSnapshot || null;
+      if (!liveData?.teams?.home?.name || !liveData?.teams?.away?.name) {
+        return c.json({ error: "Live match data unavailable. Try again in a few moments." }, 503);
+      }
+
+      const matchString = `${liveData.teams.home.name} vs ${liveData.teams.away.name}`;
+      const structuredContext = JSON.stringify({
+        fixtureId: liveData.fixture?.id || normalizedFixtureId,
+        score: liveData.goals,
+        status: liveData.fixture?.status,
+        league: liveData.league,
+        stats: liveData.stats,
+        xG: liveData.xG,
+        odds: liveData.odds,
+      });
+
+      const { analyzeMatchWithSearch } = await import("./services/geminiService.js");
+      const result = await analyzeMatchWithSearch(`${matchString} (LIVE)`, structuredContext);
+
+      const { data: updatedUser, error: updateError } = await supabase
+        .from("users")
+        .update({
+          credits: credits - cost,
+          last_active: new Date().toISOString()
+        })
+        .eq("telegram_id", tgUser.id)
+        .eq("credits", credits)
+        .gte("credits", cost)
+        .select("credits")
+        .maybeSingle();
+
+      if (updateError) {
+        console.error("CRITICAL: Live analysis credit deduction error:", updateError);
+        return c.json({ error: "Failed to deduct credits. Please retry." }, 500);
+      }
+      if (!updatedUser) {
+        return c.json({ error: "Credits changed during live analysis. Please retry.", code: "CREDITS_CONFLICT" }, 409);
+      }
+
+      return c.json({
+        result,
+        newCredits: Number(updatedUser.credits || 0),
+        liveData,
+        analysisType: "live"
+      });
+    } catch (error: any) {
+      console.error("Analyze live API error:", error?.message || error);
+      return c.json({ error: "Failed to analyze live match" }, 500);
     }
   });
 
@@ -1746,13 +1877,21 @@ async function startServer() {
       const tgUser = initData ? getTelegramUserFromInitData(initData) : null;
       if (!tgUser?.id) return c.json({ error: "User not identified" }, 401);
 
-      const [{ count: referredCount }, { data: referrers }] = await Promise.all([
+      const [{ count: referredCount }, { data: referrers }, { data: rewardedReferrals }] = await Promise.all([
         supabase.from("users").select("*", { count: "exact", head: true }).eq("referrer_id", tgUser.id),
         supabase.from("users").select("telegram_id").eq("referrer_id", tgUser.id),
+        supabase
+          .from("referrals")
+          .select("reward_amount")
+          .eq("referrer_telegram_id", tgUser.id)
+          .eq("reward_given", true),
       ]);
 
       const totalReferred = referredCount || 0;
-      const earnedCredits = totalReferred * referralRewardCredits;
+      const earnedCredits = (rewardedReferrals || []).reduce((total: number, referral: any) => {
+        const rewardAmount = Number(referral?.reward_amount || 0);
+        return total + (Number.isFinite(rewardAmount) ? rewardAmount : 0);
+      }, 0);
       const referralLink = `https://t.me/${botUsername}?start=${tgUser.id}`;
 
       return c.json({
@@ -2035,18 +2174,24 @@ async function startServer() {
     }
 
     try {
-      const { telegramId, taskId, reward } = await c.req.json();
-      
-      if (!telegramId || !taskId || !reward) {
+      const tgUser = initData ? getTelegramUserFromInitData(initData) : null;
+      const { telegramId, taskId } = await c.req.json();
+      const normalizedTelegramId = Number(telegramId || 0);
+      const normalizedTaskId = String(taskId || "").trim();
+
+      if (!tgUser?.id || !normalizedTelegramId || !normalizedTaskId) {
         return c.json({ error: "Missing required parameters" }, 400);
+      }
+      if (tgUser.id !== normalizedTelegramId) {
+        return c.json({ error: "Telegram identity mismatch" }, 403);
       }
 
       // 1. Check if user already completed the task
       const { data: taskLog } = await supabase
         .from('user_tasks')
         .select('*')
-        .eq('telegram_id', telegramId)
-        .eq('task_id', taskId)
+        .eq('telegram_id', normalizedTelegramId)
+        .eq('task_id', normalizedTaskId)
         .single();
 
       if (taskLog) {
@@ -2054,7 +2199,15 @@ async function startServer() {
       }
 
       // 2. Perform verification for specific tasks
-      const { data: taskData } = await supabase.from('tasks').select('*').eq('id', taskId).single();
+      const { data: taskData } = await supabase
+        .from('tasks')
+        .select('id,reward,url,active')
+        .eq('id', normalizedTaskId)
+        .maybeSingle();
+      if (!taskData || taskData.active === false) {
+        return c.json({ error: "Task not found or inactive" }, 404);
+      }
+      const taskReward = Math.max(0, Math.floor(Number(taskData.reward || 0)));
       
       if (taskData && bot) {
         // Check if task URL points to a Telegram channel/group
@@ -2064,7 +2217,7 @@ async function startServer() {
         if (match && match[1]) {
           const channelUsername = `@${match[1]}`;
           try {
-            const member = await bot.telegram.getChatMember(channelUsername, telegramId);
+            const member = await bot.telegram.getChatMember(channelUsername, normalizedTelegramId);
             const validStatuses = ['member', 'administrator', 'creator'];
             
             if (!validStatuses.includes(member.status)) {
@@ -2088,17 +2241,25 @@ async function startServer() {
 
       // 3. Log completion and award reward
       const { error: logError } = await supabase.from('user_tasks').insert({
-        telegram_id: telegramId,
-        task_id: taskId,
+        telegram_id: normalizedTelegramId,
+        task_id: normalizedTaskId,
         completed_at: new Date().toISOString()
       });
 
       if (logError) throw logError;
 
-      const { data: user } = await supabase.from('users').select('credits').eq('telegram_id', telegramId).single();
-      await supabase.from('users').update({ credits: (user?.credits || 0) + reward }).eq('telegram_id', telegramId);
+      const { data: user } = await supabase
+        .from('users')
+        .select('credits')
+        .eq('telegram_id', normalizedTelegramId)
+        .single();
+      const newCredits = (user?.credits || 0) + taskReward;
+      await supabase
+        .from('users')
+        .update({ credits: newCredits })
+        .eq('telegram_id', normalizedTelegramId);
 
-      return c.json({ success: true, newCredits: (user?.credits || 0) + reward });
+      return c.json({ success: true, newCredits, rewardedCredits: taskReward });
     } catch (e: any) {
       console.error("Task claim error:", e.message);
       return c.json({ error: "Failed to claim task reward" }, 500);
@@ -2501,8 +2662,8 @@ async function startServer() {
       let query = supabase.from("users").select("telegram_id");
       if (targetGroup === 'subscribed') query = query.neq('plan', 'free');
       if (targetGroup === 'unsubscribed') query = query.eq('plan', 'free');
-      if (targetGroup === 'weekly') query = query.eq('plan', 'weekly');
-      if (targetGroup === 'monthly') query = query.eq('plan', 'monthly');
+      if (targetGroup === 'monthly_basic') query = query.eq('plan', 'monthly_basic');
+      if (targetGroup === 'monthly_pro') query = query.eq('plan', 'monthly_pro');
 
       const { data: users } = await query.not("telegram_id", "is", null);
       if (!users || !bot) return c.json({ success: true, sentCount: 0 });
@@ -2559,7 +2720,7 @@ ${ad.subtitle}`;
     const { telegramId, planId } = await c.req.json().catch(() => ({} as any));
     const targetTelegramId = Number(telegramId || 0);
     const targetPlan = String(planId || "").trim();
-    const allowedPlans = new Set(["free", "weekly", "monthly", "monthly_basic", "monthly_pro", "admin"]);
+    const allowedPlans = new Set(["free", "monthly_basic", "monthly_pro", "admin"]);
 
     if (!targetTelegramId || !allowedPlans.has(targetPlan)) {
       return c.json({ error: "Valid telegramId and planId are required" }, 400);
@@ -2583,11 +2744,9 @@ ${ad.subtitle}`;
           .eq("telegram_id", targetTelegramId);
         if (error) throw error;
       } else {
-        const planExpiresAt = targetPlan === "weekly"
-          ? new Date(Date.now() + 7 * 24 * 60 * 60 * 1000).toISOString()
-          : targetPlan === "monthly"
-            ? new Date(Date.now() + 30 * 24 * 60 * 60 * 1000).toISOString()
-            : null;
+        const planExpiresAt = targetPlan === "free"
+          ? null
+          : new Date(Date.now() + 30 * 24 * 60 * 60 * 1000).toISOString();
 
         const { error } = await supabase
           .from("users")
@@ -2603,6 +2762,12 @@ ${ad.subtitle}`;
 
       return c.json({ success: true });
     } catch (error: any) {
+      const rawMessage = String(error?.message || "");
+      if (error?.code === "22P02" && rawMessage.includes("enum user_plan")) {
+        return c.json({
+          error: "Database plan enum is outdated. Run migration_plan_enum_monthly_tiers.sql to add monthly_basic/monthly_pro."
+        }, 500);
+      }
       return c.json({ error: error?.message || "Failed to assign plan" }, 500);
     }
   });
@@ -2770,8 +2935,8 @@ ${ad.subtitle}`;
     let query = supabase.from("users").select("telegram_id,plan").not("telegram_id", "is", null);
     if (target_group === 'subscribed') query = query.neq('plan', 'free');
     if (target_group === 'unsubscribed') query = query.eq('plan', 'free');
-    if (target_group === 'weekly') query = query.eq('plan', 'weekly');
-    if (target_group === 'monthly') query = query.eq('plan', 'monthly');
+    if (target_group === 'monthly_basic') query = query.eq('plan', 'monthly_basic');
+    if (target_group === 'monthly_pro') query = query.eq('plan', 'monthly_pro');
     if (target_group === 'admin') query = query.eq('plan', 'admin');
 
     const { data: users } = await query;
