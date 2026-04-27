@@ -694,19 +694,33 @@ export const Home: React.FC<HomeProps> = ({ onTabChange }) => {
                     initial={{ opacity: 0, scale: 0.95 }}
                     animate={{ opacity: 1, scale: 1 }}
                     onClick={() => onTabChange('matches')}
-                    className="shrink-0 w-[260px] snap-center relative bg-[#151515] border border-red-500/25 rounded-[28px] p-4 active:scale-[0.98] transition-all cursor-pointer"
+                    className="shrink-0 w-[330px] snap-center relative bg-[#0e0f13] border border-zinc-800/90 rounded-[34px] px-5 py-5 active:scale-[0.98] transition-all cursor-pointer overflow-hidden"
                   >
-                    <div className="flex items-center justify-between mb-3">
-                      <span className="text-[10px] font-black text-zinc-400 uppercase tracking-[0.12em] line-clamp-1 max-w-[140px]">{match.league}</span>
-                      <span className="text-[10px] font-black text-red-500 bg-red-500/10 border border-red-500/20 px-2 py-1 rounded-full">{match.minute || 'LIVE'}</span>
+                    <div className="absolute inset-0 bg-[radial-gradient(circle_at_top,rgba(255,255,255,0.05),transparent_58%)] pointer-events-none" />
+                    <div className="relative z-10 flex items-center justify-between mb-6">
+                      <span className="text-[11px] font-black text-zinc-400 uppercase tracking-[0.13em] line-clamp-1 max-w-[58%]">{match.league}</span>
+                      <span className="text-[14px] font-black text-red-500">Live</span>
                     </div>
-                    <div className="grid grid-cols-[1fr_auto_1fr] items-center gap-2">
-                      <span className="text-sm font-black text-zinc-100 truncate">{match.home}</span>
-                      <div className="text-center">
-                        <div className="text-2xl font-black text-white leading-none">{match.score || '0-0'}</div>
-                        <div className="text-[9px] font-bold text-red-500 mt-1">LIVE</div>
+
+                    <div className="relative z-10 grid grid-cols-[1fr_auto_1fr] items-end gap-3">
+                      <div className="flex flex-col items-center gap-2 min-w-0">
+                        <div className="w-[92px] h-[92px] rounded-full bg-zinc-800/90 border border-zinc-700 p-4 flex items-center justify-center overflow-hidden">
+                          {match.homeLogo ? <img src={match.homeLogo} alt={match.home} className="w-full h-full object-contain" referrerPolicy="no-referrer" /> : <span className="text-base font-black text-white">{match.homeShort}</span>}
+                        </div>
+                        <span className="text-2xl font-black text-white text-center line-clamp-1">{match.home}</span>
                       </div>
-                      <span className="text-sm font-black text-zinc-100 truncate text-right">{match.away}</span>
+
+                      <div className="text-center pb-1">
+                        <span className="block text-[72px] leading-[0.9] font-black text-[#7CFF00]">{(match.score || '0-0').replace('-', ':')}</span>
+                        <span className="block text-[12px] leading-none font-black text-white mt-3">{match.minute || 'LIVE'}</span>
+                      </div>
+
+                      <div className="flex flex-col items-center gap-2 min-w-0">
+                        <div className="w-[92px] h-[92px] rounded-full bg-zinc-800/90 border border-zinc-700 p-4 flex items-center justify-center overflow-hidden">
+                          {match.awayLogo ? <img src={match.awayLogo} alt={match.away} className="w-full h-full object-contain" referrerPolicy="no-referrer" /> : <span className="text-base font-black text-white">{match.awayShort}</span>}
+                        </div>
+                        <span className="text-2xl font-black text-white text-center line-clamp-1">{match.away}</span>
+                      </div>
                     </div>
                   </motion.div>
                 ))

@@ -361,7 +361,7 @@ export const Matches: React.FC<MatchesProps> = ({ onTabChange }) => {
                       <div className="flex items-center justify-between mb-5">
                         <span className="text-[10px] font-black text-zinc-400 uppercase tracking-[0.15em] line-clamp-1 max-w-[55%]">{match.league}</span>
                         {activeMatchType === 'live' ? (
-                          <span className="px-3 py-1 rounded-full text-[10px] font-black bg-red-500/20 text-red-300 uppercase tracking-wide">{match.minute || 'LIVE'}</span>
+                          <span className="text-[14px] font-black text-red-500">Live</span>
                         ) : (
                           <span className="px-3 py-1 rounded-full text-[10px] font-black bg-zinc-800 text-zinc-300 uppercase tracking-wide">Up coming</span>
                         )}
@@ -378,8 +378,8 @@ export const Matches: React.FC<MatchesProps> = ({ onTabChange }) => {
                         <div className="text-center pb-2">
                           {activeMatchType === 'live' ? (
                             <>
-                              <div className="text-4xl font-black text-white leading-none">{match.score || '0-0'}</div>
-                              <div className="text-[11px] font-bold text-red-300 mt-2 uppercase tracking-wide">Live now</div>
+                              <div className="text-[72px] leading-[0.9] font-black text-[#7CFF00]">{(match.score || '0-0').replace('-', ':')}</div>
+                              <div className="text-[12px] font-black text-white mt-3">{match.minute || 'LIVE'}</div>
                             </>
                           ) : (
                             <>
