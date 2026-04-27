@@ -447,68 +447,46 @@ export const Home: React.FC<HomeProps> = ({ onTabChange }) => {
               initial={{ opacity: 0, y: 20 }}
               animate={{ opacity: 1, y: 0 }}
               onClick={() => handleAnalyze(upcomingMatches[0])}
-              className="relative overflow-hidden rounded-[32px] bg-[#ccff00] p-6 group cursor-pointer shadow-[0_20px_50px_rgba(204,255,0,0.2)]"
+              className="relative overflow-hidden rounded-[34px] bg-[#101014] border border-zinc-800 p-6 group cursor-pointer"
             >
-              {/* Background Effects */}
-              <div className="absolute top-0 right-0 w-48 h-48 bg-white/20 blur-[80px]"></div>
-              <div className="absolute -bottom-10 -left-10 w-32 h-32 bg-black/5 blur-[60px]"></div>
-              
-              {/* FOMO Overlay */}
-              <div className="absolute top-4 right-4 z-20">
-                <div className="bg-black/10 backdrop-blur-md border border-black/10 px-3 py-1 rounded-full flex items-center gap-2">
-                  <Clock className="w-3 h-3 text-black" />
-                  <span className="text-[9px] font-black text-black tracking-tighter">Analysis expires soon</span>
-                </div>
-              </div>
+              <div className="absolute inset-0 bg-[radial-gradient(circle_at_top,rgba(255,255,255,0.08),transparent_55%)]" />
 
               <div className="relative z-10">
                 <div className="flex justify-between items-center mb-6">
-                  <div className="flex items-center gap-2">
-                    <div className="w-6 h-6 rounded-full bg-black/10 flex items-center justify-center">
-                      <Trophy className="w-3 h-3 text-black" />
-                    </div>
-                    <span className="text-[10px] font-black text-black/60 tracking-tighter">
-                      {upcomingMatches[0].league}
-                    </span>
-                  </div>
-                  <div className="flex items-center gap-1.5 mr-24">
-                    <div className="w-1.5 h-1.5 rounded-full bg-red-500 animate-pulse"></div>
-                    <span className="text-[10px] font-black text-black tracking-widest">
-                      {upcomingMatches[0].time}
-                    </span>
+                  <span className="text-[10px] font-black text-zinc-400 uppercase tracking-[0.15em] line-clamp-1 max-w-[58%]">
+                    {upcomingMatches[0].league}
+                  </span>
+                  <div className="px-4 py-1.5 rounded-full bg-zinc-800 border border-zinc-700">
+                    <span className="text-[10px] font-black text-zinc-300 uppercase tracking-wide">Up coming</span>
                   </div>
                 </div>
 
-                <div className="flex items-center justify-between gap-4">
-                  <div className="flex flex-col items-center gap-3 flex-1">
-                    <div className="w-20 h-20 rounded-3xl bg-white p-4 shadow-xl group-hover:scale-110 transition-transform duration-500">
+                <div className="grid grid-cols-[1fr_auto_1fr] items-end gap-3">
+                  <div className="flex flex-col items-center gap-3 min-w-0">
+                    <div className="w-[90px] h-[90px] rounded-full bg-zinc-800 border border-zinc-700 p-4 overflow-hidden flex items-center justify-center">
                       <img src={upcomingMatches[0].homeLogo} alt={upcomingMatches[0].home} className="w-full h-full object-contain" />
                     </div>
-                    <span className="text-xs font-black text-black text-center line-clamp-1">{upcomingMatches[0].home}</span>
+                    <span className="text-2xl font-black text-white text-center line-clamp-1">{upcomingMatches[0].home}</span>
                   </div>
 
-                  <div className="flex flex-col items-center gap-2">
-                    <div className="text-3xl font-black text-black/10 italic tracking-tighter">VS</div>
-                    {upcomingMatches[0].confidence ? (
-                      <div className="px-4 py-1.5 rounded-full bg-black shadow-lg">
-                        <span className="text-[11px] font-black text-[#ccff00]">{upcomingMatches[0].confidence}% win</span>
-                      </div>
-                    ) : null}
+                  <div className="text-center pb-2 px-1">
+                    <div className="text-[58px] leading-none font-black text-white tracking-tight">{upcomingMatches[0].time}</div>
+                    <div className="text-[11px] font-bold text-zinc-500 mt-2 uppercase tracking-wide">{upcomingMatches[0].date}</div>
                   </div>
 
-                  <div className="flex flex-col items-center gap-3 flex-1">
-                    <div className="w-20 h-20 rounded-3xl bg-white p-4 shadow-xl group-hover:scale-110 transition-transform duration-500">
+                  <div className="flex flex-col items-center gap-3 min-w-0">
+                    <div className="w-[90px] h-[90px] rounded-full bg-zinc-800 border border-zinc-700 p-4 overflow-hidden flex items-center justify-center">
                       <img src={upcomingMatches[0].awayLogo} alt={upcomingMatches[0].away} className="w-full h-full object-contain" />
                     </div>
-                    <span className="text-xs font-black text-black text-center line-clamp-1">{upcomingMatches[0].away}</span>
+                    <span className="text-2xl font-black text-white text-center line-clamp-1">{upcomingMatches[0].away}</span>
                   </div>
                 </div>
 
-                <div className="mt-8 pt-6 border-t border-black/10 flex items-center justify-between">
-                  <span className="text-[10px] font-bold text-black/60">Real-time fixture insights</span>
-                  <button className="bg-black text-white px-4 py-2 rounded-2xl transition-colors active:scale-95">
+                <div className="mt-6 pt-4 border-t border-zinc-800/80 flex items-center justify-between">
+                  <span className="text-[10px] font-bold text-zinc-500">Real-time fixture insights</span>
+                  <button className="bg-[#ccff00] text-black px-4 py-2 rounded-2xl transition-colors active:scale-95">
                     <div className="flex items-center gap-2">
-                      <Sparkles className="w-3.5 h-3.5 text-[#ccff00]" />
+                      <Sparkles className="w-3.5 h-3.5" />
                       <span className="text-[10px] font-black tracking-widest">Unlock</span>
                     </div>
                   </button>
@@ -639,50 +617,33 @@ export const Home: React.FC<HomeProps> = ({ onTabChange }) => {
                   initial={{ opacity: 0, scale: 0.95 }}
                   animate={{ opacity: 1, scale: 1 }}
                   onClick={() => handleAnalyze(match)}
-                  className="shrink-0 w-[280px] snap-center relative bg-[#151515] border border-white/[0.04] rounded-[28px] p-4 active:scale-[0.98] transition-all cursor-pointer"
+                  className="shrink-0 w-[320px] snap-center relative bg-[#101115] border border-zinc-800/90 rounded-[30px] p-5 active:scale-[0.98] transition-all cursor-pointer overflow-hidden"
                 >
-                  <div className="flex items-center justify-between mb-3">
-                    <span className="text-[10px] font-black text-zinc-400 uppercase tracking-wider line-clamp-1 max-w-[140px]">{match.league}</span>
-                    <span className="text-[10px] font-black text-zinc-400 bg-zinc-800/80 px-2.5 py-1 rounded-full">Up coming</span>
+                  <div className="absolute inset-0 bg-[radial-gradient(circle_at_top,rgba(255,255,255,0.05),transparent_58%)] pointer-events-none" />
+                  <div className="relative z-10 flex items-center justify-between mb-5">
+                    <span className="text-[10px] font-black text-zinc-400 uppercase tracking-[0.14em] line-clamp-1 max-w-[58%]">{match.league}</span>
+                    <span className="text-[10px] font-black text-zinc-300 bg-zinc-800/80 px-3 py-1 rounded-full uppercase tracking-wide">Upcoming</span>
                   </div>
 
-                  <div className="grid grid-cols-[1fr_auto_1fr] items-center gap-2">
-                    <div className="flex flex-col items-center gap-2">
-                      <div className="w-14 h-14 rounded-full bg-zinc-800/80 border border-zinc-700 p-2.5 flex items-center justify-center overflow-hidden">
+                  <div className="relative z-10 grid grid-cols-[1fr_auto_1fr] items-end gap-3">
+                    <div className="flex flex-col items-center gap-2 min-w-0">
+                      <div className="w-[76px] h-[76px] rounded-full bg-zinc-800/80 border border-zinc-700 p-3 flex items-center justify-center overflow-hidden">
                         {match.homeLogo ? <img src={match.homeLogo} alt="" className="w-full h-full object-contain" referrerPolicy="no-referrer" /> : <span className="text-[10px] font-bold text-zinc-500">{match.homeShort}</span>}
                       </div>
-                      <span className="text-sm font-black text-zinc-100 line-clamp-1">{match.home}</span>
+                      <span className="text-lg font-black text-zinc-100 text-center line-clamp-1 w-full">{match.home}</span>
                     </div>
-                    
-                    {/* Teams side-by-side */}
-                    <div className="grid grid-cols-[1fr_auto_1fr] items-center gap-2 py-1">
-                      <div className="flex items-center gap-2 min-w-0">
-                        <div className="w-7 h-7 rounded-lg bg-zinc-800/50 flex items-center justify-center overflow-hidden border border-white/5">
-                          {match.homeLogo ? (
-                            <img src={match.homeLogo} alt="" className="w-5 h-5 object-contain" referrerPolicy="no-referrer" />
-                          ) : (
-                            <span className="text-[8px] font-bold text-zinc-500">{match.homeShort}</span>
-                          )}
-                        </div>
-                        <span className="text-sm font-bold text-zinc-100 truncate">{match.home}</span>
-                      </div>
-                      <div className="text-[10px] font-black text-zinc-500 uppercase tracking-widest">VS</div>
-                      <div className="flex items-center justify-end gap-2 min-w-0">
-                        <span className="text-sm font-bold text-zinc-100 truncate text-right">{match.away}</span>
-                        <div className="w-7 h-7 rounded-lg bg-zinc-800/50 flex items-center justify-center overflow-hidden border border-white/5">
-                          {match.awayLogo ? (
-                            <img src={match.awayLogo} alt="" className="w-5 h-5 object-contain" referrerPolicy="no-referrer" />
-                          ) : (
-                            <span className="text-[8px] font-bold text-zinc-500">{match.awayShort}</span>
-                          )}
-                        </div>
-                      </div>
+
+                    <div className="text-center pb-1">
+                      <div className="text-[11px] font-black text-zinc-500 uppercase tracking-[0.14em]">{match.date}</div>
+                      <div className="text-[44px] leading-none font-black text-white mt-1">{match.time}</div>
+                      <div className="text-[10px] font-bold text-zinc-500 uppercase tracking-wide mt-2">Kick off</div>
                     </div>
-                    <div className="flex flex-col items-center gap-2">
-                      <div className="w-14 h-14 rounded-full bg-zinc-800/80 border border-zinc-700 p-2.5 flex items-center justify-center overflow-hidden">
+
+                    <div className="flex flex-col items-center gap-2 min-w-0">
+                      <div className="w-[76px] h-[76px] rounded-full bg-zinc-800/80 border border-zinc-700 p-3 flex items-center justify-center overflow-hidden">
                         {match.awayLogo ? <img src={match.awayLogo} alt="" className="w-full h-full object-contain" referrerPolicy="no-referrer" /> : <span className="text-[10px] font-bold text-zinc-500">{match.awayShort}</span>}
                       </div>
-                      <span className="text-sm font-black text-zinc-100 line-clamp-1">{match.away}</span>
+                      <span className="text-lg font-black text-zinc-100 text-center line-clamp-1 w-full">{match.away}</span>
                     </div>
                   </div>
                 </motion.div>
@@ -716,19 +677,33 @@ export const Home: React.FC<HomeProps> = ({ onTabChange }) => {
                     initial={{ opacity: 0, scale: 0.95 }}
                     animate={{ opacity: 1, scale: 1 }}
                     onClick={() => onTabChange('matches')}
-                    className="shrink-0 w-[260px] snap-center relative bg-[#151515] border border-red-500/25 rounded-[28px] p-4 active:scale-[0.98] transition-all cursor-pointer"
+                    className="shrink-0 w-[320px] snap-center relative bg-[#101115] border border-zinc-800/90 rounded-[30px] px-5 py-5 active:scale-[0.98] transition-all cursor-pointer overflow-hidden"
                   >
-                    <div className="flex items-center justify-between mb-3">
-                      <span className="text-[10px] font-black text-zinc-400 uppercase tracking-[0.12em] line-clamp-1 max-w-[140px]">{match.league}</span>
-                      <span className="text-[10px] font-black text-red-500 bg-red-500/10 border border-red-500/20 px-2 py-1 rounded-full">{match.minute || 'LIVE'}</span>
+                    <div className="absolute inset-0 bg-[radial-gradient(circle_at_top,rgba(255,255,255,0.05),transparent_58%)] pointer-events-none" />
+                    <div className="relative z-10 flex items-center justify-between mb-6">
+                      <span className="text-[10px] font-black text-zinc-400 uppercase tracking-[0.14em] line-clamp-1 max-w-[58%]">{match.league}</span>
+                      <span className="text-[12px] font-black text-red-500 uppercase tracking-wide">Live</span>
                     </div>
-                    <div className="grid grid-cols-[1fr_auto_1fr] items-center gap-2">
-                      <span className="text-sm font-black text-zinc-100 truncate">{match.home}</span>
-                      <div className="text-center">
-                        <div className="text-2xl font-black text-white leading-none">{match.score || '0-0'}</div>
-                        <div className="text-[9px] font-bold text-red-500 mt-1">LIVE</div>
+
+                    <div className="relative z-10 grid grid-cols-[1fr_auto_1fr] items-end gap-3">
+                      <div className="flex flex-col items-center gap-2 min-w-0">
+                        <div className="w-[76px] h-[76px] rounded-full bg-zinc-800/90 border border-zinc-700 p-3 flex items-center justify-center overflow-hidden">
+                          {match.homeLogo ? <img src={match.homeLogo} alt={match.home} className="w-full h-full object-contain" referrerPolicy="no-referrer" /> : <span className="text-base font-black text-white">{match.homeShort}</span>}
+                        </div>
+                        <span className="text-lg font-black text-white text-center line-clamp-1 w-full">{match.home}</span>
                       </div>
-                      <span className="text-sm font-black text-zinc-100 truncate text-right">{match.away}</span>
+
+                      <div className="text-center pb-1">
+                        <span className="block text-[50px] leading-none font-black text-[#7CFF00]">{(match.score || '0-0').replace('-', ':')}</span>
+                        <span className="block text-[11px] leading-none font-black text-white mt-2">{match.minute || 'LIVE'}</span>
+                      </div>
+
+                      <div className="flex flex-col items-center gap-2 min-w-0">
+                        <div className="w-[76px] h-[76px] rounded-full bg-zinc-800/90 border border-zinc-700 p-3 flex items-center justify-center overflow-hidden">
+                          {match.awayLogo ? <img src={match.awayLogo} alt={match.away} className="w-full h-full object-contain" referrerPolicy="no-referrer" /> : <span className="text-base font-black text-white">{match.awayShort}</span>}
+                        </div>
+                        <span className="text-lg font-black text-white text-center line-clamp-1 w-full">{match.away}</span>
+                      </div>
                     </div>
                   </motion.div>
                 ))
