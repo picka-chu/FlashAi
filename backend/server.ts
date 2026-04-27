@@ -967,7 +967,10 @@ async function startServer() {
 
       // 2. Perform Analysis
       const { analyzeMatchWithSearch } = await import("./services/geminiService.js");
-      const result = await analyzeMatchWithSearch(matchString);
+      const result = await Promise.race([
+        analyzeMatchWithSearch(matchString),
+        new Promise((_, reject) => setTimeout(() => reject(new Error("AI analysis timeout")), 30_000))
+      ]) as any;
 
       const topPrediction = result?.predictions?.[0];
       let home = "Home";
@@ -1192,7 +1195,30 @@ async function startServer() {
       });
 
       const { analyzeMatchWithSearch } = await import("./services/geminiService.js");
-      const result = await analyzeMatchWithSearch(`${matchString} (LIVE)`, structuredContext);
+      let result: any;
+      try {
+        result = await Promise.race([
+          analyzeMatchWithSearch(`${matchString} (LIVE)`, structuredContext),
+          new Promise((_, reject) => setTimeout(() => reject(new Error("AI analysis timeout")), 30_000))
+        ]);
+      } catch (analysisError) {
+        console.warn("Live AI analysis fallback engaged:", analysisError);
+        result = {
+          matchId: matchString,
+          predictions: [
+            {
+              market: "No strong edge detected",
+              confidence: 55,
+              reasoning: "Live model was temporarily unavailable. Please retry shortly for a deeper AI read."
+            }
+          ],
+          overallReasoning: "Live AI is under heavy demand. Core live data is available, but advanced reasoning is temporarily degraded.",
+          teamData: {
+            home: { name: liveData.teams.home.name, form: "LIVE", injuries: [], keyStats: [] },
+            away: { name: liveData.teams.away.name, form: "LIVE", injuries: [], keyStats: [] }
+          }
+        };
+      }
 
       const { data: updatedUser, error: updateError } = await supabase
         .from("users")
@@ -1853,7 +1879,12 @@ async function startServer() {
       if (!tgUser?.id) return c.json({ error: "User not identified" }, 401);
 
       const history = await getUserHistory(tgUser.id);
-      const resolved = await Promise.all(history.map((item) => resolveHistoryItemResult(item)));
+      const settled = await Promise.allSettled(history.map((item) => resolveHistoryItemResult(item)));
+      const resolved = settled.map((result, index) => {
+        if (result.status === "fulfilled") return result.value;
+        console.warn("History item resolve fallback:", result.reason);
+        return history[index];
+      });
 
       const hasChanges = resolved.some((item, index) => item.status !== history[index]?.status || item.resolved_at !== history[index]?.resolved_at);
       if (hasChanges) {
@@ -3198,4 +3229,14 @@ const checkTonPayments = async () => {
 };
 setInterval(checkTonPayments, 30000); // Check every 30 seconds
 
-startServer();
+process.on("unhandledRejection", (reason) => {
+  console.error("⚠️ Unhandled promise rejection:", reason);
+});
+
+process.on("uncaughtException", (error) => {
+  console.error("⚠️ Uncaught exception:", error);
+});
+
+startServer().catch((error) => {
+  console.error("❌ Server bootstrap failed:", error);
+});

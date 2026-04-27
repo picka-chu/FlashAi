@@ -239,7 +239,12 @@ export const Home: React.FC<HomeProps> = ({ onTabChange }) => {
           awayLogo: m.teams?.away?.logo,
           league: m.league?.name || 'Live Football',
           score: `${m.goals?.home ?? 0}-${m.goals?.away ?? 0}`,
-          minute: `${Math.floor(Number(m.fixture?.status?.elapsed || 0))}'`,
+          minute: (() => {
+            const elapsed = Number(m.fixture?.status?.elapsed || 0);
+            const minutes = Math.floor(elapsed / 60);
+            const seconds = Math.floor(elapsed % 60);
+            return elapsed > 0 ? `${minutes}:${String(seconds).padStart(2, '0')}` : 'LIVE';
+          })(),
           status: 'Live'
         }));
         setLiveMatches(mappedLive.slice(0, 20));
@@ -711,19 +716,19 @@ export const Home: React.FC<HomeProps> = ({ onTabChange }) => {
                     initial={{ opacity: 0, scale: 0.95 }}
                     animate={{ opacity: 1, scale: 1 }}
                     onClick={() => onTabChange('matches')}
-                    className="shrink-0 w-[260px] snap-center relative bg-[#141414] border border-red-500/20 rounded-2xl p-4 active:scale-[0.98] transition-all cursor-pointer"
+                    className="shrink-0 w-[260px] snap-center relative bg-[#151515] border border-red-500/25 rounded-[28px] p-4 active:scale-[0.98] transition-all cursor-pointer"
                   >
                     <div className="flex items-center justify-between mb-3">
-                      <span className="text-[9px] font-bold text-zinc-500 uppercase tracking-[0.1em] line-clamp-1 max-w-[150px]">{match.league}</span>
-                      <span className="text-[9px] font-black text-red-500">{match.minute || 'LIVE'}</span>
+                      <span className="text-[10px] font-black text-zinc-400 uppercase tracking-[0.12em] line-clamp-1 max-w-[140px]">{match.league}</span>
+                      <span className="text-[10px] font-black text-red-500 bg-red-500/10 border border-red-500/20 px-2 py-1 rounded-full">{match.minute || 'LIVE'}</span>
                     </div>
                     <div className="grid grid-cols-[1fr_auto_1fr] items-center gap-2">
-                      <span className="text-sm font-bold text-zinc-100 truncate">{match.home}</span>
+                      <span className="text-sm font-black text-zinc-100 truncate">{match.home}</span>
                       <div className="text-center">
-                        <div className="text-lg font-black text-white leading-none">{match.score || '0-0'}</div>
+                        <div className="text-2xl font-black text-white leading-none">{match.score || '0-0'}</div>
                         <div className="text-[9px] font-bold text-red-500 mt-1">LIVE</div>
                       </div>
-                      <span className="text-sm font-bold text-zinc-100 truncate text-right">{match.away}</span>
+                      <span className="text-sm font-black text-zinc-100 truncate text-right">{match.away}</span>
                     </div>
                   </motion.div>
                 ))

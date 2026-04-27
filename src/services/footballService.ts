@@ -68,14 +68,22 @@ export async function getLiveMatchPreview(fixtureId: string, initData = '') {
 }
 
 export async function analyzeLiveMatch(payload: { fixtureId: string; liveSnapshot?: any }, initData = '') {
-  const response = await fetch('/api/analyze-live', {
-    method: 'POST',
-    headers: {
-      'Content-Type': 'application/json',
-      ...(initData ? { 'X-TG-Init-Data': initData } : {}),
-    },
-    body: JSON.stringify(payload),
-  });
+  const controller = new AbortController();
+  const timeoutId = setTimeout(() => controller.abort(), 30_000);
+  let response: Response;
+  try {
+    response = await fetch('/api/analyze-live', {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        ...(initData ? { 'X-TG-Init-Data': initData } : {}),
+      },
+      signal: controller.signal,
+      body: JSON.stringify(payload),
+    });
+  } finally {
+    clearTimeout(timeoutId);
+  }
   const data = await response.json().catch(() => ({}));
   if (!response.ok) {
     throw new Error(data?.error || 'Failed to analyze live match');
