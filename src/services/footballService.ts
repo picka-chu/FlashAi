@@ -38,19 +38,56 @@ export async function fetchMatchH2H(home: string, away: string) {
   return response.json();
 }
 
-export async function getLiveMatches() {
+export async function getLiveMatches(initData = '') {
   const cacheKey = 'live_matches';
   const cached = getFromCache(cacheKey);
   if (cached) return cached;
 
-  const response = await fetch('/api/football/live');
+  const response = await fetch('/api/football/live', {
+    headers: initData ? { 'X-TG-Init-Data': initData } : {},
+  });
   if (!response.ok) {
+    if (response.status === 401 || response.status === 403) {
+      throw new Error('Live matches require an active paid subscription.');
+    }
     const backup = await fetch('/api/common/cache?key=live').then((r) => r.ok ? r.json() : { data: [] }).catch(() => ({ data: [] }));
     return backup.data || [];
   }
 
   const data = await response.json();
   setCache(cacheKey, data);
+  return data;
+}
+
+export async function getLiveMatchPreview(fixtureId: string, initData = '') {
+  const response = await fetch(`/api/football/live/${encodeURIComponent(String(fixtureId))}/preview`, {
+    headers: initData ? { 'X-TG-Init-Data': initData } : {},
+  });
+  if (!response.ok) throw new Error('Failed to fetch live match preview');
+  return response.json();
+}
+
+export async function analyzeLiveMatch(payload: { fixtureId: string; liveSnapshot?: any }, initData = '') {
+  const controller = new AbortController();
+  const timeoutId = setTimeout(() => controller.abort(), 30_000);
+  let response: Response;
+  try {
+    response = await fetch('/api/analyze-live', {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        ...(initData ? { 'X-TG-Init-Data': initData } : {}),
+      },
+      signal: controller.signal,
+      body: JSON.stringify(payload),
+    });
+  } finally {
+    clearTimeout(timeoutId);
+  }
+  const data = await response.json().catch(() => ({}));
+  if (!response.ok) {
+    throw new Error(data?.error || 'Failed to analyze live match');
+  }
   return data;
 }
 
