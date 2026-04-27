@@ -653,10 +653,30 @@ export const Home: React.FC<HomeProps> = ({ onTabChange }) => {
                       </div>
                       <span className="text-sm font-black text-zinc-100 line-clamp-1">{match.home}</span>
                     </div>
-                    <div className="text-center">
-                      <div className="text-[12px] font-black text-zinc-400 uppercase">{match.date}</div>
-                      <div className="text-xl font-black text-white mt-1">vs</div>
-                      <div className="text-[11px] font-bold text-[#ccff00] mt-1">{match.time}</div>
+                    
+                    {/* Teams side-by-side */}
+                    <div className="grid grid-cols-[1fr_auto_1fr] items-center gap-2 py-1">
+                      <div className="flex items-center gap-2 min-w-0">
+                        <div className="w-7 h-7 rounded-lg bg-zinc-800/50 flex items-center justify-center overflow-hidden border border-white/5">
+                          {match.homeLogo ? (
+                            <img src={match.homeLogo} alt="" className="w-5 h-5 object-contain" referrerPolicy="no-referrer" />
+                          ) : (
+                            <span className="text-[8px] font-bold text-zinc-500">{match.homeShort}</span>
+                          )}
+                        </div>
+                        <span className="text-sm font-bold text-zinc-100 truncate">{match.home}</span>
+                      </div>
+                      <div className="text-[10px] font-black text-zinc-500 uppercase tracking-widest">VS</div>
+                      <div className="flex items-center justify-end gap-2 min-w-0">
+                        <span className="text-sm font-bold text-zinc-100 truncate text-right">{match.away}</span>
+                        <div className="w-7 h-7 rounded-lg bg-zinc-800/50 flex items-center justify-center overflow-hidden border border-white/5">
+                          {match.awayLogo ? (
+                            <img src={match.awayLogo} alt="" className="w-5 h-5 object-contain" referrerPolicy="no-referrer" />
+                          ) : (
+                            <span className="text-[8px] font-bold text-zinc-500">{match.awayShort}</span>
+                          )}
+                        </div>
+                      </div>
                     </div>
                     <div className="flex flex-col items-center gap-2">
                       <div className="w-14 h-14 rounded-full bg-zinc-800/80 border border-zinc-700 p-2.5 flex items-center justify-center overflow-hidden">

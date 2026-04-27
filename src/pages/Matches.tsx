@@ -6,6 +6,7 @@ import { Skeleton } from '../components/ui/Skeleton';
 import { analyzeLiveMatch, getLiveMatches, getLiveMatchPreview, getUpcomingMatches, recordMatchClick } from '../services/footballService';
 import { useTelegram } from '../hooks/useTelegram';
 import { SignUpSheet } from '../components/SignUpSheet';
+import { MatchPreviewModal } from '../components/ui/MatchPreviewModal';
 
 type MatchType = 'live' | 'prematch';
 
@@ -325,7 +326,22 @@ export const Matches: React.FC<MatchesProps> = ({ onTabChange }) => {
 
       <div className="flex-1 overflow-y-auto no-scrollbar p-4 space-y-4 pb-24">
         {(loading || (activeMatchType === 'live' && liveLoading)) ? (
-          <div className="space-y-4">{[1, 2, 3, 4].map((i) => <div key={i} className="bg-zinc-900 border border-zinc-800 rounded-[32px] p-5"><Skeleton className="w-full h-32 rounded-2xl" /></div>)}</div>
+          <div className="space-y-4">
+            {[1, 2, 3, 4].map((i) => (
+              <div key={i} className="bg-zinc-900 border border-zinc-800 rounded-[32px] p-5 space-y-6">
+                <div className="flex justify-between items-center">
+                  <Skeleton className="w-24 h-6 rounded-full" />
+                  <Skeleton className="w-16 h-6 rounded-full" />
+                </div>
+                <div className="flex justify-between items-center">
+                  <Skeleton className="w-16 h-16 rounded-full" />
+                  <Skeleton className="w-12 h-8" />
+                  <Skeleton className="w-16 h-16 rounded-full" />
+                </div>
+                <Skeleton className="w-full h-10 rounded-xl" />
+              </div>
+            ))}
+          </div>
         ) : (
           <>
             {activeMatchType === 'live' && !isSubscribed ? (
@@ -375,8 +391,15 @@ export const Matches: React.FC<MatchesProps> = ({ onTabChange }) => {
                 ))
               ) : (
                 <div className="py-20 text-center space-y-4">
-                  <div className="w-16 h-16 bg-zinc-900/50 rounded-full flex items-center justify-center mx-auto border border-zinc-800"><Trophy className="w-8 h-8 text-zinc-600" /></div>
-                  <div><p className="text-white text-sm font-black tracking-wide">No Matches Found</p><p className="text-zinc-500 text-xs mt-1 max-w-[240px] mx-auto leading-relaxed">{activeMatchType === 'live' ? 'No live matches are available right now.' : 'No upcoming matches found for the selected criteria.'}</p></div>
+                  <div className="w-16 h-16 bg-zinc-900/50 rounded-full flex items-center justify-center mx-auto border border-zinc-800">
+                    <Trophy className="w-8 h-8 text-zinc-600" />
+                  </div>
+                  <div>
+                    <p className="text-white text-sm font-black tracking-wide">No Matches Found</p>
+                    <p className="text-zinc-500 text-xs mt-1 max-w-[240px] mx-auto leading-relaxed">
+                      {activeMatchType === 'live' ? 'No live matches are available right now.' : 'No upcoming matches found for the selected criteria.'}
+                    </p>
+                  </div>
                 </div>
               )}
             </AnimatePresence>
@@ -384,7 +407,27 @@ export const Matches: React.FC<MatchesProps> = ({ onTabChange }) => {
         )}
       </div>
 
-      <SignUpSheet isOpen={isSignUpOpen} onClose={() => setIsSignUpOpen(false)} />
+      <MatchPreviewModal
+        isOpen={Boolean(previewMatch)}
+        onClose={() => setPreviewMatch(null)}
+        match={previewMatch}
+        onAnalyze={handleAnalyzeLive}
+      />
+
+      {previewMatch && (
+        <button
+          onClick={() => !analyzingLive && handleAnalyzeLive(previewMatch)}
+          className="fixed bottom-24 right-5 z-[130] w-14 h-14 rounded-full bg-[#ccff00] text-black shadow-[0_10px_30px_rgba(204,255,0,0.4)] flex items-center justify-center active:scale-95"
+          aria-label="Analyze live match"
+        >
+          {analyzingLive ? <span className="text-xs font-black">...</span> : <Zap className="w-6 h-6" />}
+        </button>
+      )}
+
+      <SignUpSheet 
+        isOpen={isSignUpOpen} 
+        onClose={() => setIsSignUpOpen(false)} 
+      />
     </div>
   );
 };
