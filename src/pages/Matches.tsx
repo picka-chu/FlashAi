@@ -355,37 +355,52 @@ export const Matches: React.FC<MatchesProps> = ({ onTabChange }) => {
             <AnimatePresence mode="popLayout">
               {activeList.length > 0 ? (
                 activeList.map((match: any, i) => (
-                  <motion.div key={match.id || i} initial={{ opacity: 0, y: 20 }} animate={{ opacity: 1, y: 0 }} exit={{ opacity: 0, scale: 0.95 }} whileTap={{ scale: 0.98 }} onClick={() => (activeMatchType === 'live' ? handleOpenLivePreview(match) : handleAnalyzePrematch(match))} className="bg-zinc-900 border border-zinc-800 rounded-[30px] px-4 py-4 relative overflow-hidden cursor-pointer">
-                    <div className="flex items-center justify-between mb-3">
-                      <span className="text-[10px] font-black text-zinc-400 uppercase tracking-widest">{match.league}</span>
-                      {activeMatchType === 'live' ? <span className="text-[10px] font-black text-red-500">{match.minute || 'LIVE'}</span> : <span className="text-[10px] font-black text-zinc-400">{match.time}</span>}
-                    </div>
-                    <div className="grid grid-cols-[1fr_auto_1fr] items-center gap-2">
-                      <div className="flex items-center gap-2 min-w-0">
-                        <div className="w-9 h-9 rounded-full bg-zinc-800 p-1.5 flex items-center justify-center overflow-hidden">{match.homeLogo ? <img src={match.homeLogo} alt={match.home} className="w-full h-full object-contain" referrerPolicy="no-referrer" /> : <span className="text-[10px] font-black">{match.homeShort}</span>}</div>
-                        <span className="text-sm font-black text-white truncate">{match.home}</span>
-                      </div>
-                      <div className="text-center">
+                  <motion.div key={match.id || i} initial={{ opacity: 0, y: 20 }} animate={{ opacity: 1, y: 0 }} exit={{ opacity: 0, scale: 0.95 }} whileTap={{ scale: 0.98 }} onClick={() => (activeMatchType === 'live' ? handleOpenLivePreview(match) : handleAnalyzePrematch(match))} className="bg-[#0e0e11] border border-zinc-800/80 rounded-[32px] px-5 py-5 relative overflow-hidden cursor-pointer">
+                    <div className="absolute inset-0 bg-[radial-gradient(circle_at_top,rgba(255,255,255,0.06),transparent_52%)] pointer-events-none" />
+                    <div className="relative z-10">
+                      <div className="flex items-center justify-between mb-5">
+                        <span className="text-[10px] font-black text-zinc-400 uppercase tracking-[0.15em] line-clamp-1 max-w-[55%]">{match.league}</span>
                         {activeMatchType === 'live' ? (
-                          <>
-                            <div className="text-3xl font-black text-white leading-none">{match.score || '0-0'}</div>
-                            <div className="text-[9px] font-bold text-zinc-500 mt-1 uppercase">Live</div>
-                          </>
+                          <span className="text-[14px] font-black text-red-500">Live</span>
                         ) : (
-                          <>
-                            <div className="text-[10px] font-black text-zinc-400 uppercase">{match.date}</div>
-                            <div className="text-[10px] font-bold text-[#ccff00] mt-1">{match.time}</div>
-                          </>
+                          <span className="px-3 py-1 rounded-full text-[10px] font-black bg-zinc-800 text-zinc-300 uppercase tracking-wide">Up coming</span>
                         )}
                       </div>
-                      <div className="flex items-center justify-end gap-2 min-w-0">
-                        <span className="text-sm font-black text-white truncate text-right">{match.away}</span>
-                        <div className="w-9 h-9 rounded-full bg-zinc-800 p-1.5 flex items-center justify-center overflow-hidden">{match.awayLogo ? <img src={match.awayLogo} alt={match.away} className="w-full h-full object-contain" referrerPolicy="no-referrer" /> : <span className="text-[10px] font-black">{match.awayShort}</span>}</div>
+
+                      <div className="grid grid-cols-[1fr_auto_1fr] items-end gap-4">
+                        <div className="flex flex-col items-center gap-2 min-w-0">
+                          <div className="w-[84px] h-[84px] rounded-full bg-zinc-800/80 border border-zinc-700 p-4 flex items-center justify-center overflow-hidden">
+                            {match.homeLogo ? <img src={match.homeLogo} alt={match.home} className="w-full h-full object-contain" referrerPolicy="no-referrer" /> : <span className="text-base font-black">{match.homeShort}</span>}
+                          </div>
+                          <span className="text-xl font-black text-white text-center line-clamp-1 w-full">{match.home}</span>
+                        </div>
+
+                        <div className="text-center pb-2">
+                          {activeMatchType === 'live' ? (
+                            <>
+                              <div className="text-[72px] leading-[0.9] font-black text-[#7CFF00]">{(match.score || '0-0').replace('-', ':')}</div>
+                              <div className="text-[12px] font-black text-white mt-3">{match.minute || 'LIVE'}</div>
+                            </>
+                          ) : (
+                            <>
+                              <div className="text-5xl font-black text-white leading-none tracking-tight">{match.time}</div>
+                              <div className="text-[11px] font-bold text-zinc-500 mt-2 uppercase tracking-wide">{match.date}</div>
+                            </>
+                          )}
+                        </div>
+
+                        <div className="flex flex-col items-center gap-2 min-w-0">
+                          <div className="w-[84px] h-[84px] rounded-full bg-zinc-800/80 border border-zinc-700 p-4 flex items-center justify-center overflow-hidden">
+                            {match.awayLogo ? <img src={match.awayLogo} alt={match.away} className="w-full h-full object-contain" referrerPolicy="no-referrer" /> : <span className="text-base font-black">{match.awayShort}</span>}
+                          </div>
+                          <span className="text-xl font-black text-white text-center line-clamp-1 w-full">{match.away}</span>
+                        </div>
                       </div>
-                    </div>
-                    <div className="mt-3 pt-3 border-t border-zinc-800/50 flex items-center justify-between text-[10px] font-black tracking-widest">
-                      <span className="text-zinc-500 flex items-center gap-1"><TrendingUp className="w-3.5 h-3.5 text-blue-400" />{activeMatchType === 'live' ? 'Open live preview' : `${Math.floor(Math.random() * 5000) + 1000} analyzing`}</span>
-                      <span className="text-[#ccff00] flex items-center gap-1"><Sparkles className="w-3 h-3" />{activeMatchType === 'live' ? 'Tap for live AI' : i < 3 ? 'Top prematch' : 'AI insights available'}</span>
+
+                      <div className="mt-5 pt-4 border-t border-zinc-800/70 flex items-center justify-between text-[10px] font-black tracking-wider">
+                        <span className="text-zinc-500 flex items-center gap-1"><TrendingUp className="w-3.5 h-3.5 text-blue-400" />{activeMatchType === 'live' ? 'Open live preview' : `${Math.floor(Math.random() * 5000) + 1000} analyzing`}</span>
+                        <span className="text-[#ccff00] flex items-center gap-1"><Sparkles className="w-3 h-3" />{activeMatchType === 'live' ? 'Tap for live AI' : i < 3 ? 'Top prematch' : 'AI insights available'}</span>
+                      </div>
                     </div>
                   </motion.div>
                 ))
