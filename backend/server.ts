@@ -47,6 +47,8 @@ const PLAN_DAILY_LIMITS: Record<string, { credits: number; betSlipAnalysis: numb
   free: { credits: 3, betSlipAnalysis: 1 },
   monthly_basic: { credits: 10, betSlipAnalysis: 2 },
   monthly_pro: { credits: 16, betSlipAnalysis: 6 },
+  weekly: { credits: 10, betSlipAnalysis: 2 },
+  monthly: { credits: 16, betSlipAnalysis: 6 },
   admin: { credits: 999, betSlipAnalysis: 999 },
 };
 
@@ -64,6 +66,17 @@ const DEFAULT_APP_URL = process.env.DEFAULT_APP_URL || "https://flashai-siuj.onr
 
 function getPlanCreditAllocation(planId: string) {
   return PLAN_CREDITS[planId] ?? 0;
+}
+
+function getPlanLimits(planId: string) {
+  return PLAN_DAILY_LIMITS[planId] || PLAN_DAILY_LIMITS.free;
+}
+
+function trimPredictionsByPlan(planId: string, predictions: any[] = []) {
+  const safePredictions = Array.isArray(predictions) ? predictions : [];
+  if (planId === "monthly_pro" || planId === "admin" || planId === "monthly") return safePredictions.slice(0, 4);
+  if (planId === "monthly_basic" || planId === "weekly") return safePredictions.slice(0, 2);
+  return safePredictions.slice(0, 1);
 }
 
 function getPlanDurationDays(planId: string): number {
@@ -825,13 +838,24 @@ async function startServer() {
     }
   });
 
-  // --- PLAN LIMITS CONFIG ---
-  // Updated to match frontend UI promises and professional tier structure
-  const PLAN_CONFIG: Record<string, { dailyCredits: number; name: string }> = {
-    free: { dailyCredits: 3, name: "Free" },
-    monthly_basic: { dailyCredits: 10, name: "Monthly Basic" },
-    monthly_pro: { dailyCredits: 16, name: "Monthly Pro" },
-    admin: { dailyCredits: 999, name: "Administrator" }
+  const getUtcDayStartIso = (date = new Date()) => {
+    return new Date(Date.UTC(date.getUTCFullYear(), date.getUTCMonth(), date.getUTCDate())).toISOString();
+  };
+
+  const getTodayBetSlipUsageCount = async (telegramId: number): Promise<number> => {
+    const dayStartIso = getUtcDayStartIso();
+    const { count, error } = await supabase
+      .from("usage_logs")
+      .select("id", { count: "exact", head: true })
+      .eq("telegram_id", telegramId)
+      .eq("endpoint", "/api/analyze-betslip")
+      .gte("created_at", dayStartIso);
+
+    if (error) {
+      console.error("Failed to fetch bet slip usage count:", error.message);
+      return 0;
+    }
+    return Number(count || 0);
   };
 
   /**
@@ -870,18 +894,7 @@ async function startServer() {
 
     let currentCredits = Number(userData.credits || 0);
     const plan = effectivePlan;
-    const config = PLAN_CONFIG[plan] || PLAN_CONFIG.free;
-    let dailyQuota = config.dailyCredits;
-
-    // Free credits expire after 7 days from account creation.
-    if (plan === "free") {
-      const createdAt = userData.created_at ? new Date(userData.created_at) : null;
-      const accountAgeMs = createdAt ? now.getTime() - createdAt.getTime() : 0;
-      const isWithinFreeWindow = createdAt ? accountAgeMs <= (7 * 24 * 60 * 60 * 1000) : false;
-      if (!isWithinFreeWindow) {
-        dailyQuota = 0;
-      }
-    }
+    const dailyQuota = getPlanLimits(plan).credits;
 
     if (shouldReset) {
       // Reset credits to daily quota, but preserve any bonus credits above quota.
@@ -967,10 +980,15 @@ async function startServer() {
 
       // 2. Perform Analysis
       const { analyzeMatchWithSearch } = await import("./services/geminiService.js");
-      const result = await Promise.race([
+      const rawResult = await Promise.race([
         analyzeMatchWithSearch(matchString),
         new Promise((_, reject) => setTimeout(() => reject(new Error("AI analysis timeout")), 30_000))
       ]) as any;
+      const plan = user.plan || "free";
+      const result = {
+        ...rawResult,
+        predictions: trimPredictionsByPlan(plan, rawResult?.predictions || []),
+      };
 
       const topPrediction = result?.predictions?.[0];
       let home = "Home";
@@ -1080,10 +1098,22 @@ async function startServer() {
 
       const credits = await syncUserCredits(user);
       const plan = user.plan || "free";
+      const planLimits = getPlanLimits(plan);
+      const todayBetSlipUsage = await getTodayBetSlipUsageCount(telegramId);
+      if (todayBetSlipUsage >= planLimits.betSlipAnalysis) {
+        return c.json({
+          error: `Daily bet slip analysis limit reached for ${plan} plan.`,
+          plan,
+          limit: planLimits.betSlipAnalysis,
+          used: todayBetSlipUsage
+        }, 429);
+      }
       const maxImagesByPlan: Record<string, number> = {
         free: 1,
         monthly_basic: 2,
         monthly_pro: 6,
+        weekly: 2,
+        monthly: 6,
         admin: 10,
       };
       const maxImages = maxImagesByPlan[plan] ?? 1;

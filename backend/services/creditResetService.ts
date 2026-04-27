@@ -31,9 +31,11 @@ interface PlanConfig {
 }
 
 const PLAN_CONFIG: Record<string, PlanConfig> = {
-  free: { dailyCredits: 3, name: "Free Trial (7 days)" },
+  free: { dailyCredits: 3, name: "Free" },
   monthly_basic: { dailyCredits: 10, name: "Monthly Basic" },
   monthly_pro: { dailyCredits: 16, name: "Monthly Pro" },
+  weekly: { dailyCredits: 10, name: "Weekly (legacy)" },
+  monthly: { dailyCredits: 16, name: "Monthly (legacy)" },
   admin: { dailyCredits: 999, name: "Administrator" }
 };
 
@@ -108,19 +110,8 @@ export class CreditResetService {
   /**
    * Get daily credit quota for a user based on their plan
    */
-  private getDailyQuota(plan: string, createdAt: Date): number {
+  private getDailyQuota(plan: string, _createdAt: Date): number {
     const config = PLAN_CONFIG[plan] || PLAN_CONFIG.free;
-
-    // Free credits expire after 7 days
-    if (plan === "free") {
-      const now = new Date();
-      const accountAgeMs = now.getTime() - new Date(createdAt).getTime();
-      const isWithinFreeWindow = accountAgeMs <= 7 * 24 * 60 * 60 * 1000;
-      if (!isWithinFreeWindow) {
-        return 0;
-      }
-    }
-
     return config.dailyCredits;
   }
 
