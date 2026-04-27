@@ -1,6 +1,6 @@
-import React, { useState, useEffect } from 'react';
+import React, { useMemo, useState, useEffect } from 'react';
 import { motion, AnimatePresence } from 'motion/react';
-import { Search, Trophy, Clock, Flame, TrendingUp, Zap, Radio, Lock, Sparkles, ChevronLeft, MoreHorizontal, Bookmark, PlayCircle, BarChart3, Share2 } from 'lucide-react';
+import { Search, Trophy, TrendingUp, Zap, Radio, Lock, Sparkles, ChevronLeft, MoreHorizontal, Bookmark, PlayCircle, BarChart3, Share2 } from 'lucide-react';
 import { useUserStore } from '../store/useUserStore';
 import { Skeleton } from '../components/ui/Skeleton';
 import { analyzeLiveMatch, getLiveMatches, getLiveMatchPreview, getUpcomingMatches, recordMatchClick } from '../services/footballService';
@@ -113,23 +113,19 @@ export const Matches: React.FC<MatchesProps> = ({ onTabChange }) => {
     fetchLive();
   }, [isSubscribed, initData]);
 
-  const filteredUpcomingMatches = matches.filter((m) =>
-    m.home.toLowerCase().includes(searchQuery.toLowerCase()) ||
-    m.away.toLowerCase().includes(searchQuery.toLowerCase()) ||
-    m.league.toLowerCase().includes(searchQuery.toLowerCase())
-  );
+  const normalizedQuery = searchQuery.trim().toLowerCase();
 
-  const filteredLiveMatches = liveMatches.filter((m) =>
-    m.home.toLowerCase().includes(searchQuery.toLowerCase()) ||
-    m.away.toLowerCase().includes(searchQuery.toLowerCase()) ||
-    m.league.toLowerCase().includes(searchQuery.toLowerCase())
-  );
+  const filteredUpcomingMatches = useMemo(() => matches.filter((m) =>
+    m.home.toLowerCase().includes(normalizedQuery) ||
+    m.away.toLowerCase().includes(normalizedQuery) ||
+    m.league.toLowerCase().includes(normalizedQuery)
+  ), [matches, normalizedQuery]);
 
-  const filteredLiveMatches = liveMatches.filter((m) =>
-    m.home.toLowerCase().includes(searchQuery.toLowerCase()) ||
-    m.away.toLowerCase().includes(searchQuery.toLowerCase()) ||
-    m.league.toLowerCase().includes(searchQuery.toLowerCase())
-  );
+  const filteredLiveMatches = useMemo(() => liveMatches.filter((m) =>
+    m.home.toLowerCase().includes(normalizedQuery) ||
+    m.away.toLowerCase().includes(normalizedQuery) ||
+    m.league.toLowerCase().includes(normalizedQuery)
+  ), [liveMatches, normalizedQuery]);
 
   const handleAnalyzePrematch = (match: any) => {
     if (!user?.phone) {
@@ -355,12 +351,6 @@ export const Matches: React.FC<MatchesProps> = ({ onTabChange }) => {
                 <p className="text-xs text-zinc-500">Upgrade to Monthly Basic or Monthly Pro to view live match cards and run live AI analysis.</p>
               </div>
             ) : null}
-
-            <div className="flex items-center justify-between mb-2 px-1">
-              <h3 className="text-[10px] font-black text-zinc-500 tracking-widest uppercase">
-                {activeMatchType === 'live' ? `Live fixtures (${activeList.length})` : `Upcoming fixtures (${activeList.length})`}
-              </h3>
-            </div>
 
             <AnimatePresence mode="popLayout">
               {activeList.length > 0 ? (
