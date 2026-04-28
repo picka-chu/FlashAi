@@ -22,7 +22,9 @@ export const MainLayout: React.FC<MainLayoutProps> = ({
         {children}
       </main>
       
-      <BottomNav activeTab={activeTab} onTabChange={onTabChange} />
+      {activeTab !== 'livePreview' && (
+        <BottomNav activeTab={activeTab} onTabChange={onTabChange} />
+      )}
     </div>
   );
 };
