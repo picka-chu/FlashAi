@@ -967,10 +967,24 @@ async function startServer() {
 
       // 2. Perform Analysis
       const { analyzeMatchWithSearch } = await import("./services/geminiService.js");
-      const result = await Promise.race([
+      let result = await Promise.race([
         analyzeMatchWithSearch(matchString),
         new Promise((_, reject) => setTimeout(() => reject(new Error("AI analysis timeout")), 30_000))
       ]) as any;
+
+      // 2.5. Shape result based on plan
+      // Free: 1 prediction
+      // Basic: 2 predictions
+      // Pro/Admin: 5 predictions
+      try {
+        if (result && result.predictions) {
+          const plan = user.plan || "free";
+          const predictionCount = plan === "monthly_pro" || plan === "admin" ? 5 : (plan === "monthly_basic" ? 2 : 1);
+          result.predictions = result.predictions.slice(0, predictionCount);
+        }
+      } catch (shapeError) {
+        console.error("Error shaping match analysis result:", shapeError);
+      }
 
       const topPrediction = result?.predictions?.[0];
       let home = "Home";
@@ -1108,7 +1122,30 @@ async function startServer() {
 
       // 2. Perform Analysis
       const { analyzeBetSlip } = await import("./services/geminiService.js");
-      const result = await analyzeBetSlip(images);
+      let result = await analyzeBetSlip(images);
+
+      // 2.5. Shape result based on plan
+      // Free: 1 safe, 0 value
+      // Basic: 1 safe, 1 value
+      // Pro/Admin: 2 safe, 2 value
+      try {
+        if (result) {
+          const safeCount = plan === "monthly_pro" || plan === "admin" ? 2 : 1;
+          const valueCount = plan === "monthly_pro" || plan === "admin" ? 2 : (plan === "monthly_basic" ? 1 : 0);
+
+          if (result.safePicks) {
+            result.safePicks = result.safePicks.slice(0, safeCount);
+          }
+          if (result.valueBets) {
+            result.valueBets = result.valueBets.slice(0, valueCount);
+          } else if (valueCount > 0) {
+            result.valueBets = []; // Ensure it exists if plan allows it
+          }
+        }
+      } catch (shapeError) {
+        console.error("Error shaping betslip result:", shapeError);
+        // Continue with original result if shaping fails - better than crashing
+      }
 
       // 3. Deduct Credits
       const { data: updatedUser, error: updateError } = await supabase
