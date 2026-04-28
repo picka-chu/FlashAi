@@ -7,11 +7,13 @@ export type AnalysisResult = PredictionResult;
 interface UserState {
   user: UserProfile | null;
   selectedMatch: any | null;
+  livePreviewMatch: any | null;
   analysisResult: AnalysisResult | null;
   isAnalyzing: boolean;
   isLoading: boolean;
   setUser: (user: UserProfile | null) => void;
   setSelectedMatch: (match: any | null) => void;
+  setLivePreviewMatch: (match: any | null) => void;
   setAnalysisResult: (result: AnalysisResult | null) => void;
   setIsAnalyzing: (is: boolean) => void;
   updateCredits: (credits: number) => void;
@@ -22,11 +24,13 @@ interface UserState {
 export const useUserStore = create<UserState>((set) => ({
   user: null,
   selectedMatch: null,
+  livePreviewMatch: null,
   analysisResult: null,
   isAnalyzing: false,
   isLoading: true,
   setUser: (user) => set({ user, isLoading: false }),
   setSelectedMatch: (match) => set({ selectedMatch: match }),
+  setLivePreviewMatch: (match) => set({ livePreviewMatch: match }),
   setAnalysisResult: (result) => set({ analysisResult: result }),
   setIsAnalyzing: (is) => set({ isAnalyzing: is }),
   updateCredits: (credits) => 

@@ -7,6 +7,7 @@ import { Analyze } from "./pages/Analyze";
 import { History } from "./pages/History";
 import { Profile } from "./pages/Profile";
 import { Admin } from "./pages/Admin";
+import { LiveMatchPreview } from "./pages/LiveMatchPreview";
 import { useTelegram } from "./hooks/useTelegram";
 import { useUserStore } from "./store/useUserStore";
 import { supabase } from "./lib/supabase";
@@ -123,7 +124,7 @@ export default function App() {
     const requestedTab = params.get("tab");
     if (!requestedTab) return;
 
-    const validTabs: TabType[] = ["home", "matches", "analyze", "history", "profile", "admin"];
+    const validTabs: TabType[] = ["home", "matches", "analyze", "history", "profile", "admin", "livePreview"];
     if (!validTabs.includes(requestedTab as TabType)) return;
 
     setActiveTab(requestedTab as TabType);
@@ -149,6 +150,9 @@ export default function App() {
         </div>
         <div className={activeTab === "admin" ? "h-full" : "hidden"}>
           <Admin />
+        </div>
+        <div className={activeTab === "livePreview" ? "h-full" : "hidden"}>
+          <LiveMatchPreview onBack={() => setActiveTab("matches")} onGoAnalyze={() => setActiveTab("analyze")} />
         </div>
       </>
     );

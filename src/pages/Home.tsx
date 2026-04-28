@@ -31,6 +31,7 @@ import { useUserStore } from '../store/useUserStore';
 import { getLiveMatches, getUpcomingMatches, getTrendingPicks, recordMatchClick } from '../services/footballService';
 import { useTelegram } from '../hooks/useTelegram';
 import { SignUpSheet } from '../components/SignUpSheet';
+import { ModernMatchCard } from '../components/ModernMatchCard';
 
 const CountdownBadge: React.FC<{ expiresAt: string, color: string }> = ({ expiresAt, color }) => {
   const [timeLeft, setTimeLeft] = useState('');
@@ -612,40 +613,8 @@ export const Home: React.FC<HomeProps> = ({ onTabChange }) => {
           <div className="flex gap-3 overflow-x-auto no-scrollbar snap-x pb-2">
             {upcomingMatches.length > 0 ? (
               upcomingMatches.slice(0, 10).map((match) => (
-                <motion.div
-                  key={match.id}
-                  initial={{ opacity: 0, scale: 0.95 }}
-                  animate={{ opacity: 1, scale: 1 }}
-                  onClick={() => handleAnalyze(match)}
-                  className="shrink-0 w-[320px] snap-center relative bg-[#101115] border border-zinc-800/90 rounded-[30px] p-5 active:scale-[0.98] transition-all cursor-pointer overflow-hidden"
-                >
-                  <div className="absolute inset-0 bg-[radial-gradient(circle_at_top,rgba(255,255,255,0.05),transparent_58%)] pointer-events-none" />
-                  <div className="relative z-10 flex items-center justify-between mb-5">
-                    <span className="text-[10px] font-black text-zinc-400 uppercase tracking-[0.14em] line-clamp-1 max-w-[58%]">{match.league}</span>
-                    <span className="text-[10px] font-black text-zinc-300 bg-zinc-800/80 px-3 py-1 rounded-full uppercase tracking-wide">Upcoming</span>
-                  </div>
-
-                  <div className="relative z-10 grid grid-cols-[1fr_auto_1fr] items-end gap-3">
-                    <div className="flex flex-col items-center gap-2 min-w-0">
-                      <div className="w-[76px] h-[76px] rounded-full bg-zinc-800/80 border border-zinc-700 p-3 flex items-center justify-center overflow-hidden">
-                        {match.homeLogo ? <img src={match.homeLogo} alt="" className="w-full h-full object-contain" referrerPolicy="no-referrer" /> : <span className="text-[10px] font-bold text-zinc-500">{match.homeShort}</span>}
-                      </div>
-                      <span className="text-lg font-black text-zinc-100 text-center line-clamp-1 w-full">{match.home}</span>
-                    </div>
-
-                    <div className="text-center pb-1">
-                      <div className="text-[11px] font-black text-zinc-500 uppercase tracking-[0.14em]">{match.date}</div>
-                      <div className="text-[44px] leading-none font-black text-white mt-1">{match.time}</div>
-                      <div className="text-[10px] font-bold text-zinc-500 uppercase tracking-wide mt-2">Kick off</div>
-                    </div>
-
-                    <div className="flex flex-col items-center gap-2 min-w-0">
-                      <div className="w-[76px] h-[76px] rounded-full bg-zinc-800/80 border border-zinc-700 p-3 flex items-center justify-center overflow-hidden">
-                        {match.awayLogo ? <img src={match.awayLogo} alt="" className="w-full h-full object-contain" referrerPolicy="no-referrer" /> : <span className="text-[10px] font-bold text-zinc-500">{match.awayShort}</span>}
-                      </div>
-                      <span className="text-lg font-black text-zinc-100 text-center line-clamp-1 w-full">{match.away}</span>
-                    </div>
-                  </div>
+                <motion.div key={match.id} initial={{ opacity: 0, scale: 0.95 }} animate={{ opacity: 1, scale: 1 }} className="shrink-0 w-[320px] snap-center">
+                  <ModernMatchCard match={match} variant="prematch" onClick={() => handleAnalyze(match)} compact />
                 </motion.div>
               ))
             ) : (
@@ -672,39 +641,8 @@ export const Home: React.FC<HomeProps> = ({ onTabChange }) => {
             <div className="flex gap-3 overflow-x-auto no-scrollbar snap-x pb-2">
               {liveMatches.length > 0 ? (
                 liveMatches.slice(0, 10).map((match) => (
-                  <motion.div
-                    key={match.id}
-                    initial={{ opacity: 0, scale: 0.95 }}
-                    animate={{ opacity: 1, scale: 1 }}
-                    onClick={() => onTabChange('matches')}
-                    className="shrink-0 w-[320px] snap-center relative bg-[#101115] border border-zinc-800/90 rounded-[30px] px-5 py-5 active:scale-[0.98] transition-all cursor-pointer overflow-hidden"
-                  >
-                    <div className="absolute inset-0 bg-[radial-gradient(circle_at_top,rgba(255,255,255,0.05),transparent_58%)] pointer-events-none" />
-                    <div className="relative z-10 flex items-center justify-between mb-6">
-                      <span className="text-[10px] font-black text-zinc-400 uppercase tracking-[0.14em] line-clamp-1 max-w-[58%]">{match.league}</span>
-                      <span className="text-[12px] font-black text-red-500 uppercase tracking-wide">Live</span>
-                    </div>
-
-                    <div className="relative z-10 grid grid-cols-[1fr_auto_1fr] items-end gap-3">
-                      <div className="flex flex-col items-center gap-2 min-w-0">
-                        <div className="w-[76px] h-[76px] rounded-full bg-zinc-800/90 border border-zinc-700 p-3 flex items-center justify-center overflow-hidden">
-                          {match.homeLogo ? <img src={match.homeLogo} alt={match.home} className="w-full h-full object-contain" referrerPolicy="no-referrer" /> : <span className="text-base font-black text-white">{match.homeShort}</span>}
-                        </div>
-                        <span className="text-lg font-black text-white text-center line-clamp-1 w-full">{match.home}</span>
-                      </div>
-
-                      <div className="text-center pb-1">
-                        <span className="block text-[50px] leading-none font-black text-[#7CFF00]">{(match.score || '0-0').replace('-', ':')}</span>
-                        <span className="block text-[11px] leading-none font-black text-white mt-2">{match.minute || 'LIVE'}</span>
-                      </div>
-
-                      <div className="flex flex-col items-center gap-2 min-w-0">
-                        <div className="w-[76px] h-[76px] rounded-full bg-zinc-800/90 border border-zinc-700 p-3 flex items-center justify-center overflow-hidden">
-                          {match.awayLogo ? <img src={match.awayLogo} alt={match.away} className="w-full h-full object-contain" referrerPolicy="no-referrer" /> : <span className="text-base font-black text-white">{match.awayShort}</span>}
-                        </div>
-                        <span className="text-lg font-black text-white text-center line-clamp-1 w-full">{match.away}</span>
-                      </div>
-                    </div>
+                  <motion.div key={match.id} initial={{ opacity: 0, scale: 0.95 }} animate={{ opacity: 1, scale: 1 }} className="shrink-0 w-[320px] snap-center">
+                    <ModernMatchCard match={match} variant="live" onClick={() => onTabChange('matches')} compact />
                   </motion.div>
                 ))
               ) : (
