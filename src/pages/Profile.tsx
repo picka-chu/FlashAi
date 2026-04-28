@@ -425,8 +425,7 @@ export const Profile: React.FC = () => {
         messages: [
           {
             address: tonReceiver,
-            amount: nanoAmount,
-            payload: btoa(`plan:${selectedPlanForPayment.id}:user:${user.telegram_id}`) // Memo for tracking
+            amount: nanoAmount
           },
         ],
       };
