@@ -44,7 +44,7 @@ export const ModernMatchCard: React.FC<ModernMatchCardProps> = ({ match, variant
                   <span className="text-sm font-black text-white">{team.short}</span>
                 )}
               </div>
-              <span className="text-[13px] font-extrabold text-zinc-100 line-clamp-1 text-center w-full">{team.name}</span>
+              <span className="text-sm font-extrabold text-zinc-100 line-clamp-1 text-center w-full">{team.name}</span>
             </div>
           ))}
 
