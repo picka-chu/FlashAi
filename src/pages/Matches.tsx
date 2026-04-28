@@ -1,12 +1,12 @@
 import React, { useMemo, useState, useEffect } from 'react';
 import { motion, AnimatePresence } from 'motion/react';
-import { Search, Trophy, TrendingUp, Zap, Radio, Lock, Sparkles, ChevronLeft, MoreHorizontal, Bookmark, PlayCircle, BarChart3, Share2 } from 'lucide-react';
+import { Search, Trophy, Zap, Radio, Lock } from 'lucide-react';
 import { useUserStore } from '../store/useUserStore';
 import { Skeleton } from '../components/ui/Skeleton';
-import { analyzeLiveMatch, getLiveMatches, getLiveMatchPreview, getUpcomingMatches, recordMatchClick } from '../services/footballService';
+import { getLiveMatches, getLiveMatchPreview, getUpcomingMatches, recordMatchClick } from '../services/footballService';
 import { useTelegram } from '../hooks/useTelegram';
 import { SignUpSheet } from '../components/SignUpSheet';
-import { MatchPreviewModal } from '../components/ui/MatchPreviewModal';
+import { ModernMatchCard } from '../components/ModernMatchCard';
 
 type MatchType = 'live' | 'prematch';
 
@@ -14,24 +14,15 @@ interface MatchesProps {
   onTabChange: (tab: any) => void;
 }
 
-const statPercent = (value: string | number) => {
-  const raw = typeof value === 'number' ? value : Number(String(value).replace('%', '').replace(',', '.'));
-  if (!Number.isFinite(raw)) return 50;
-  return Math.max(0, Math.min(100, raw));
-};
-
 export const Matches: React.FC<MatchesProps> = ({ onTabChange }) => {
   const [searchQuery, setSearchQuery] = useState('');
-  const [previewMatch, setPreviewMatch] = useState<any | null>(null);
   const [matches, setMatches] = useState<any[]>([]);
   const [liveMatches, setLiveMatches] = useState<any[]>([]);
   const [activeMatchType, setActiveMatchType] = useState<MatchType>('prematch');
   const [loading, setLoading] = useState(true);
   const [liveLoading, setLiveLoading] = useState(false);
-  const [analyzingLive, setAnalyzingLive] = useState(false);
-  
   const [isSignUpOpen, setIsSignUpOpen] = useState(false);
-  const { setSelectedMatch, setIsAnalyzing, setAnalysisResult, user, setUser } = useUserStore();
+  const { setSelectedMatch, setIsAnalyzing, setAnalysisResult, user, setLivePreviewMatch } = useUserStore();
   const { hapticFeedback, initData, showAlert } = useTelegram();
 
   const isSubscribed = Boolean(user?.plan && user.plan !== 'free');
@@ -63,15 +54,13 @@ export const Matches: React.FC<MatchesProps> = ({ onTabChange }) => {
         const today = new Date();
         const tomorrow = new Date();
         tomorrow.setDate(today.getDate() + 1);
-        
+
         const matchDateStr = matchDate.toDateString();
         if (matchDateStr === today.toDateString()) return 'Today';
         if (matchDateStr === tomorrow.toDateString()) return 'Tomorrow';
-        
+
         return matchDate.toLocaleDateString('en-GB', { day: '2-digit', month: 'short' });
       })(),
-      xG: m.xG || { home: 0, away: 0 },
-      stats: m.stats || {},
       status: m.fixture.status.state === 'pre' ? 'Upcoming' : 'Live',
     };
   };
@@ -138,7 +127,6 @@ export const Matches: React.FC<MatchesProps> = ({ onTabChange }) => {
     setSelectedMatch(match);
     setIsAnalyzing(true);
     setAnalysisResult(null);
-    setPreviewMatch(null);
     onTabChange('analyze');
   };
 
@@ -150,166 +138,30 @@ export const Matches: React.FC<MatchesProps> = ({ onTabChange }) => {
     try {
       hapticFeedback('light');
       const preview = await getLiveMatchPreview(String(match.id), initData || '');
-      setPreviewMatch(formatMatch(preview));
+      setLivePreviewMatch(formatMatch(preview));
+      onTabChange('livePreview');
     } catch (error: any) {
       if (match?.teams && match?.fixture) {
-        setPreviewMatch(formatMatch(match));
+        setLivePreviewMatch(formatMatch(match));
+        onTabChange('livePreview');
         return;
       }
       showAlert(error?.message || 'Failed to open live match preview');
     }
   };
 
-  const handleAnalyzeLive = async (match: any) => {
-    if (!isSubscribed) {
-      showAlert('Live analysis is available on paid plans only.');
-      return;
-    }
-    setAnalyzingLive(true);
-    try {
-      const payload = await analyzeLiveMatch({ fixtureId: String(match.id), liveSnapshot: match }, initData || '');
-      setSelectedMatch({ ...match, liveSnapshot: payload?.liveData || match, analysisType: 'live' });
-      setAnalysisResult(payload?.result || null);
-      setIsAnalyzing(true);
-      setPreviewMatch(null);
-      if (typeof payload?.newCredits === 'number' && user) {
-        setUser({ ...user, credits: payload.newCredits });
-      }
-      onTabChange('analyze');
-    } catch (error: any) {
-      showAlert(error?.message || 'Failed to analyze live match');
-    } finally {
-      setAnalyzingLive(false);
-    }
-  };
-
   const activeList = activeMatchType === 'live' ? filteredLiveMatches : filteredUpcomingMatches;
-
-  if (previewMatch) {
-    const stats = previewMatch?.stats || {};
-    const homeAttacks = statPercent(stats?.shots?.home || 50);
-    const awayAttacks = statPercent(stats?.shots?.away || 50);
-    const homePassing = statPercent(stats?.possession?.home || 50);
-    const awayPassing = 100 - homePassing;
-    const homeShooting = statPercent(stats?.shotsOnTarget?.home || 50);
-    const awayShooting = statPercent(stats?.shotsOnTarget?.away || 50);
-    const homeCorners = statPercent(stats?.corners?.home || 50);
-    const awayCorners = statPercent(stats?.corners?.away || 50);
-
-    const rows = [
-      { label: 'Attacks', home: homeAttacks, away: awayAttacks },
-      { label: 'Passing', home: homePassing, away: awayPassing },
-      { label: 'Shooting', home: homeShooting, away: awayShooting },
-      { label: 'Corners', home: homeCorners, away: awayCorners },
-    ];
-
-    return (
-      <div className="h-full bg-black text-white overflow-y-auto no-scrollbar">
-        <div className="sticky top-0 z-20 bg-black/85 backdrop-blur-xl border-b border-white/5 px-4 py-4 flex items-center justify-between">
-          <button onClick={() => setPreviewMatch(null)} className="w-9 h-9 rounded-full bg-zinc-900 border border-zinc-800 flex items-center justify-center">
-            <ChevronLeft className="w-5 h-5" />
-          </button>
-          <div className="text-xs font-black uppercase tracking-[0.2em] text-zinc-400">Live Match</div>
-          <button className="w-9 h-9 rounded-full bg-zinc-900 border border-zinc-800 flex items-center justify-center">
-            <MoreHorizontal className="w-5 h-5" />
-          </button>
-        </div>
-
-        <div className="p-5 space-y-5 pb-28">
-          <div className="bg-zinc-900 border border-zinc-800 rounded-[28px] p-5 space-y-5">
-            <div className="text-center">
-              <h2 className="text-3xl font-black tracking-tight">{previewMatch.league}</h2>
-              <p className="text-zinc-500 text-sm mt-1">Live match details • {previewMatch.minute || 'LIVE'}</p>
-            </div>
-
-            <div className="grid grid-cols-[1fr_auto_1fr] items-center gap-3">
-              <div className="flex flex-col items-center gap-2">
-                <div className="w-20 h-20 rounded-full bg-zinc-800 border border-zinc-700 p-3 flex items-center justify-center overflow-hidden">
-                  {previewMatch.homeLogo ? <img src={previewMatch.homeLogo} alt={previewMatch.home} className="w-full h-full object-contain" referrerPolicy="no-referrer" /> : <span className="text-xl font-black">{previewMatch.homeShort}</span>}
-                </div>
-                <div className="text-lg font-black text-center line-clamp-1">{previewMatch.home}</div>
-              </div>
-
-              <div className="text-center px-1">
-                <div className="text-6xl font-black leading-none tracking-tight">{previewMatch.score || '0:0'}</div>
-                <div className="text-sm font-bold text-zinc-400 mt-2">{previewMatch.minute || 'LIVE'}</div>
-              </div>
-
-              <div className="flex flex-col items-center gap-2">
-                <div className="w-20 h-20 rounded-full bg-zinc-800 border border-zinc-700 p-3 flex items-center justify-center overflow-hidden">
-                  {previewMatch.awayLogo ? <img src={previewMatch.awayLogo} alt={previewMatch.away} className="w-full h-full object-contain" referrerPolicy="no-referrer" /> : <span className="text-xl font-black">{previewMatch.awayShort}</span>}
-                </div>
-                <div className="text-lg font-black text-center line-clamp-1">{previewMatch.away}</div>
-              </div>
-            </div>
-
-            <div className="grid grid-cols-4 gap-2">
-              {[Bookmark, PlayCircle, BarChart3, Share2].map((Icon, i) => (
-                <button key={i} className="h-12 rounded-2xl bg-zinc-800/80 border border-zinc-700 flex items-center justify-center">
-                  <Icon className="w-5 h-5 text-zinc-300" />
-                </button>
-              ))}
-            </div>
-          </div>
-
-          <div className="bg-zinc-900 border border-zinc-800 rounded-[24px] p-5 space-y-4">
-            <div className="flex items-center justify-between">
-              <h3 className="text-2xl font-black">Last news</h3>
-              <span className="text-xs font-bold text-zinc-500">LIVE FEED</span>
-            </div>
-            <div className="rounded-2xl border border-zinc-800 bg-zinc-950/60 p-4 flex items-center justify-between gap-4">
-              <div>
-                <p className="text-lg font-bold leading-tight">{previewMatch.home} pushing hard in transition against {previewMatch.away}.</p>
-                <p className="text-zinc-500 text-sm mt-2">Flash AI feed • just now</p>
-              </div>
-              <div className="w-20 h-20 rounded-xl bg-zinc-800" />
-            </div>
-          </div>
-
-          <div className="bg-zinc-900 border border-zinc-800 rounded-[24px] p-5 space-y-5">
-            <div className="flex items-center justify-between">
-              <h3 className="text-2xl font-black">Statistics</h3>
-              <button className="text-xs font-bold uppercase tracking-widest text-zinc-500">See all</button>
-            </div>
-            {rows.map((row) => (
-              <div key={row.label} className="space-y-1.5">
-                <div className="flex items-center justify-between text-sm font-bold">
-                  <span>{row.home.toFixed(0)}%</span>
-                  <span className="text-zinc-400">{row.label}</span>
-                  <span>{row.away.toFixed(0)}%</span>
-                </div>
-                <div className="grid grid-cols-2 gap-2">
-                  <div className="h-2 rounded-full bg-zinc-800 overflow-hidden"><div className="h-full bg-blue-500" style={{ width: `${row.home}%` }} /></div>
-                  <div className="h-2 rounded-full bg-zinc-800 overflow-hidden"><div className="h-full bg-blue-400" style={{ width: `${row.away}%` }} /></div>
-                </div>
-              </div>
-            ))}
-          </div>
-        </div>
-
-        <button
-          onClick={() => !analyzingLive && handleAnalyzeLive(previewMatch)}
-          className="fixed bottom-24 right-5 z-30 w-14 h-14 rounded-full bg-[#ccff00] text-black shadow-[0_10px_35px_rgba(204,255,0,0.35)] flex items-center justify-center active:scale-95"
-          aria-label="Analyze live match"
-        >
-          {analyzingLive ? <span className="text-xs font-black">...</span> : <Zap className="w-6 h-6" />}
-        </button>
-      </div>
-    );
-  }
 
   return (
     <div className="h-full flex flex-col bg-black relative">
       <div className="flex justify-between items-center px-4 pt-6 pb-2 z-50">
         <h1 className="text-lg font-black text-white">Matches</h1>
-        <div className="flex items-center gap-3">
-          {user?.phone && (
-            <div className={`backdrop-blur-md border px-3 py-1.5 rounded-full flex items-center gap-1.5 shadow-[0_0_15px_rgba(204,255,0,0.1)] ${user.credits <= 0 ? 'bg-red-500/10 border-red-500/20' : 'bg-white/5 border-white/10'}`}>
-              <Zap className={`w-3.5 h-3.5 ${user.credits <= 0 ? 'text-red-500' : 'text-[#ccff00]'}`} />
-              <span className={`text-xs font-black ${user.credits <= 0 ? 'text-red-500' : 'text-white'}`}>{user.credits}</span>
-            </div>
-          )}
-        </div>
+        {user?.phone && (
+          <div className={`backdrop-blur-md border px-3 py-1.5 rounded-full flex items-center gap-1.5 shadow-[0_0_15px_rgba(204,255,0,0.1)] ${user.credits <= 0 ? 'bg-red-500/10 border-red-500/20' : 'bg-white/5 border-white/10'}`}>
+            <Zap className={`w-3.5 h-3.5 ${user.credits <= 0 ? 'text-red-500' : 'text-[#ccff00]'}`} />
+            <span className={`text-xs font-black ${user.credits <= 0 ? 'text-red-500' : 'text-white'}`}>{user.credits}</span>
+          </div>
+        )}
       </div>
 
       <div className="flex-none p-4 space-y-4">
@@ -327,18 +179,10 @@ export const Matches: React.FC<MatchesProps> = ({ onTabChange }) => {
       <div className="flex-1 overflow-y-auto no-scrollbar p-4 space-y-4 pb-24">
         {(loading || (activeMatchType === 'live' && liveLoading)) ? (
           <div className="space-y-4">
-            {[1, 2, 3, 4].map((i) => (
-              <div key={i} className="bg-zinc-900 border border-zinc-800 rounded-[32px] p-5 space-y-6">
-                <div className="flex justify-between items-center">
-                  <Skeleton className="w-24 h-6 rounded-full" />
-                  <Skeleton className="w-16 h-6 rounded-full" />
-                </div>
-                <div className="flex justify-between items-center">
-                  <Skeleton className="w-16 h-16 rounded-full" />
-                  <Skeleton className="w-12 h-8" />
-                  <Skeleton className="w-16 h-16 rounded-full" />
-                </div>
-                <Skeleton className="w-full h-10 rounded-xl" />
+            {[1, 2, 3].map((i) => (
+              <div key={i} className="bg-zinc-900 border border-zinc-800 rounded-[24px] p-5 space-y-4">
+                <Skeleton className="w-24 h-5 rounded-full" />
+                <Skeleton className="w-full h-32 rounded-2xl" />
               </div>
             ))}
           </div>
@@ -355,53 +199,12 @@ export const Matches: React.FC<MatchesProps> = ({ onTabChange }) => {
             <AnimatePresence mode="popLayout">
               {activeList.length > 0 ? (
                 activeList.map((match: any, i) => (
-                  <motion.div key={match.id || i} initial={{ opacity: 0, y: 20 }} animate={{ opacity: 1, y: 0 }} exit={{ opacity: 0, scale: 0.95 }} whileTap={{ scale: 0.98 }} onClick={() => (activeMatchType === 'live' ? handleOpenLivePreview(match) : handleAnalyzePrematch(match))} className="bg-[#101115] border border-zinc-800/85 rounded-[30px] px-5 py-5 relative overflow-hidden cursor-pointer">
-                    <div className="absolute inset-0 bg-[radial-gradient(circle_at_top,rgba(255,255,255,0.06),transparent_52%)] pointer-events-none" />
-                    <div className="relative z-10">
-                      <div className="flex items-center justify-between mb-5">
-                        <span className="text-[10px] font-black text-zinc-400 uppercase tracking-[0.15em] line-clamp-1 max-w-[56%]">{match.league}</span>
-                        {activeMatchType === 'live' ? (
-                          <span className="text-[12px] font-black text-red-500 uppercase tracking-wide">Live</span>
-                        ) : (
-                          <span className="px-3 py-1 rounded-full text-[10px] font-black bg-zinc-800 text-zinc-300 uppercase tracking-wide">Upcoming</span>
-                        )}
-                      </div>
-
-                      <div className="grid grid-cols-[1fr_auto_1fr] items-end gap-4">
-                        <div className="flex flex-col items-center gap-2 min-w-0">
-                          <div className="w-[74px] h-[74px] rounded-full bg-zinc-800/80 border border-zinc-700 p-3 flex items-center justify-center overflow-hidden">
-                            {match.homeLogo ? <img src={match.homeLogo} alt={match.home} className="w-full h-full object-contain" referrerPolicy="no-referrer" /> : <span className="text-base font-black">{match.homeShort}</span>}
-                          </div>
-                          <span className="text-lg font-black text-white text-center line-clamp-1 w-full">{match.home}</span>
-                        </div>
-
-                        <div className="text-center pb-2">
-                          {activeMatchType === 'live' ? (
-                            <>
-                              <div className="text-[50px] leading-none font-black text-[#7CFF00]">{(match.score || '0-0').replace('-', ':')}</div>
-                              <div className="text-[11px] font-black text-white mt-2">{match.minute || 'LIVE'}</div>
-                            </>
-                          ) : (
-                            <>
-                              <div className="text-[42px] font-black text-white leading-none tracking-tight">{match.time}</div>
-                              <div className="text-[11px] font-bold text-zinc-500 mt-2 uppercase tracking-wide">{match.date}</div>
-                            </>
-                          )}
-                        </div>
-
-                        <div className="flex flex-col items-center gap-2 min-w-0">
-                          <div className="w-[74px] h-[74px] rounded-full bg-zinc-800/80 border border-zinc-700 p-3 flex items-center justify-center overflow-hidden">
-                            {match.awayLogo ? <img src={match.awayLogo} alt={match.away} className="w-full h-full object-contain" referrerPolicy="no-referrer" /> : <span className="text-base font-black">{match.awayShort}</span>}
-                          </div>
-                          <span className="text-lg font-black text-white text-center line-clamp-1 w-full">{match.away}</span>
-                        </div>
-                      </div>
-
-                      <div className="mt-5 pt-4 border-t border-zinc-800/70 flex items-center justify-between text-[10px] font-black tracking-wider">
-                        <span className="text-zinc-500 flex items-center gap-1"><TrendingUp className="w-3.5 h-3.5 text-blue-400" />{activeMatchType === 'live' ? 'Open live preview' : `${Math.floor(Math.random() * 5000) + 1000} analyzing`}</span>
-                        <span className="text-[#ccff00] flex items-center gap-1"><Sparkles className="w-3 h-3" />{activeMatchType === 'live' ? 'Tap for live AI' : i < 3 ? 'Top prematch' : 'AI insights available'}</span>
-                      </div>
-                    </div>
+                  <motion.div key={match.id || i} initial={{ opacity: 0, y: 16 }} animate={{ opacity: 1, y: 0 }} exit={{ opacity: 0, scale: 0.95 }}>
+                    <ModernMatchCard
+                      match={match}
+                      variant={activeMatchType === 'live' ? 'live' : 'prematch'}
+                      onClick={() => (activeMatchType === 'live' ? handleOpenLivePreview(match) : handleAnalyzePrematch(match))}
+                    />
                   </motion.div>
                 ))
               ) : (
@@ -422,27 +225,7 @@ export const Matches: React.FC<MatchesProps> = ({ onTabChange }) => {
         )}
       </div>
 
-      <MatchPreviewModal
-        isOpen={Boolean(previewMatch)}
-        onClose={() => setPreviewMatch(null)}
-        match={previewMatch}
-        onAnalyze={handleAnalyzeLive}
-      />
-
-      {previewMatch && (
-        <button
-          onClick={() => !analyzingLive && handleAnalyzeLive(previewMatch)}
-          className="fixed bottom-24 right-5 z-[130] w-14 h-14 rounded-full bg-[#ccff00] text-black shadow-[0_10px_30px_rgba(204,255,0,0.4)] flex items-center justify-center active:scale-95"
-          aria-label="Analyze live match"
-        >
-          {analyzingLive ? <span className="text-xs font-black">...</span> : <Zap className="w-6 h-6" />}
-        </button>
-      )}
-
-      <SignUpSheet 
-        isOpen={isSignUpOpen} 
-        onClose={() => setIsSignUpOpen(false)} 
-      />
+      <SignUpSheet isOpen={isSignUpOpen} onClose={() => setIsSignUpOpen(false)} />
     </div>
   );
 };
