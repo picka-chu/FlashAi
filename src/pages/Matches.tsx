@@ -47,7 +47,7 @@ export const Matches: React.FC<MatchesProps> = ({ onTabChange }) => {
       awayLogo: m.teams.away.logo,
       score: m.goals?.home !== null && m.goals?.away !== null ? `${m.goals.home}-${m.goals.away}` : null,
       minute: displayMinute,
-      league: m.league?.name || 'Football',
+      league: m.league?.name || m.league?.displayName || m.competition?.name || 'Football',
       time: new Date(m.fixture.date).toLocaleTimeString('en-GB', { hour: '2-digit', minute: '2-digit' }),
       date: (() => {
         const matchDate = new Date(m.fixture.date);

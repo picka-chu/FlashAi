@@ -52,7 +52,7 @@ export const FeaturedMatchCard: React.FC<FeaturedMatchCardProps> = ({ match, onC
             <div className="flex flex-col items-center gap-3 min-w-0">
               <div className="relative group-hover:scale-105 transition-transform duration-300">
                 <div className="absolute inset-0 bg-[#ccff00]/20 blur-xl rounded-full opacity-0 group-hover:opacity-100 transition-opacity" />
-                <div className="w-[68px] h-[68px] rounded-2xl bg-zinc-900 border border-zinc-800 p-3.5 relative z-10 flex items-center justify-center shadow-inner">
+                <div className="w-[72px] h-[72px] rounded-2xl bg-zinc-900 border border-zinc-800 p-4 relative z-10 flex items-center justify-center shadow-inner">
                   <img src={match.homeLogo} alt={match.home} className="w-full h-full object-contain" referrerPolicy="no-referrer" />
                 </div>
               </div>
@@ -61,20 +61,40 @@ export const FeaturedMatchCard: React.FC<FeaturedMatchCardProps> = ({ match, onC
 
             {/* Center Info */}
             <div className="flex flex-col items-center justify-center px-2">
-              <div className="text-[32px] leading-none font-black text-white tracking-tighter mb-1.5">
-                {match.time}
-              </div>
-              <div className="h-px w-8 bg-zinc-800 mb-1.5" />
-              <div className="text-[10px] font-black text-[#ccff00] uppercase tracking-[0.2em]">
-                {match.date}
-              </div>
+              {match.status === 'Live' ? (
+                <div className="flex flex-col items-center">
+                  <div className="text-[36px] leading-none font-black text-white tracking-tighter flex items-center gap-2">
+                    <span className={match.goals?.home > match.goals?.away ? 'text-[#ccff00]' : 'text-white'}>
+                      {match.score?.split('-')[0] || '0'}
+                    </span>
+                    <span className="text-zinc-800">:</span>
+                    <span className={match.goals?.away > match.goals?.home ? 'text-[#ccff00]' : 'text-white'}>
+                      {match.score?.split('-')[1] || '0'}
+                    </span>
+                  </div>
+                  <div className="mt-2 px-3 py-1 rounded-full bg-red-500/10 border border-red-500/20 flex items-center gap-1.5">
+                    <div className="w-1 h-1 rounded-full bg-red-500 animate-pulse" />
+                    <span className="text-[9px] font-black text-red-500 uppercase tracking-widest">{match.minute || 'LIVE'}</span>
+                  </div>
+                </div>
+              ) : (
+                <>
+                  <div className="text-[32px] leading-none font-black text-white tracking-tighter mb-1.5">
+                    {match.time}
+                  </div>
+                  <div className="h-px w-8 bg-zinc-800 mb-1.5" />
+                  <div className="text-[10px] font-black text-[#ccff00] uppercase tracking-[0.2em]">
+                    {match.date}
+                  </div>
+                </>
+              )}
             </div>
 
             {/* Away Team */}
             <div className="flex flex-col items-center gap-3 min-w-0">
               <div className="relative group-hover:scale-105 transition-transform duration-300">
                 <div className="absolute inset-0 bg-[#ccff00]/20 blur-xl rounded-full opacity-0 group-hover:opacity-100 transition-opacity" />
-                <div className="w-[68px] h-[68px] rounded-2xl bg-zinc-900 border border-zinc-800 p-3.5 relative z-10 flex items-center justify-center shadow-inner">
+                <div className="w-[72px] h-[72px] rounded-2xl bg-zinc-900 border border-zinc-800 p-4 relative z-10 flex items-center justify-center shadow-inner">
                   <img src={match.awayLogo} alt={match.away} className="w-full h-full object-contain" referrerPolicy="no-referrer" />
                 </div>
               </div>
