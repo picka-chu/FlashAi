@@ -1,0 +1,141 @@
+import React, { useEffect, useMemo, useState } from 'react';
+import { ArrowLeft, BarChart3, Loader2, RefreshCw, Sparkles, Zap } from 'lucide-react';
+import { analyzeLiveMatch, getLiveMatchPreview } from '../services/footballService';
+import { useTelegram } from '../hooks/useTelegram';
+import { useUserStore } from '../store/useUserStore';
+
+const statPercent = (value: string | number) => {
+  const raw = typeof value === 'number' ? value : Number(String(value).replace('%', '').replace(',', '.'));
+  if (!Number.isFinite(raw)) return 50;
+  return Math.max(0, Math.min(100, raw));
+};
+
+export const LiveMatchPreview: React.FC<{ onBack: () => void; onGoAnalyze: () => void }> = ({ onBack, onGoAnalyze }) => {
+  const { livePreviewMatch, setLivePreviewMatch, user, setUser, setSelectedMatch, setAnalysisResult, setIsAnalyzing } = useUserStore();
+  const { initData, showAlert, hapticFeedback } = useTelegram();
+  const [loading, setLoading] = useState(false);
+  const [analyzing, setAnalyzing] = useState(false);
+
+  const fixtureId = livePreviewMatch?.id;
+
+  useEffect(() => {
+    if (!fixtureId) return;
+
+    let mounted = true;
+    const loadData = async () => {
+      setLoading(true);
+      try {
+        const data = await getLiveMatchPreview(String(fixtureId), initData || '');
+        if (mounted) setLivePreviewMatch({ ...livePreviewMatch, ...data });
+      } catch {
+        // keep last snapshot in UI to avoid blank state
+      } finally {
+        if (mounted) setLoading(false);
+      }
+    };
+
+    loadData();
+    const interval = setInterval(loadData, 20_000);
+    return () => {
+      mounted = false;
+      clearInterval(interval);
+    };
+  }, [fixtureId, initData, setLivePreviewMatch, livePreviewMatch]);
+
+  const rows = useMemo(() => {
+    const stats = livePreviewMatch?.stats || {};
+    const homePassing = statPercent(stats?.possession?.home || 50);
+    return [
+      { label: 'Attacks', home: statPercent(stats?.shots?.home || 50), away: statPercent(stats?.shots?.away || 50) },
+      { label: 'Possession', home: homePassing, away: 100 - homePassing },
+      { label: 'On Target', home: statPercent(stats?.shotsOnTarget?.home || 50), away: statPercent(stats?.shotsOnTarget?.away || 50) },
+      { label: 'Corners', home: statPercent(stats?.corners?.home || 50), away: statPercent(stats?.corners?.away || 50) },
+    ];
+  }, [livePreviewMatch]);
+
+  if (!livePreviewMatch) {
+    return (
+      <div className="h-full bg-black text-white flex items-center justify-center">
+        <button onClick={onBack} className="text-sm text-zinc-300">Back to matches</button>
+      </div>
+    );
+  }
+
+  const handleAnalyze = async () => {
+    if (analyzing) return;
+    setAnalyzing(true);
+    hapticFeedback('medium');
+    try {
+      const payload = await analyzeLiveMatch({ fixtureId: String(livePreviewMatch.id), liveSnapshot: livePreviewMatch }, initData || '');
+      setSelectedMatch({ ...livePreviewMatch, liveSnapshot: payload?.liveData || livePreviewMatch, analysisType: 'live' });
+      setAnalysisResult(payload?.result || null);
+      setIsAnalyzing(true);
+      if (typeof payload?.newCredits === 'number' && user) setUser({ ...user, credits: payload.newCredits });
+      onGoAnalyze();
+    } catch (error: any) {
+      showAlert(error?.message || 'Live analysis failed');
+    } finally {
+      setAnalyzing(false);
+    }
+  };
+
+  return (
+    <div className="h-full bg-black text-white overflow-y-auto no-scrollbar">
+      <div className="sticky top-0 z-20 bg-black/90 border-b border-zinc-800 px-4 py-3 backdrop-blur-xl">
+        <div className="flex items-center justify-between">
+          <button onClick={onBack} className="w-9 h-9 rounded-full bg-zinc-900 border border-zinc-800 flex items-center justify-center"><ArrowLeft className="w-5 h-5" /></button>
+          <div className="text-center">
+            <div className="text-[10px] font-black text-zinc-500 uppercase tracking-[0.2em]">Telegram Live Preview</div>
+            <div className="text-xs font-bold text-zinc-300">{livePreviewMatch.league}</div>
+          </div>
+          <button onClick={() => setLivePreviewMatch(null)} className="w-9 h-9 rounded-full bg-zinc-900 border border-zinc-800 flex items-center justify-center"><RefreshCw className={`w-4 h-4 ${loading ? 'animate-spin' : ''}`} /></button>
+        </div>
+      </div>
+
+      <div className="p-4 pb-28 space-y-4">
+        <div className="rounded-3xl border border-zinc-800 bg-zinc-900/80 p-5">
+          <div className="grid grid-cols-[1fr_auto_1fr] items-center gap-3">
+            <div className="text-center">
+              <div className="w-16 h-16 mx-auto rounded-2xl bg-zinc-800 border border-zinc-700 p-2 overflow-hidden">{livePreviewMatch.homeLogo ? <img src={livePreviewMatch.homeLogo} alt={livePreviewMatch.home} className="w-full h-full object-contain" /> : <span>{livePreviewMatch.homeShort}</span>}</div>
+              <p className="mt-2 text-sm font-bold line-clamp-1">{livePreviewMatch.home}</p>
+            </div>
+            <div className="text-center">
+              <div className="text-4xl font-black text-[#8fff00]">{(livePreviewMatch.score || '0-0').replace('-', ':')}</div>
+              <div className="text-xs text-red-400 font-black uppercase mt-1">{livePreviewMatch.minute || 'LIVE'}</div>
+            </div>
+            <div className="text-center">
+              <div className="w-16 h-16 mx-auto rounded-2xl bg-zinc-800 border border-zinc-700 p-2 overflow-hidden">{livePreviewMatch.awayLogo ? <img src={livePreviewMatch.awayLogo} alt={livePreviewMatch.away} className="w-full h-full object-contain" /> : <span>{livePreviewMatch.awayShort}</span>}</div>
+              <p className="mt-2 text-sm font-bold line-clamp-1">{livePreviewMatch.away}</p>
+            </div>
+          </div>
+        </div>
+
+        <div className="rounded-3xl border border-zinc-800 bg-zinc-900/70 p-4 space-y-4">
+          <div className="flex items-center gap-2 text-zinc-300"><BarChart3 className="w-4 h-4" /><span className="text-xs font-black uppercase tracking-wider">Live composition & momentum</span></div>
+          {rows.map((row) => (
+            <div key={row.label}>
+              <div className="flex justify-between text-xs mb-1"><span>{row.home.toFixed(0)}%</span><span className="text-zinc-400">{row.label}</span><span>{row.away.toFixed(0)}%</span></div>
+              <div className="grid grid-cols-2 gap-2">
+                <div className="h-2 rounded-full bg-zinc-800 overflow-hidden"><div className="h-full bg-[#ccff00]" style={{ width: `${row.home}%` }} /></div>
+                <div className="h-2 rounded-full bg-zinc-800 overflow-hidden"><div className="h-full bg-sky-400" style={{ width: `${row.away}%` }} /></div>
+              </div>
+            </div>
+          ))}
+        </div>
+      </div>
+
+      <button
+        onClick={handleAnalyze}
+        disabled={analyzing}
+        className="fixed bottom-24 right-5 z-30 h-14 px-5 rounded-full bg-[#ccff00] text-black font-black text-sm shadow-[0_12px_32px_rgba(204,255,0,0.35)] inline-flex items-center gap-2 disabled:opacity-70"
+      >
+        {analyzing ? <Loader2 className="w-5 h-5 animate-spin" /> : <Zap className="w-5 h-5" />}
+        {analyzing ? 'Gathering live data…' : 'Run Live Analysis'}
+      </button>
+
+      <div className="fixed bottom-10 left-1/2 -translate-x-1/2 text-[10px] text-zinc-500 inline-flex items-center gap-1 bg-zinc-900/80 border border-zinc-800 rounded-full px-3 py-1">
+        <Sparkles className="w-3 h-3" /> Auto-refresh every 20s
+      </div>
+    </div>
+  );
+};

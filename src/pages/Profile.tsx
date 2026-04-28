@@ -81,6 +81,19 @@ const DEFAULT_USD_TO_TON_RATE = Number(import.meta.env.VITE_USD_TO_TON_RATE || 0
 
 const getPriceInStars = (usdPrice: number) => Math.ceil(usdPrice * USD_TO_STARS_RATE);
 const getPriceInTon = (usdPrice: number, usdToTonRate: number) => Number((usdPrice * usdToTonRate).toFixed(2));
+const toNanoTonString = (tonAmount: number): string => {
+  if (!Number.isFinite(tonAmount) || tonAmount <= 0) {
+    throw new Error('Invalid TON amount calculated for this payment.');
+  }
+  const [wholePart, fractionPart = ''] = tonAmount.toFixed(9).split('.');
+  const whole = BigInt(wholePart || '0');
+  const fraction = BigInt((fractionPart + '000000000').slice(0, 9));
+  const nano = whole * BigInt(1_000_000_000) + fraction;
+  if (nano <= BigInt(0)) {
+    throw new Error('TON amount is too small. Please try again.');
+  }
+  return nano.toString();
+};
 
 
 export const Profile: React.FC = () => {
@@ -376,6 +389,13 @@ export const Profile: React.FC = () => {
     hapticFeedback('medium');
     if (!selectedPlanForPayment || !user) return;
     const tonPrice = getPriceInTon(Number(selectedPlanForPayment.usdPrice || 0), usdToTonRate);
+    let nanoAmount = '';
+    try {
+      nanoAmount = toNanoTonString(tonPrice);
+    } catch (e: any) {
+      showAlert(e?.message || 'Failed to prepare TON amount.');
+      return;
+    }
     const tonReceiver = import.meta.env.VITE_TON_RECEIVER_ADDRESS || '';
     if (!tonReceiver) {
       showAlert('TON payments are temporarily unavailable. Missing receiver configuration.');
@@ -405,7 +425,7 @@ export const Profile: React.FC = () => {
         messages: [
           {
             address: tonReceiver,
-            amount: (tonPrice * 1e9).toString(), // nanoTON
+            amount: nanoAmount,
             payload: btoa(`plan:${selectedPlanForPayment.id}:user:${user.telegram_id}`) // Memo for tracking
           },
         ],
