@@ -106,4 +106,11 @@ export interface BetSlipAnalysis {
     odds: number;
     reason: string;
   }[];
+  valueBets?: {
+    match: string;
+    market: string;
+    odds: number;
+    value: number;
+    reason: string;
+  }[];
 }

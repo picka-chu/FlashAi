@@ -855,6 +855,29 @@ export const Analyze: React.FC<{ onTabChange?: (tab: string) => void }> = ({ onT
                 </div>
               )}
 
+              {betSlipResult.valueBets && betSlipResult.valueBets.length > 0 && (
+                <div className="space-y-4">
+                  <div className="flex items-center gap-2 px-1">
+                    <TrendingUp className="w-4 h-4 text-[#ccff00]" />
+                    <h3 className="text-[10px] font-black text-zinc-500 tracking-widest">Value bets</h3>
+                  </div>
+                  <div className="grid grid-cols-1 gap-3">
+                    {betSlipResult.valueBets.map((bet, i) => (
+                      <div key={i} className="bg-[#ccff00]/5 border border-[#ccff00]/10 rounded-[24px] p-4 flex items-center justify-between gap-4">
+                        <div className="flex-1">
+                          <div className="flex items-center justify-between mb-1">
+                            <p className="text-[10px] font-black text-[#ccff00]">{bet.match}</p>
+                            <span className="text-[10px] font-black text-white bg-[#ccff00]/20 px-2 py-0.5 rounded">+{bet.value}% Value</span>
+                          </div>
+                          <p className="text-sm font-black text-white">{bet.market} @ {bet.odds}</p>
+                          <p className="text-[10px] text-zinc-500 mt-1">{bet.reason}</p>
+                        </div>
+                      </div>
+                    ))}
+                  </div>
+                </div>
+              )}
+
               <button 
                 onClick={() => setBetSlipResult(null)}
                 className="w-full py-4 text-[10px] font-black text-zinc-500 uppercase tracking-[0.2em] hover:text-white transition-colors"

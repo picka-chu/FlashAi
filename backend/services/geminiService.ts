@@ -145,7 +145,7 @@ export async function analyzeMatchWithSearch(matchString: string, structuredCont
 
         const topPredictions = parsed.predictions
           .sort((a: any, b: any) => b.confidence - a.confidence)
-          .slice(0, 2);
+          .slice(0, 5); // Return more, backend will slice based on plan
 
         return {
           matchId: matchString,

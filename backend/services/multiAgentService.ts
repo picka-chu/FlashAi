@@ -379,7 +379,11 @@ class MultiAgentService {
         Calculate the total odds if not present.
         Provide an overall verdict and a suggested stake level (e.g., 1/10, 5/10).
         
-        CRITICAL: Suggest 1-2 "Safe Picks" which MUST be high-probability alternative markets (e.g., Double Chance, Over 1.5, etc.) for the EXACT SAME matches found in the uploaded bet slip. Do NOT suggest matches that are not in the slip.
+        CRITICAL: Provide both "Safe Picks" and "Value Bets" for the EXACT SAME matches found in the uploaded bet slip.
+      - Safe Picks: High-probability alternative markets (e.g., Double Chance, Over 1.5).
+      - Value Bets: Markets where the odds provided in the slip (or current market estimates) seem undervalued relative to the actual probability.
+      
+      Suggest exactly 2 Safe Picks and 2 Value Bets if possible.
 
         Return ONLY a JSON object with this structure:
         {
@@ -402,7 +406,16 @@ class MultiAgentService {
               "match": "Team A vs Team B",
               "pick": "Home or Draw",
               "odds": 1.25,
-              "reason": "Safer alternative to the Home Win prediction on the slip."
+              "reason": "..."
+            }
+          ],
+          "valueBets": [
+            {
+              "match": "Team A vs Team B",
+              "market": "Over 2.5 Goals",
+              "odds": 2.10,
+              "value": 15,
+              "reason": "..."
             }
           ]
         }
