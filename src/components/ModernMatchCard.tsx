@@ -31,13 +31,13 @@ export const ModernMatchCard: React.FC<ModernMatchCardProps> = ({ match, variant
           )}
         </div>
 
-        <div className="grid grid-cols-[1fr_auto_1fr] items-end gap-3">
+        <div className="grid grid-cols-[1fr_auto_1fr] items-end gap-2.5">
           {[
             { name: match.home, short: match.homeShort, logo: match.homeLogo },
             { name: match.away, short: match.awayShort, logo: match.awayLogo },
           ].map((team, index) => (
-            <div key={index} className="flex flex-col items-center gap-2 min-w-0">
-              <div className="w-[66px] h-[66px] rounded-2xl bg-zinc-800/80 border border-zinc-700 p-3 flex items-center justify-center overflow-hidden">
+            <div key={index} className="flex flex-col items-center gap-1.5 min-w-0">
+              <div className="w-[58px] h-[58px] rounded-2xl bg-zinc-800/80 border border-zinc-700 p-2.5 flex items-center justify-center overflow-hidden">
                 {team.logo ? (
                   <img src={team.logo} alt={team.name} className="w-full h-full object-contain" referrerPolicy="no-referrer" />
                 ) : (

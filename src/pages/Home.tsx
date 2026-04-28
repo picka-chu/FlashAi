@@ -448,44 +448,46 @@ export const Home: React.FC<HomeProps> = ({ onTabChange }) => {
               initial={{ opacity: 0, y: 20 }}
               animate={{ opacity: 1, y: 0 }}
               onClick={() => handleAnalyze(upcomingMatches[0])}
-              className="relative overflow-hidden rounded-[34px] bg-[#101014] border border-zinc-800 p-6 group cursor-pointer"
+              className="relative overflow-hidden rounded-[32px] bg-gradient-to-br from-[#111218] via-[#0f1014] to-[#0b0c10] border border-zinc-800/90 px-4 py-5 group cursor-pointer"
             >
-              <div className="absolute inset-0 bg-[radial-gradient(circle_at_top,rgba(255,255,255,0.08),transparent_55%)]" />
+              <div className="absolute inset-0 bg-[radial-gradient(circle_at_top_right,rgba(204,255,0,0.14),transparent_58%)]" />
+              <div className="absolute -top-12 -right-10 w-32 h-32 bg-[#ccff00]/10 rounded-full blur-2xl" />
 
               <div className="relative z-10">
-                <div className="flex justify-between items-center mb-6">
-                  <span className="text-[10px] font-black text-zinc-400 uppercase tracking-[0.15em] line-clamp-1 max-w-[58%]">
+                <div className="flex justify-between items-center mb-4 gap-2">
+                  <span className="text-[10px] font-black text-zinc-400 uppercase tracking-[0.15em] line-clamp-1 max-w-[62%]">
                     {upcomingMatches[0].league}
                   </span>
-                  <div className="px-4 py-1.5 rounded-full bg-zinc-800 border border-zinc-700">
-                    <span className="text-[10px] font-black text-zinc-300 uppercase tracking-wide">Up coming</span>
+                  <div className="px-3 py-1 rounded-full bg-zinc-800/80 border border-zinc-700">
+                    <span className="text-[10px] font-black text-zinc-300 uppercase tracking-wide">Upcoming</span>
                   </div>
                 </div>
 
-                <div className="grid grid-cols-[1fr_auto_1fr] items-end gap-3">
-                  <div className="flex flex-col items-center gap-3 min-w-0">
-                    <div className="w-[90px] h-[90px] rounded-full bg-zinc-800 border border-zinc-700 p-4 overflow-hidden flex items-center justify-center">
-                      <img src={upcomingMatches[0].homeLogo} alt={upcomingMatches[0].home} className="w-full h-full object-contain" />
+                <div className="grid grid-cols-[1fr_auto_1fr] items-end gap-2">
+                  <div className="flex flex-col items-center gap-2 min-w-0">
+                    <div className="w-[72px] h-[72px] rounded-2xl bg-zinc-800/85 border border-zinc-700 p-3 overflow-hidden flex items-center justify-center">
+                      <img src={upcomingMatches[0].homeLogo} alt={upcomingMatches[0].home} className="w-full h-full object-contain" referrerPolicy="no-referrer" />
                     </div>
-                    <span className="text-2xl font-black text-white text-center line-clamp-1">{upcomingMatches[0].home}</span>
+                    <span className="text-base font-black text-white text-center line-clamp-1 w-full">{upcomingMatches[0].home}</span>
                   </div>
 
-                  <div className="text-center pb-2 px-1">
-                    <div className="text-[58px] leading-none font-black text-white tracking-tight">{upcomingMatches[0].time}</div>
-                    <div className="text-[11px] font-bold text-zinc-500 mt-2 uppercase tracking-wide">{upcomingMatches[0].date}</div>
+                  <div className="text-center pb-1 px-1">
+                    <div className="text-[42px] leading-none font-black text-white tracking-tight">{upcomingMatches[0].time}</div>
+                    <div className="text-[10px] font-bold text-zinc-500 mt-1 uppercase tracking-wide">{upcomingMatches[0].date}</div>
+                    <div className="text-[10px] font-black text-[#ccff00] mt-2 uppercase tracking-wider">Featured</div>
                   </div>
 
-                  <div className="flex flex-col items-center gap-3 min-w-0">
-                    <div className="w-[90px] h-[90px] rounded-full bg-zinc-800 border border-zinc-700 p-4 overflow-hidden flex items-center justify-center">
-                      <img src={upcomingMatches[0].awayLogo} alt={upcomingMatches[0].away} className="w-full h-full object-contain" />
+                  <div className="flex flex-col items-center gap-2 min-w-0">
+                    <div className="w-[72px] h-[72px] rounded-2xl bg-zinc-800/85 border border-zinc-700 p-3 overflow-hidden flex items-center justify-center">
+                      <img src={upcomingMatches[0].awayLogo} alt={upcomingMatches[0].away} className="w-full h-full object-contain" referrerPolicy="no-referrer" />
                     </div>
-                    <span className="text-2xl font-black text-white text-center line-clamp-1">{upcomingMatches[0].away}</span>
+                    <span className="text-base font-black text-white text-center line-clamp-1 w-full">{upcomingMatches[0].away}</span>
                   </div>
                 </div>
 
-                <div className="mt-6 pt-4 border-t border-zinc-800/80 flex items-center justify-between">
+                <div className="mt-4 pt-3 border-t border-zinc-800/80 flex items-center justify-between gap-2">
                   <span className="text-[10px] font-bold text-zinc-500">Real-time fixture insights</span>
-                  <button className="bg-[#ccff00] text-black px-4 py-2 rounded-2xl transition-colors active:scale-95">
+                  <button className="bg-[#ccff00] text-black px-3 py-2 rounded-xl transition-colors active:scale-95">
                     <div className="flex items-center gap-2">
                       <Sparkles className="w-3.5 h-3.5" />
                       <span className="text-[10px] font-black tracking-widest">Unlock</span>
