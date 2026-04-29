@@ -53,6 +53,8 @@ const PLANS = [
     id: 'monthly_basic',
     name: 'Monthly Basic',
     usdPrice: 8.99,
+    tonPrice: 6.86,
+    starsPrice: 500,
     price: '$8.99',
     period: 'per month',
     icon: ShieldCheck,
@@ -66,6 +68,8 @@ const PLANS = [
     id: 'monthly_pro',
     name: 'Monthly Pro',
     usdPrice: 14.99,
+    tonPrice: 11.5,
+    starsPrice: 800,
     price: '$14.99',
     period: 'per month',
     icon: Crown,
@@ -79,8 +83,8 @@ const PLANS = [
 const USD_TO_STARS_RATE = 50; // 1 USD ≈ 50 Telegram Stars
 const DEFAULT_USD_TO_TON_RATE = Number(import.meta.env.VITE_USD_TO_TON_RATE || 0.23);
 
-const getPriceInStars = (usdPrice: number) => Math.ceil(usdPrice * USD_TO_STARS_RATE);
-const getPriceInTon = (usdPrice: number, usdToTonRate: number) => Number((usdPrice * usdToTonRate).toFixed(2));
+const getPriceInStars = (plan: any) => Number(plan?.starsPrice || Math.ceil(Number(plan?.usdPrice || 0) * USD_TO_STARS_RATE));
+const getPriceInTon = (plan: any, usdToTonRate: number) => Number(plan?.tonPrice || (Number(plan?.usdPrice || 0) * usdToTonRate).toFixed(2));
 const toNanoTonString = (tonAmount: number): string => {
   if (!Number.isFinite(tonAmount) || tonAmount <= 0) {
     throw new Error('Invalid TON amount calculated for this payment.');
@@ -388,7 +392,7 @@ export const Profile: React.FC = () => {
   const handleTonPayment = async () => {
     hapticFeedback('medium');
     if (!selectedPlanForPayment || !user) return;
-    const tonPrice = getPriceInTon(Number(selectedPlanForPayment.usdPrice || 0), usdToTonRate);
+    const tonPrice = getPriceInTon(selectedPlanForPayment, usdToTonRate);
     let nanoAmount = '';
     try {
       nanoAmount = toNanoTonString(tonPrice);
@@ -475,7 +479,7 @@ export const Profile: React.FC = () => {
   const handleStarsPayment = async () => {
     hapticFeedback('medium');
     if (!selectedPlanForPayment || !user) return;
-    const starsPrice = getPriceInStars(Number(selectedPlanForPayment.usdPrice || 0));
+    const starsPrice = getPriceInStars(selectedPlanForPayment);
     
     if (!tg || !user) {
       showAlert('Telegram environment or user not detected.');
@@ -1091,8 +1095,8 @@ export const Profile: React.FC = () => {
             {PLANS.map((plan) => {
               const isCurrent = user?.plan === plan.id;
               const Icon = plan.icon;
-              const planStarsPrice = getPriceInStars(Number(plan.usdPrice || 0));
-              const planTonPrice = getPriceInTon(Number(plan.usdPrice || 0), usdToTonRate);
+              const planStarsPrice = getPriceInStars(plan);
+              const planTonPrice = getPriceInTon(plan, usdToTonRate);
 
               return (
                 <div 
