@@ -560,38 +560,31 @@ export const Home: React.FC<HomeProps> = ({ onTabChange }) => {
           </div>
         </section>
 
-        {/* Top Live Matches */}
+        {/* Top Live Matches / More Matches */}
         <section className="space-y-4">
           <div className="flex items-center justify-between">
-            <h3 className="text-xs font-black text-zinc-400 uppercase tracking-[0.15em]">Top live matches</h3>
+            <h3 className="text-xs font-black text-zinc-400 uppercase tracking-[0.15em]">{user?.plan && user.plan !== 'free' ? 'Top live matches' : 'More matches'}</h3>
             <button
               onClick={() => onTabChange('matches')}
               className="text-[10px] font-black text-[#ccff00] uppercase tracking-wider"
             >
-              Open live
+              {user?.plan && user.plan !== 'free' ? 'Open live' : 'View all'}
             </button>
           </div>
 
-          {user?.plan && user.plan !== 'free' ? (
-            <div className="flex gap-3 overflow-x-auto no-scrollbar snap-x pb-2">
-              {liveMatches.length > 0 ? (
-                liveMatches.slice(0, 10).map((match) => (
-                  <motion.div key={match.id} initial={{ opacity: 0, scale: 0.95 }} animate={{ opacity: 1, scale: 1 }} className="shrink-0 w-[320px] snap-center">
-                    <ModernMatchCard match={match} variant="live" onClick={() => onTabChange('matches')} compact />
-                  </motion.div>
-                ))
-              ) : (
-                <div className="w-full bg-[#141414] border border-white/[0.03] rounded-2xl p-4 text-center text-xs text-zinc-500">
-                  No live fixtures right now.
-                </div>
-              )}
-            </div>
-          ) : (
-            <div className="w-full bg-[#141414] border border-zinc-800 rounded-2xl p-4 text-center">
-              <p className="text-xs font-black text-white uppercase tracking-wider">Premium only</p>
-              <p className="text-[11px] text-zinc-500 mt-1">Upgrade to Monthly Basic or Pro to unlock live match feed and live AI analysis.</p>
-            </div>
-          )}
+          <div className="flex gap-3 overflow-x-auto no-scrollbar snap-x pb-2">
+            {(user?.plan && user.plan !== 'free' ? liveMatches : upcomingMatches).length > 0 ? (
+              (user?.plan && user.plan !== 'free' ? liveMatches : upcomingMatches).slice(0, 10).map((match) => (
+                <motion.div key={match.id} initial={{ opacity: 0, scale: 0.95 }} animate={{ opacity: 1, scale: 1 }} className="shrink-0 w-[320px] snap-center">
+                  <ModernMatchCard match={match} variant={user?.plan && user.plan !== 'free' ? 'live' : 'prematch'} onClick={() => user?.plan && user.plan !== 'free' ? onTabChange('matches') : handleAnalyze(match)} compact />
+                </motion.div>
+              ))
+            ) : (
+              <div className="w-full bg-[#141414] border border-white/[0.03] rounded-2xl p-4 text-center text-xs text-zinc-500">
+                {user?.plan && user.plan !== 'free' ? 'No live fixtures right now.' : 'No upcoming matches available.'}
+              </div>
+            )}
+          </div>
         </section>
 
         {/* Live & Trending Matches (Glassmorphism) */}
