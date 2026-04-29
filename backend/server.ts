@@ -1244,12 +1244,25 @@ async function startServer() {
       const { analyzeMatchWithSearch } = await import("./services/geminiService.js");
       let result: any;
       try {
-        result = await Promise.race([
-          analyzeMatchWithSearch(`${matchString} (LIVE)`, structuredContext),
-          new Promise((_, reject) => setTimeout(() => reject(new Error("AI analysis timeout")), 30_000))
-        ]);
-      } catch (analysisError) {
-        console.warn("Live AI analysis fallback engaged:", analysisError);
+        const withTimeout = <T,>(promise: Promise<T>, timeoutMs: number): Promise<T> => {
+          return new Promise<T>((resolve, reject) => {
+            const timer = setTimeout(() => reject(new Error("AI analysis timeout")), timeoutMs);
+            promise
+              .then((value) => {
+                clearTimeout(timer);
+                resolve(value);
+              })
+              .catch((error) => {
+                clearTimeout(timer);
+                reject(error);
+              });
+          });
+        };
+
+        result = await withTimeout(analyzeMatchWithSearch(`${matchString} (LIVE)`, structuredContext), 30_000);
+      } catch (analysisError: any) {
+        const reason = analysisError?.message || "Unknown analysis error";
+        console.warn(`Live AI analysis fallback engaged: ${reason}`);
         result = {
           matchId: matchString,
           predictions: [
