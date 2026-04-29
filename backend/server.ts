@@ -54,7 +54,15 @@ const PLAN_PRICE_USD: Record<string, number> = {
   monthly_basic: 8.99,
   monthly_pro: 14.99,
 };
-const USD_TO_STARS_RATE = 15;
+const USD_TO_STARS_RATE = 50;
+const PLAN_PRICE_STARS: Record<string, number> = {
+  monthly_basic: 500,
+  monthly_pro: 800,
+};
+const PLAN_PRICE_TON: Record<string, number> = {
+  monthly_basic: 6.86,
+  monthly_pro: 11.5,
+};
 
 const signupCreditsRaw = Number(process.env.SIGNUP_CREDITS ?? 3);
 const signupCredits = Number.isFinite(signupCreditsRaw) && signupCreditsRaw >= 0 ? Math.floor(signupCreditsRaw) : 3;
@@ -506,9 +514,11 @@ async function startServer() {
   });
 
   const getPlanUsdPrice = (planId: string): number => PLAN_PRICE_USD[String(planId || "").trim()] || 0;
-  const getExpectedStarsAmount = (planId: string): number => Math.ceil(getPlanUsdPrice(planId) * USD_TO_STARS_RATE);
+  const getExpectedStarsAmount = (planId: string): number => PLAN_PRICE_STARS[String(planId || "").trim()] || Math.ceil(getPlanUsdPrice(planId) * USD_TO_STARS_RATE);
   const getExpectedTonAmount = (planId: string, tonPerUsdRate: number): number => {
-    const usd = getPlanUsdPrice(planId);
+    const normalizedPlanId = String(planId || "").trim();
+    if (PLAN_PRICE_TON[normalizedPlanId]) return PLAN_PRICE_TON[normalizedPlanId];
+    const usd = getPlanUsdPrice(normalizedPlanId);
     if (!usd || !Number.isFinite(tonPerUsdRate) || tonPerUsdRate <= 0) return 0;
     return Number((usd * tonPerUsdRate).toFixed(2));
   };
@@ -1685,7 +1695,9 @@ async function startServer() {
       console.log(`💰 Payment success from ${telegramId}: ${amount} Stars for ${payload}`);
 
       // Extract plan from payload (e.g., "plan_weekly")
-      const planId = payload.startsWith('plan_') ? payload.replace('plan_', '') : 'free';
+      const planId = payload.startsWith('plan:')
+        ? payload.replace('plan:', '')
+        : (payload.startsWith('plan_') ? payload.replace('plan_', '') : 'free');
       const expectedStars = getExpectedStarsAmount(planId);
       if (!expectedStars) {
         await ctx.reply("⚠️ Unknown plan in payment payload. Please contact support.");
@@ -2127,7 +2139,7 @@ async function startServer() {
       const invoiceLink = await bot.telegram.createInvoiceLink({
         title: title || `Flash AI - ${normalizedPlanId.toUpperCase()} Plan`,
         description: description || `Access to premium football predictions and analyses.`,
-        payload: `plan_${normalizedPlanId}`,
+        payload: `plan:${normalizedPlanId}`,
         provider_token: "", // Empty for Telegram Stars
         currency: "XTR",
         prices: [{ label: "Stars", amount: expectedAmount }],
