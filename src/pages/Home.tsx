@@ -170,13 +170,33 @@ export const Home: React.FC<HomeProps> = ({ onTabChange }) => {
          body: JSON.stringify({ type: 'click' })
        }).catch(() => {});
     }
+
+    const normalizeInternalTab = (raw: string) => {
+      const compact = String(raw || '').trim().replace(/^internal:/i, '').replace(/^\/+/, '').toLowerCase().replace(/[\s_-]+/g, '');
+      const map: Record<string, string> = {
+        home: 'home',
+        matches: 'matches',
+        analyze: 'analyze',
+        analysis: 'analyze',
+        history: 'history',
+        profile: 'profile',
+        admin: 'admin',
+        livepreview: 'livePreview',
+        livematchpreview: 'livePreview',
+        live: 'livePreview',
+      };
+      return map[compact] || null;
+    };
+
     if (ad.link) {
        if (ad.link.startsWith('internal:')) {
-         onTabChange(ad.link.replace('internal:', '').replace('/', ''));
+         const tab = normalizeInternalTab(ad.link);
+         if (tab) onTabChange(tab);
        } else if (ad.link.startsWith('http')) {
          tg.openLink(ad.link);
        } else {
-         onTabChange(ad.link.replace('/', ''));
+         const tab = normalizeInternalTab(ad.link);
+         if (tab) onTabChange(tab);
        }
     }
   };
