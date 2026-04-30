@@ -467,51 +467,43 @@ export const Home: React.FC<HomeProps> = ({ onTabChange }) => {
               return (
                 <div 
                   key={ad.id || i}
-                  className={`shrink-0 w-full snap-center relative overflow-hidden rounded-[40px] p-6 min-h-[220px] transition-all transform duration-500 ${i === adIndex ? 'scale-100' : 'scale-[0.97] opacity-50'}`}
+                  className={`shrink-0 w-full snap-center relative overflow-visible rounded-[32px] h-[160px] transition-all transform duration-500 ${i === adIndex ? 'scale-100' : 'scale-[0.97] opacity-50'}`}
                   style={{ 
-                    backgroundColor: ad.image_url ? '#09090b' : undefined,
-                    boxShadow: i === adIndex ? `0 20px 40px -20px ${primaryColor}40` : 'none',
-                    border: i === adIndex ? `1px solid ${primaryColor}30` : '1px solid #27272a'
+                    background: `linear-gradient(135deg, ${primaryColor}cc 0%, ${primaryColor}99 50%, ${primaryColor}66 100%)`,
+                    boxShadow: i === adIndex ? `0 15px 40px ${primaryColor}50, 0 0 40px ${primaryColor}30` : `0 8px 20px ${primaryColor}30`,
+                    border: i === adIndex ? `2px solid rgba(255,255,255,0.3)` : '1px solid rgba(255,255,255,0.1)'
                   }}
                 >
-                  {ad.image_url ? (
-                     <>
-                       <img 
+                  {/* Subtle overlay for depth */}
+                  <div className="absolute inset-0 bg-gradient-to-r from-black/20 via-transparent to-transparent pointer-events-none rounded-[32px]" />
+
+                  {/* Right Side: Image - Prominent with no mask */}
+                  {ad.image_url && (
+                    <div className="absolute -right-8 top-1/2 transform -translate-y-1/2 h-[180px] w-[180px] overflow-visible z-20">
+                      <img 
                         src={ad.image_url} 
                         alt="" 
-                        className="absolute inset-0 w-full h-full object-cover opacity-40 transition-transform duration-1000 group-hover:scale-110"
+                        className="w-full h-full object-contain transition-transform duration-1000 group-hover:scale-110"
                         referrerPolicy="no-referrer"
-                       />
-                       <div className="absolute inset-0 bg-gradient-to-t from-zinc-900 via-transparent to-transparent opacity-80" />
-                       <div 
-                         className="absolute inset-0 opacity-20 transition-opacity duration-1000"
-                         style={{ background: `radial-gradient(circle at center, ${primaryColor}20, transparent 70%)` }}
-                       />
-                     </>
-                  ) : (
-                    <div className={`absolute inset-0 bg-gradient-to-br ${ad.bg || 'from-zinc-800 to-zinc-900'}`} />
+                        style={{ filter: 'drop-shadow(0 10px 30px rgba(0,0,0,0.3))' }}
+                      />
+                    </div>
                   )}
 
-                  <div className="relative z-10 flex flex-col h-full justify-between">
+                  {/* Left Side: Content */}
+                  <div className="relative z-10 flex flex-col h-full justify-between p-6 w-3/5">
+                    {/* Top Section: Badge */}
                     <div className="flex justify-between items-start">
-                      <div className="flex gap-2">
-                         <div 
-                          className={`${ad.darkText ? 'bg-black/10' : 'bg-white/10'} backdrop-blur-xl p-3 rounded-[20px]`}
-                          style={{ border: `1px solid ${primaryColor}40` }}
-                         >
-                           <Icon className="w-5 h-5" style={{ color: primaryColor }} />
-                         </div>
-                      </div>
-                      
-                      {ad.expires_at && <CountdownBadge expiresAt={ad.expires_at} color={primaryColor} />}
+                      {ad.expires_at && <CountdownBadge expiresAt={ad.expires_at} color="rgba(255,255,255,0.9)" />}
                     </div>
                     
-                    <div className="mt-auto space-y-4">
+                    {/* Middle/Bottom Section: Title, Subtitle, Button */}
+                    <div className="space-y-3">
                       <div>
-                        <h4 className={`text-xl font-black leading-tight ${ad.darkText ? 'text-black' : 'text-white'}`}>
+                        <h4 className="text-2xl font-black leading-tight text-white drop-shadow-lg">
                           {ad.title}
                         </h4>
-                        <p className={`text-[11px] font-bold mt-1 opacity-70 tracking-wide uppercase line-clamp-2 ${ad.darkText ? 'text-black' : 'text-zinc-400'}`}>
+                        <p className="text-xs font-semibold mt-1 text-white/80 tracking-wide line-clamp-2">
                           {ad.sub || ad.subtitle}
                         </p>
                       </div>
@@ -519,19 +511,18 @@ export const Home: React.FC<HomeProps> = ({ onTabChange }) => {
                       <div className="flex items-center gap-3">
                         <button 
                           onClick={() => handleAdClick(ad)}
-                          className="text-[10px] font-black tracking-[0.15em] px-6 py-3 rounded-2xl shadow-2xl active:scale-95 transition-all uppercase"
+                          className="text-xs font-black tracking-wider px-6 py-2.5 rounded-xl shadow-xl active:scale-95 transition-all uppercase bg-white text-black hover:shadow-2xl"
                           style={{ 
-                            backgroundColor: primaryColor,
-                            color: ad.darkText ? 'black' : (primaryColor === '#ccff00' ? 'black' : 'white')
+                            boxShadow: '0 8px 20px rgba(0,0,0,0.2)'
                           }}
                         >
-                          {ad.cta || 'Claim Now'}
+                          {ad.cta || 'Learn More'}
                         </button>
                         
                         {ad.clicks && (
-                          <div className="flex items-center gap-1 opacity-40">
-                             <TrendingUp className="w-3 h-3 text-white" />
-                             <span className="text-[9px] font-bold text-white uppercase">{ad.clicks} users</span>
+                          <div className="flex items-center gap-1.5 opacity-70">
+                             <TrendingUp className="w-3.5 h-3.5 text-white" />
+                             <span className="text-xs font-bold text-white uppercase">{ad.clicks}</span>
                           </div>
                         )}
                       </div>
