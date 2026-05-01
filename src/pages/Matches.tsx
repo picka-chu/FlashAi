@@ -123,7 +123,7 @@ export const Matches: React.FC<MatchesProps> = ({ onTabChange }) => {
       return;
     }
     hapticFeedback('light');
-    recordMatchClick(match.id, `${match.home} vs ${match.away}`);
+    if (match?.id) recordMatchClick(String(match.id), `${match.home} vs ${match.away}`);
     setSelectedMatch(match);
     setIsAnalyzing(true);
     setAnalysisResult(null);
@@ -133,6 +133,10 @@ export const Matches: React.FC<MatchesProps> = ({ onTabChange }) => {
   const handleOpenLivePreview = async (match: any) => {
     if (!isSubscribed) {
       showAlert('Live matches are for subscribed users only.');
+      return;
+    }
+    if (!match?.id) {
+      showAlert('This live match is missing a valid fixture id. Please refresh and try another match.');
       return;
     }
     try {

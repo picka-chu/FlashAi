@@ -2789,8 +2789,12 @@ async function startServer() {
   app.patch("/api/admin/ads/:id", adminOnly, async (c) => {
     const id = c.req.param("id");
     const body = await c.req.json().catch(() => ({} as any));
-    const ads = await getCachedCollection<any>(ADMIN_ADS_KEY);
-    const existing = ads.find((a) => a.id === id);
+    let ads = await getCachedCollection<any>(ADMIN_ADS_KEY);
+    if (!ads.length) {
+      const { data } = await supabase.from("ads").select("*").order("created_at", { ascending: false }).limit(200);
+      ads = data || [];
+    }
+    const existing = ads.find((a) => String(a.id) === String(id));
     if (!existing) return c.json({ error: "Ad not found" }, 404);
 
     const expiresAt = body.expires_at ? new Date(body.expires_at) : null;
@@ -2858,6 +2862,9 @@ async function startServer() {
       button_pad_y: updated.button_pad_y,
     }).eq("id", id);
     if (error) return c.json({ error: error.message }, 400);
+
+    const refreshed = ads.map((a) => (String(a.id) === String(id) ? updated : a));
+    await setCachedCollection(ADMIN_ADS_KEY, refreshed);
 
     return c.json({ success: true, ad: updated });
   });

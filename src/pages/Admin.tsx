@@ -277,10 +277,14 @@ export const Admin: React.FC = () => {
 
   const handleAddAd = async () => {
     try {
+      const adPayload = {
+        ...newAd,
+        expires_at: newAd.expires_at ? new Date(newAd.expires_at).toISOString() : ''
+      };
       const res = await fetch('/api/admin/ads', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json', 'X-TG-Init-Data': initData },
-        body: JSON.stringify(newAd)
+        body: JSON.stringify(adPayload)
       });
       if (res.ok) {
         fetchAds();
@@ -317,17 +321,36 @@ export const Admin: React.FC = () => {
   };
 
   const sanitizeNumberish = (value: string, fallback: number) => {
+    if (value.trim() === '') return fallback;
     const next = Number(value);
-    return Number.isFinite(next) ? next : fallback;
+    if (!Number.isFinite(next)) return fallback;
+    return Math.max(1, Math.min(200, next));
+  };
+
+  const isoToDatetimeLocal = (iso?: string | null) => {
+    if (!iso) return '';
+    const d = new Date(iso);
+    if (Number.isNaN(d.getTime())) return '';
+    const pad = (n: number) => String(n).padStart(2, '0');
+    const y = d.getFullYear();
+    const m = pad(d.getMonth() + 1);
+    const day = pad(d.getDate());
+    const h = pad(d.getHours());
+    const min = pad(d.getMinutes());
+    return `${y}-${m}-${day}T${h}:${min}`;
   };
 
   const handleEditAd = async () => {
     if (!editingAdId) return;
     try {
+      const adPayload = {
+        ...newAd,
+        expires_at: newAd.expires_at ? new Date(newAd.expires_at).toISOString() : ''
+      };
       const res = await fetch(`/api/admin/ads/${editingAdId}`, {
         method: 'PATCH',
         headers: { 'Content-Type': 'application/json', 'X-TG-Init-Data': initData },
-        body: JSON.stringify(newAd)
+        body: JSON.stringify(adPayload)
       });
       const data = await res.json().catch(() => ({}));
       if (!res.ok) {
@@ -914,7 +937,7 @@ export const Admin: React.FC = () => {
                         <div className="flex gap-2">
                           <button
                             onClick={() => {
-                              setNewAd({ ...newAd, ...ad, expires_at: ad?.expires_at ? String(ad.expires_at).slice(0, 16) : '' });
+                              setNewAd({ ...newAd, ...ad, expires_at: isoToDatetimeLocal(ad?.expires_at) });
                               setEditingAdId(ad.id);
                               setIsAddingAd(true);
                             }}
