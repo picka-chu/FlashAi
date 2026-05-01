@@ -453,11 +453,11 @@ export const Home: React.FC<HomeProps> = ({ onTabChange }) => {
             />
 
         {/* Ad Carousel */}
-        <div className="relative group px-1">
+        <div className="relative group">
           <div 
             ref={adsRef}
             onScroll={() => handleScroll(adsRef, setAdIndex)}
-            className="flex gap-4 overflow-x-auto no-scrollbar snap-x py-2"
+            className="flex gap-3 overflow-x-auto no-scrollbar snap-x py-1 px-0.5"
           >
             {dynamicAds.map((ad: any, i: number) => {
               const gradientFrom = ad?.primary_color || '#3b82f6';
@@ -467,17 +467,17 @@ export const Home: React.FC<HomeProps> = ({ onTabChange }) => {
               const buttonBg = ad?.button_color || '#ffffff';
               const buttonText = ad?.button_text_color || '#111827';
               return (
-                <div key={ad.id || i} className={`shrink-0 w-[340px] snap-center ${i === adIndex ? 'opacity-100' : 'opacity-70'}`}>
-                  <div className="relative h-[186px] rounded-[30px] overflow-hidden border border-white/10 shadow-[0_14px_42px_rgba(0,0,0,0.35)]"
+                <div key={ad.id || i} className={`shrink-0 w-[calc(100vw-2.5rem)] max-w-[312px] snap-center ${i === adIndex ? 'opacity-100' : 'opacity-70'}`}>
+                  <div className="relative h-[160px] rounded-[24px] overflow-hidden border border-white/10 shadow-[0_14px_42px_rgba(0,0,0,0.35)]"
                     style={{ background: `linear-gradient(100deg, ${gradientFrom} 0%, ${gradientTo} 75%)` }}>
-                    {ad?.image_url ? <img src={ad.image_url} alt="" className="absolute right-0 top-0 h-full w-[42%] object-cover" referrerPolicy="no-referrer" /> : null}
+                    {ad?.image_url ? <img src={ad.image_url} alt="" className="absolute right-2 top-1/2 -translate-y-1/2 h-[78%] w-[36%] object-contain drop-shadow-[0_10px_18px_rgba(0,0,0,0.22)]" referrerPolicy="no-referrer" /> : null}
                     <div className="absolute inset-0 bg-gradient-to-r from-black/10 via-transparent to-black/5" />
-                    <div className="relative z-10 h-full p-5 pr-24 flex flex-col justify-between">
+                    <div className="relative z-10 h-full p-4 pr-24 flex flex-col justify-between">
                       <div>
-                        <h4 className="text-3xl font-black leading-[1.05] line-clamp-2" style={{ color: heroColor }}>{ad.title || 'Promotion'}</h4>
-                        <p className="mt-2 text-lg font-semibold leading-tight line-clamp-2" style={{ color: subColor }}>{ad.sub || ad.subtitle || 'Limited-time offer'}</p>
+                        <h4 className="text-[32px] font-black leading-[1.02] line-clamp-2" style={{ color: heroColor }}>{ad.title || 'Promotion'}</h4>
+                        <p className="mt-1.5 text-[18px] font-semibold leading-tight line-clamp-2" style={{ color: subColor }}>{ad.sub || ad.subtitle || 'Limited-time offer'}</p>
                       </div>
-                      <button onClick={() => handleAdClick(ad)} className="self-start px-5 py-2.5 rounded-full text-sm font-black active:scale-95 transition-transform" style={{ backgroundColor: buttonBg, color: buttonText }}>
+                      <button onClick={() => handleAdClick(ad)} className="self-start px-5 py-2 rounded-full text-sm font-black active:scale-95 transition-transform" style={{ backgroundColor: buttonBg, color: buttonText }}>
                         {ad.cta || 'Learn more'}
                       </button>
                     </div>

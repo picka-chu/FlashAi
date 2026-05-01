@@ -502,7 +502,7 @@ export const Admin: React.FC = () => {
         ctx.imageSmoothingEnabled = true;
         ctx.imageSmoothingQuality = 'high';
         ctx.drawImage(img, dx, dy, drawW, drawH);
-        cb(canvas.toDataURL('image/jpeg', quality));
+        cb(canvas.toDataURL('image/png', quality));
       };
       img.onerror = () => cb(source);
       img.src = source;
@@ -528,10 +528,10 @@ export const Admin: React.FC = () => {
     const buttonText = ad?.button_text_color || '#111827';
     const cta = ad?.cta || 'Learn more';
     return (
-      <div className="relative min-w-[320px] w-[320px] h-[176px] rounded-[28px] overflow-hidden border border-white/10 shadow-[0_12px_40px_rgba(0,0,0,0.35)]"
+      <div className="relative min-w-[300px] w-[300px] h-[164px] rounded-[24px] overflow-hidden border border-white/10 shadow-[0_12px_40px_rgba(0,0,0,0.35)]"
         style={{ background: `linear-gradient(100deg, ${gradientFrom} 0%, ${gradientTo} 75%)` }}>
         {ad?.image_url ? (
-          <img src={ad.image_url} alt="" className="absolute right-0 top-0 h-full w-[42%] object-cover" referrerPolicy="no-referrer" />
+          <img src={ad.image_url} alt="" className="absolute right-2 top-1/2 -translate-y-1/2 h-[78%] w-[36%] object-contain drop-shadow-[0_10px_18px_rgba(0,0,0,0.22)]" referrerPolicy="no-referrer" />
         ) : null}
         <div className="absolute inset-0 bg-gradient-to-r from-black/10 via-transparent to-black/5" />
         <div className="relative z-10 h-full p-5 pr-24 flex flex-col justify-between">
@@ -946,7 +946,7 @@ export const Admin: React.FC = () => {
                         <div className="space-y-2">
                            <p className="text-[10px] font-bold text-zinc-600 uppercase ml-2">Image & CTA</p>
                            <input value={newAd.image_url} onChange={e => setNewAd({...newAd, image_url: e.target.value})} placeholder="PNG image URL (right side)" className="w-full bg-zinc-800 border-none rounded-2xl p-4 text-white text-sm font-bold placeholder:text-zinc-600 focus:ring-2 ring-blue-500/50" />
-                           <label className="text-[10px] font-bold text-zinc-500 uppercase tracking-widest cursor-pointer block">Upload PNG<input type="file" accept="image/png,image/*" className="hidden" onChange={(e) => { const file = e.target.files?.[0]; if (file) handleUploadAsDataUrl(file, (dataUrl) => setNewAd({ ...newAd, image_url: dataUrl }), { width: 720, height: 520, quality: 0.9 }); }} /></label>
+                           <label className="text-[10px] font-bold text-zinc-500 uppercase tracking-widest cursor-pointer block">Upload PNG<input type="file" accept="image/png,image/*" className="hidden" onChange={(e) => { const file = e.target.files?.[0]; if (file) handleUploadAsDataUrl(file, (dataUrl) => setNewAd({ ...newAd, image_url: dataUrl }), { width: 480, height: 360, quality: 0.95 }); }} /></label>
                            <input value={newAd.cta} onChange={e => setNewAd({...newAd, cta: e.target.value})} placeholder="Button text" className="w-full bg-zinc-800 border-none rounded-2xl p-4 text-white text-sm font-bold placeholder:text-zinc-600 focus:ring-2 ring-blue-500/50" />
                         </div>
                         <div className="space-y-2">
