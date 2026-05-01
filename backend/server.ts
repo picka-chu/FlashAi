@@ -2719,6 +2719,8 @@ async function startServer() {
       subtitle: String(body.subtitle || "").trim(),
       image_url: String(body.image_url || "").trim(),
       link: normalizedLink,
+      is_internal: isInternal,
+      internal_target: isInternal ? internalTarget : null,
       cta: String(body.cta ?? "Check Out").trim(),
       active: body.active !== false,
       target_group: normalizeAudience(body.target_group ?? body.target_plan ?? "all"),
@@ -2746,7 +2748,7 @@ async function startServer() {
       const richPayload = {
         title: ad.title,
         subtitle: ad.subtitle,
-        image_url: ad.image_url || "https://placehold.co/1200x630/png",
+        image_url: ad.image_url || null,
         link: ad.link,
         cta: ad.cta,
         active: ad.active,
@@ -2771,7 +2773,7 @@ async function startServer() {
         const fallbackPayload = {
           title: ad.title,
           subtitle: ad.subtitle,
-          image_url: ad.image_url || "https://placehold.co/1200x630/png",
+          image_url: ad.image_url || null,
           link: ad.link,
           active: ad.active,
         };
@@ -2793,12 +2795,23 @@ async function startServer() {
 
     const expiresAt = body.expires_at ? new Date(body.expires_at) : null;
     if (expiresAt && Number.isNaN(expiresAt.getTime())) return c.json({ error: "Invalid expiration date" }, 400);
+    const isInternal = body.is_internal === true;
+    const internalTarget = String(body.internal_target || "").trim().toLowerCase();
+    const externalLink = String(body.link || "").trim();
+    const normalizedLink = body.is_internal === undefined
+      ? existing.link
+      : (isInternal ? (internalTarget ? `internal:${internalTarget}` : "") : externalLink);
+    if (body.is_internal === true && !internalTarget) return c.json({ error: "Internal redirect target is required" }, 400);
+    if (body.is_internal === false && !externalLink) return c.json({ error: "External redirect URL is required" }, 400);
 
     const updated = {
       ...existing,
       title: String(body.title ?? existing.title ?? "").trim(),
       subtitle: String(body.subtitle ?? existing.subtitle ?? "").trim(),
       image_url: String(body.image_url ?? existing.image_url ?? "").trim(),
+      link: normalizedLink,
+      is_internal: body.is_internal !== undefined ? isInternal : Boolean(existing.is_internal),
+      internal_target: body.is_internal !== undefined ? (isInternal ? internalTarget : null) : (existing.internal_target ?? null),
       cta: String(body.cta ?? existing.cta ?? "Check Out").trim(),
       active: body.active !== undefined ? Boolean(body.active) : existing.active !== false,
       target_group: normalizeAudience(body.target_group ?? existing.target_group ?? "all"),
@@ -2826,6 +2839,7 @@ async function startServer() {
       title: updated.title,
       subtitle: updated.subtitle,
       image_url: updated.image_url || null,
+      link: updated.link,
       cta: updated.cta,
       active: updated.active,
       target_group: updated.target_group,
