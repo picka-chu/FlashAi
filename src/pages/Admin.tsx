@@ -570,18 +570,18 @@ export const Admin: React.FC = () => {
 
   const renderAdCard = (ad: any) => {
     const gradientFrom = ad?.primary_color || '#3b82f6';
-    const gradientTo = ad?.gradient_to || '#8b5cf6';
+    const gradientTo = ad?.gradient_to ?? '#8b5cf6';
     const heroColor = ad?.hero_color || '#ffffff';
     const subColor = ad?.sub_color || '#e4e4e7';
     const buttonBg = ad?.button_color || '#ffffff';
     const buttonText = ad?.button_text_color || '#111827';
-    const cta = String(ad?.cta || 'Learn more');
-    const heroSize = Number(ad?.hero_size || 32);
-    const subSize = Number(ad?.sub_size || 18);
-    const btnTextSize = Number(ad?.button_text_size || 14);
-    const btnRadius = Number(ad?.button_radius || 999);
-    const btnPadX = Number(ad?.button_pad_x || 20);
-    const btnPadY = Number(ad?.button_pad_y || 8);
+    const cta = String(ad?.cta ?? 'Learn more');
+    const heroSize = Number(ad?.hero_size ?? 32);
+    const subSize = Number(ad?.sub_size ?? 18);
+    const btnTextSize = Number(ad?.button_text_size ?? 14);
+    const btnRadius = Number(ad?.button_radius ?? 999);
+    const btnPadX = Number(ad?.button_pad_x ?? 20);
+    const btnPadY = Number(ad?.button_pad_y ?? 8);
     return (
       <div className="relative min-w-[300px] w-[300px] h-[164px] rounded-[24px] overflow-hidden border border-white/10 shadow-[0_12px_40px_rgba(0,0,0,0.35)]"
         style={{ background: `linear-gradient(100deg, ${gradientFrom} 0%, ${gradientTo} 75%)` }}>
@@ -1014,12 +1014,12 @@ export const Admin: React.FC = () => {
                            <label className="text-[10px] font-bold text-zinc-500 uppercase tracking-widest cursor-pointer block">Upload PNG<input type="file" accept="image/png,image/*" className="hidden" onChange={(e) => { const file = e.target.files?.[0]; if (file) handleUploadAsDataUrl(file, (dataUrl) => setNewAd({ ...newAd, image_url: dataUrl }), { width: 480, height: 360, quality: 0.95 }); }} /></label>
                            <input value={newAd.cta} onChange={e => setNewAd({...newAd, cta: e.target.value})} placeholder="Button text" className="w-full bg-zinc-800 border-none rounded-2xl p-4 text-white text-sm font-bold placeholder:text-zinc-600 focus:ring-2 ring-blue-500/50" />
                            <div className="grid grid-cols-2 gap-3">
-                             <input type="number" value={newAd.hero_size || 32} onChange={e => setNewAd({ ...newAd, hero_size: sanitizeNumberish(e.target.value, 32) })} placeholder="Hero text size" className="bg-zinc-800 border-none rounded-2xl p-3 text-white text-xs font-bold" />
-                             <input type="number" value={newAd.sub_size || 18} onChange={e => setNewAd({ ...newAd, sub_size: sanitizeNumberish(e.target.value, 18) })} placeholder="Sub text size" className="bg-zinc-800 border-none rounded-2xl p-3 text-white text-xs font-bold" />
-                             <input type="number" value={newAd.button_text_size || 14} onChange={e => setNewAd({ ...newAd, button_text_size: sanitizeNumberish(e.target.value, 14) })} placeholder="Button text size" className="bg-zinc-800 border-none rounded-2xl p-3 text-white text-xs font-bold" />
-                             <input type="number" value={newAd.button_radius || 999} onChange={e => setNewAd({ ...newAd, button_radius: sanitizeNumberish(e.target.value, 999) })} placeholder="Button radius" className="bg-zinc-800 border-none rounded-2xl p-3 text-white text-xs font-bold" />
-                             <input type="number" value={newAd.button_pad_x || 20} onChange={e => setNewAd({ ...newAd, button_pad_x: sanitizeNumberish(e.target.value, 20) })} placeholder="Button width pad" className="bg-zinc-800 border-none rounded-2xl p-3 text-white text-xs font-bold" />
-                             <input type="number" value={newAd.button_pad_y || 8} onChange={e => setNewAd({ ...newAd, button_pad_y: sanitizeNumberish(e.target.value, 8) })} placeholder="Button height pad" className="bg-zinc-800 border-none rounded-2xl p-3 text-white text-xs font-bold" />
+                             <input type="number" value={newAd.hero_size ?? 32} onChange={e => setNewAd({ ...newAd, hero_size: sanitizeNumberish(e.target.value, 32) })} placeholder="Hero text size" className="bg-zinc-800 border-none rounded-2xl p-3 text-white text-xs font-bold" />
+                             <input type="number" value={newAd.sub_size ?? 18} onChange={e => setNewAd({ ...newAd, sub_size: sanitizeNumberish(e.target.value, 18) })} placeholder="Sub text size" className="bg-zinc-800 border-none rounded-2xl p-3 text-white text-xs font-bold" />
+                             <input type="number" value={newAd.button_text_size ?? 14} onChange={e => setNewAd({ ...newAd, button_text_size: sanitizeNumberish(e.target.value, 14) })} placeholder="Button text size" className="bg-zinc-800 border-none rounded-2xl p-3 text-white text-xs font-bold" />
+                             <input type="number" value={newAd.button_radius ?? 999} onChange={e => setNewAd({ ...newAd, button_radius: sanitizeNumberish(e.target.value, 999) })} placeholder="Button radius" className="bg-zinc-800 border-none rounded-2xl p-3 text-white text-xs font-bold" />
+                             <input type="number" value={newAd.button_pad_x ?? 20} onChange={e => setNewAd({ ...newAd, button_pad_x: sanitizeNumberish(e.target.value, 20) })} placeholder="Button width pad" className="bg-zinc-800 border-none rounded-2xl p-3 text-white text-xs font-bold" />
+                             <input type="number" value={newAd.button_pad_y ?? 8} onChange={e => setNewAd({ ...newAd, button_pad_y: sanitizeNumberish(e.target.value, 8) })} placeholder="Button height pad" className="bg-zinc-800 border-none rounded-2xl p-3 text-white text-xs font-bold" />
                            </div>
                         </div>
                         <div className="space-y-2">
@@ -1032,7 +1032,7 @@ export const Admin: React.FC = () => {
                             </select>
                            )}
                            <label className="flex items-center gap-2 text-xs text-zinc-400 font-bold ml-1 mt-1"><input type="checkbox" checked={newAd.is_internal} onChange={(e) => setNewAd({ ...newAd, is_internal: e.target.checked, link: e.target.checked ? '' : newAd.link })} className="accent-blue-500" />Use internal redirect page selection</label>
-                           <select value={newAd.target_group} onChange={e => setNewAd({...newAd, target_group: e.target.value})} className="w-full bg-zinc-800 rounded-2xl p-4 text-white text-sm font-bold focus:outline-none focus:ring-2 ring-blue-500/50"><option value="all">All users</option><option value="unsubscribed">Unsubscribed users</option><option value="subscribed">Subscribed users</option></select>
+                           <select value={newAd.target_group} onChange={e => setNewAd({...newAd, target_group: e.target.value})} className="w-full bg-zinc-800 rounded-2xl p-4 text-white text-sm font-bold focus:outline-none focus:ring-2 ring-blue-500/50"><option value="all">All users</option><option value="unsubscribed">Unsubscribed users</option><option value="subscribed">Subscribed users</option><option value="monthly_basic">Monthly Basic users</option><option value="monthly_pro">Monthly Pro users</option><option value="admin">Admins only</option></select>
                            <input type="datetime-local" value={newAd.expires_at} onChange={e => setNewAd({...newAd, expires_at: e.target.value})} className="w-full bg-zinc-800 border-none rounded-2xl p-4 text-white text-sm font-bold focus:ring-2 ring-blue-500/50" />
                         </div>
 <button onClick={editingAdId ? handleEditAd : handleAddAd} className="w-full py-5 bg-blue-500 text-white font-black uppercase tracking-widest text-xs rounded-2xl shadow-[0_0_30px_rgba(59,130,246,0.3)]">{editingAdId ? 'Save Ad Changes' : 'Deploy to Rotation'}</button>
