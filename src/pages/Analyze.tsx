@@ -79,6 +79,11 @@ export const Analyze: React.FC<{ onTabChange?: (tab: string) => void }> = ({ onT
   useEffect(() => {
     const performAnalysis = async () => {
       if (isAnalyzing && selectedMatch && !analysisResult) {
+        if (selectedMatch.analysisType === 'live') {
+          setIsAnalyzing(false);
+          setError('Live analysis result not ready. Please return to live preview and retry.');
+          return;
+        }
         setError(null);
         try {
           const matchString = `${selectedMatch.home} vs ${selectedMatch.away}`;
