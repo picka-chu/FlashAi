@@ -2727,15 +2727,40 @@ async function startServer() {
     if (!ad.title || !ad.subtitle) return c.json({ error: "Ad title and subtitle are required" }, 400);
     await setCachedCollection(ADMIN_ADS_KEY, [ad, ...ads]);
     try {
-      const { error: dbError } = await supabase.from("ads").insert({
+      const richPayload = {
         title: ad.title,
         subtitle: ad.subtitle,
         image_url: ad.image_url || "https://placehold.co/1200x630/png",
         link: ad.link,
+        cta: ad.cta,
         active: ad.active,
-      });
+        target_group: ad.target_group,
+        expires_at: ad.expires_at,
+        primary_color: ad.primary_color,
+        gradient_to: body.gradient_to || null,
+        hero_color: body.hero_color || null,
+        sub_color: body.sub_color || null,
+        button_color: body.button_color || null,
+        button_text_color: body.button_text_color || null,
+        hero_size: body.hero_size || null,
+        sub_size: body.sub_size || null,
+        button_text_size: body.button_text_size || null,
+        button_radius: body.button_radius || null,
+        button_pad_x: body.button_pad_x || null,
+        button_pad_y: body.button_pad_y || null,
+      } as any;
+
+      const { error: dbError } = await supabase.from("ads").insert(richPayload);
       if (dbError) {
-        console.error("DB insert failed for ads:", dbError);
+        const fallbackPayload = {
+          title: ad.title,
+          subtitle: ad.subtitle,
+          image_url: ad.image_url || "https://placehold.co/1200x630/png",
+          link: ad.link,
+          active: ad.active,
+        };
+        const { error: fallbackErr } = await supabase.from("ads").insert(fallbackPayload);
+        if (fallbackErr) console.error("DB insert failed for ads:", fallbackErr);
       }
     } catch (e) {
       console.error("DB insert failed for ads:", e);

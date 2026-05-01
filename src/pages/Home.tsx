@@ -466,6 +466,12 @@ export const Home: React.FC<HomeProps> = ({ onTabChange }) => {
               const subColor = ad?.sub_color || '#e4e4e7';
               const buttonBg = ad?.button_color || '#ffffff';
               const buttonText = ad?.button_text_color || '#111827';
+              const heroSize = Number(ad?.hero_size || 32);
+              const subSize = Number(ad?.sub_size || 18);
+              const btnTextSize = Number(ad?.button_text_size || 14);
+              const btnRadius = Number(ad?.button_radius || 999);
+              const btnPadX = Number(ad?.button_pad_x || 20);
+              const btnPadY = Number(ad?.button_pad_y || 8);
               return (
                 <div key={ad.id || i} className={`shrink-0 w-[calc(100vw-2.5rem)] max-w-[312px] snap-center ${i === adIndex ? 'opacity-100' : 'opacity-70'}`}>
                   <div className="relative h-[160px] rounded-[24px] overflow-hidden border border-white/10 shadow-[0_14px_42px_rgba(0,0,0,0.35)]"
@@ -474,11 +480,11 @@ export const Home: React.FC<HomeProps> = ({ onTabChange }) => {
                     <div className="absolute inset-0 bg-gradient-to-r from-black/10 via-transparent to-black/5" />
                     <div className="relative z-10 h-full p-4 pr-24 flex flex-col justify-between">
                       <div>
-                        <h4 className="text-[32px] font-black leading-[1.02] line-clamp-2" style={{ color: heroColor }}>{ad.title || 'Promotion'}</h4>
-                        <p className="mt-1.5 text-[18px] font-semibold leading-tight line-clamp-2" style={{ color: subColor }}>{ad.sub || ad.subtitle || 'Limited-time offer'}</p>
+                        <h4 className="font-black leading-[1.02] line-clamp-2" style={{ color: heroColor, fontSize: `${heroSize}px` }}>{ad.title || 'Promotion'}</h4>
+                        <p className="mt-1.5 font-semibold leading-tight line-clamp-2" style={{ color: subColor, fontSize: `${subSize}px` }}>{ad.sub || ad.subtitle || 'Limited-time offer'}</p>
                       </div>
-                      <button onClick={() => handleAdClick(ad)} className="self-start px-5 py-2 rounded-full text-sm font-black active:scale-95 transition-transform" style={{ backgroundColor: buttonBg, color: buttonText }}>
-                        {ad.cta || 'Learn more'}
+                      <button onClick={() => handleAdClick(ad)} className="self-start font-black active:scale-95 transition-transform" style={{ backgroundColor: buttonBg, color: buttonText, fontSize: `${btnTextSize}px`, borderRadius: `${btnRadius}px`, padding: `${btnPadY}px ${btnPadX}px` }}>
+                        {String(ad?.cta || '').trim() || 'Learn more'}
                       </button>
                     </div>
                   </div>
