@@ -2692,6 +2692,16 @@ async function startServer() {
       const { data } = await supabase.from("ads").select("*").order("created_at", { ascending: false }).limit(200);
       ads = data || [];
     }
+    ads = ads.map((ad: any) => {
+      const link = String(ad?.link || "");
+      const derivedInternal = link.startsWith("internal:");
+      const derivedTarget = derivedInternal ? link.replace(/^internal:/, "") : null;
+      return {
+        ...ad,
+        is_internal: ad?.is_internal ?? derivedInternal,
+        internal_target: ad?.internal_target ?? derivedTarget,
+      };
+    });
     ads.sort((a, b) => new Date(b.created_at || 0).getTime() - new Date(a.created_at || 0).getTime());
     return c.json(ads);
   });
@@ -2750,6 +2760,8 @@ async function startServer() {
         subtitle: ad.subtitle,
         image_url: ad.image_url || null,
         link: ad.link,
+        is_internal: ad.is_internal,
+        internal_target: ad.internal_target,
         cta: ad.cta,
         active: ad.active,
         target_group: ad.target_group,
@@ -2836,14 +2848,13 @@ async function startServer() {
 
     if (!updated.title || !updated.subtitle) return c.json({ error: "Ad title and subtitle are required" }, 400);
 
-    const refreshed = ads.map((a) => (a.id === id ? updated : a));
-    await setCachedCollection(ADMIN_ADS_KEY, refreshed);
-
     const { error } = await supabase.from("ads").update({
       title: updated.title,
       subtitle: updated.subtitle,
       image_url: updated.image_url || null,
       link: updated.link,
+      is_internal: updated.is_internal,
+      internal_target: updated.internal_target,
       cta: updated.cta,
       active: updated.active,
       target_group: updated.target_group,
