@@ -16,7 +16,11 @@ export const LiveMatchPreview: React.FC<{ onBack: () => void; onGoAnalyze: () =>
   const [loading, setLoading] = useState(false);
   const [analyzing, setAnalyzing] = useState(false);
 
-  const fixtureId = livePreviewMatch?.id;
+  const fixtureId =
+    livePreviewMatch?.id ??
+    livePreviewMatch?.fixture_id ??
+    livePreviewMatch?.fixture?.id ??
+    null;
 
   useEffect(() => {
     if (!fixtureId) return;
@@ -66,7 +70,10 @@ export const LiveMatchPreview: React.FC<{ onBack: () => void; onGoAnalyze: () =>
     setAnalyzing(true);
     hapticFeedback('medium');
     try {
-      const payload = await analyzeLiveMatch({ fixtureId: String(livePreviewMatch.id), liveSnapshot: livePreviewMatch }, initData || '');
+      if (!fixtureId) {
+        throw new Error('Live fixture ID is missing. Please reopen this match from Live Matches.');
+      }
+      const payload = await analyzeLiveMatch({ fixtureId: String(fixtureId), liveSnapshot: livePreviewMatch }, initData || '');
       setSelectedMatch({ ...livePreviewMatch, liveSnapshot: payload?.liveData || livePreviewMatch, analysisType: 'live' });
       if (!payload?.result) {
         throw new Error('Live analysis response was incomplete. Please retry.');

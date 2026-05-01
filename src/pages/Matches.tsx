@@ -38,19 +38,19 @@ export const Matches: React.FC<MatchesProps> = ({ onTabChange }) => {
 
     return {
       ...m,
-      id: m.fixture.id,
-      home: m.teams.home.name,
-      away: m.teams.away.name,
-      homeShort: m.teams.home.name.substring(0, 3).toUpperCase(),
-      awayShort: m.teams.away.name.substring(0, 3).toUpperCase(),
-      homeLogo: m.teams.home.logo,
-      awayLogo: m.teams.away.logo,
+      id: m?.fixture?.id ?? m?.fixture_id ?? m?.id,
+      home: m?.teams?.home?.name || m?.home || 'Home',
+      away: m?.teams?.away?.name || m?.away || 'Away',
+      homeShort: (m?.teams?.home?.name || m?.home || 'HOM').substring(0, 3).toUpperCase(),
+      awayShort: (m?.teams?.away?.name || m?.away || 'AWY').substring(0, 3).toUpperCase(),
+      homeLogo: m?.teams?.home?.logo || m?.homeLogo || '',
+      awayLogo: m?.teams?.away?.logo || m?.awayLogo || '',
       score: m.goals?.home !== null && m.goals?.away !== null ? `${m.goals.home}-${m.goals.away}` : null,
       minute: displayMinute,
       league: m.league?.name || m.league?.displayName || m.competition?.name || 'Football',
-      time: new Date(m.fixture.date).toLocaleTimeString('en-GB', { hour: '2-digit', minute: '2-digit' }),
+      time: new Date(m?.fixture?.date || m?.date || Date.now()).toLocaleTimeString('en-GB', { hour: '2-digit', minute: '2-digit' }),
       date: (() => {
-        const matchDate = new Date(m.fixture.date);
+        const matchDate = new Date(m?.fixture?.date || m?.date || Date.now());
         const today = new Date();
         const tomorrow = new Date();
         tomorrow.setDate(today.getDate() + 1);
@@ -61,7 +61,7 @@ export const Matches: React.FC<MatchesProps> = ({ onTabChange }) => {
 
         return matchDate.toLocaleDateString('en-GB', { day: '2-digit', month: 'short' });
       })(),
-      status: m.fixture.status.state === 'pre' ? 'Upcoming' : 'Live',
+      status: m?.fixture?.status?.state === 'pre' ? 'Upcoming' : (m?.status || 'Live'),
     };
   };
 
@@ -123,7 +123,7 @@ export const Matches: React.FC<MatchesProps> = ({ onTabChange }) => {
       return;
     }
     hapticFeedback('light');
-    recordMatchClick(match.id, `${match.home} vs ${match.away}`);
+    if (match?.id) recordMatchClick(String(match.id), `${match.home} vs ${match.away}`);
     setSelectedMatch(match);
     setIsAnalyzing(true);
     setAnalysisResult(null);
@@ -133,6 +133,10 @@ export const Matches: React.FC<MatchesProps> = ({ onTabChange }) => {
   const handleOpenLivePreview = async (match: any) => {
     if (!isSubscribed) {
       showAlert('Live matches are for subscribed users only.');
+      return;
+    }
+    if (!match?.id) {
+      showAlert('This live match is missing a valid fixture id. Please refresh and try another match.');
       return;
     }
     try {
