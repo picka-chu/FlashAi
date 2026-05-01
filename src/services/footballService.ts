@@ -69,7 +69,8 @@ export async function getLiveMatchPreview(fixtureId: string, initData = '') {
 
 export async function analyzeLiveMatch(payload: { fixtureId: string; liveSnapshot?: any }, initData = '') {
   const controller = new AbortController();
-  const timeoutId = setTimeout(() => controller.abort(), 30_000);
+  // Increased to 65s to allow backend (60s) to finish first
+  const timeoutId = setTimeout(() => controller.abort(), 65_000);
   let response: Response;
   try {
     response = await fetch('/api/analyze-live', {
