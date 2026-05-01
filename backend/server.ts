@@ -2836,6 +2836,9 @@ async function startServer() {
 
     if (!updated.title || !updated.subtitle) return c.json({ error: "Ad title and subtitle are required" }, 400);
 
+    const refreshed = ads.map((a) => (a.id === id ? updated : a));
+    await setCachedCollection(ADMIN_ADS_KEY, refreshed);
+
     const { error } = await supabase.from("ads").update({
       title: updated.title,
       subtitle: updated.subtitle,
