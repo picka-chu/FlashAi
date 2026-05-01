@@ -68,8 +68,11 @@ export const LiveMatchPreview: React.FC<{ onBack: () => void; onGoAnalyze: () =>
     try {
       const payload = await analyzeLiveMatch({ fixtureId: String(livePreviewMatch.id), liveSnapshot: livePreviewMatch }, initData || '');
       setSelectedMatch({ ...livePreviewMatch, liveSnapshot: payload?.liveData || livePreviewMatch, analysisType: 'live' });
-      setAnalysisResult(payload?.result || null);
-      setIsAnalyzing(true);
+      if (!payload?.result) {
+        throw new Error('Live analysis response was incomplete. Please retry.');
+      }
+      setAnalysisResult(payload.result);
+      setIsAnalyzing(false);
       if (typeof payload?.newCredits === 'number' && user) setUser({ ...user, credits: payload.newCredits });
       onGoAnalyze();
     } catch (error: any) {
