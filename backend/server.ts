@@ -303,38 +303,89 @@ function getUtcDateString(offsetDays = 0): string {
   return `${year}${month}${day}`;
 }
 
+// Markets that cannot be resolved from a final scoreline (goals only).
+// These are marked "pending" so they are never incorrectly flipped to "lost"
+// by the 24h guardrail.
+const NON_RESOLVABLE_MARKETS = [
+  "player to score", "first goalscorer", "anytime goalscorer", "last goalscorer",
+  "corner", "corners", "cards", "yellow card", "red card", "booking",
+  "shots", "offside", "asian handicap", "handicap",
+  "half time", "first half", "second half", "ht/ft",
+  "clean sheet", "to nil", "win to nil",
+  "dnb", "draw no bet",
+  "half with most goals", "winning margin",
+  "score first", "first team to score", "last team to score",
+];
+
+function isNonResolvableMarket(mk: string): boolean {
+  return NON_RESOLVABLE_MARKETS.some((kw) => mk.includes(kw));
+}
+
 function evaluatePredictionMarket(market: string, homeGoals: number, awayGoals: number): HistoryStatus {
   const mk = normalizeMarket(market);
   const total = homeGoals + awayGoals;
 
   if (!mk) return "pending";
-  
-  // Professional Grade Matching Logic
+
+  // Skip markets that can't be resolved from a final score — leave as pending
+  // rather than silently awarding "lost" via the 24h guardrail.
+  if (isNonResolvableMarket(mk)) return "pending";
+
   // 1. Full Match Results (1X2)
-  if (mk === "1" || mk === "home win" || (mk.includes("home") && mk.includes("win") && !mk.includes("draw"))) {
+  // Handles: "1", "Home Win", "Match Winner - Home", "Home Team Win", "1X2 - Home"
+  if (
+    mk === "1" ||
+    mk === "home win" ||
+    mk === "home" ||
+    (mk.includes("home") && (mk.includes("win") || mk.includes("winner")) && !mk.includes("draw") && !mk.includes("away"))
+  ) {
     return homeGoals > awayGoals ? "won" : "lost";
   }
-  if (mk === "2" || mk === "away win" || (mk.includes("away") && mk.includes("win") && !mk.includes("draw"))) {
+  // Handles: "2", "Away Win", "Match Winner - Away", "Away Team Win"
+  if (
+    mk === "2" ||
+    mk === "away win" ||
+    mk === "away" ||
+    (mk.includes("away") && (mk.includes("win") || mk.includes("winner")) && !mk.includes("draw") && !mk.includes("home"))
+  ) {
     return awayGoals > homeGoals ? "won" : "lost";
   }
-  if (mk === "x" || mk === "draw" || mk.includes("draw")) {
+  // Handles: "X", "Draw", "Match Winner - Draw", "Full Time Draw"
+  if (mk === "x" || mk === "draw" || (mk.includes("draw") && !mk.includes("no"))) {
     return homeGoals === awayGoals ? "won" : "lost";
   }
 
-  // 2. Double Chance
-  if (mk === "1x" || mk === "home or draw" || (mk.includes("1") && mk.includes("x") && mk.length <= 3)) {
+  // 2. Double Chance — remove the brittle length<=3 guard, use keyword matching instead
+  // Handles: "1X", "1x", "Home or Draw", "Double Chance - 1X", "Double Chance (Home/Draw)"
+  if (
+    mk === "1x" ||
+    mk === "home or draw" ||
+    (mk.includes("double chance") && (mk.includes("1x") || mk.includes("home") || mk.includes("draw")) && !mk.includes("x2") && !mk.includes("away"))
+  ) {
     return homeGoals >= awayGoals ? "won" : "lost";
   }
-  if (mk === "x2" || mk === "away or draw" || (mk.includes("x") && mk.includes("2") && mk.length <= 3)) {
+  // Handles: "X2", "x2", "Away or Draw", "Double Chance - X2"
+  if (
+    mk === "x2" ||
+    mk === "away or draw" ||
+    (mk.includes("double chance") && (mk.includes("x2") || mk.includes("away") || mk.includes("draw")) && !mk.includes("1x") && !mk.includes("home"))
+  ) {
     return awayGoals >= homeGoals ? "won" : "lost";
   }
-  if (mk === "12" || mk === "home or away" || (mk.includes("1") && mk.includes("2") && mk.length <= 3)) {
+  // Handles: "12", "Home or Away", "Double Chance - 12"
+  if (
+    mk === "12" ||
+    mk === "home or away" ||
+    (mk.includes("double chance") && mk.includes("12"))
+  ) {
     return homeGoals !== awayGoals ? "won" : "lost";
   }
 
-  // 3. Over/Under Goals (Professional Support for any value)
+  // 3. Over/Under — only match if it looks like a goals market (not corners/cards/shots)
+  // Prefix "goals" detection: market must contain "goal" or have no sport-specific qualifier
   const overMatch = mk.match(/over\s*(\d+\.?\d*)/);
   if (overMatch) {
+    // Ensure this is a goals over/under, not corners, cards, etc.
     const threshold = parseFloat(overMatch[1]);
     return total > threshold ? "won" : "lost";
   }
@@ -345,14 +396,15 @@ function evaluatePredictionMarket(market: string, homeGoals: number, awayGoals: 
   }
 
   // 4. Both Teams to Score (BTTS)
-  if (mk.includes("btts") || mk.includes("both teams to score")) {
-    const isYes = mk.includes("yes") || mk.includes("true") || (!mk.includes("no") && !mk.includes("false"));
+  // Handles: "BTTS Yes", "BTTS - Yes", "Both Teams to Score - Yes", "Both Teams Score"
+  if (mk.includes("btts") || mk.includes("both teams to score") || mk.includes("both teams score")) {
+    const isNo = mk.includes("no") || mk.includes("false");
     const bttsHappened = homeGoals > 0 && awayGoals > 0;
-    return isYes === bttsHappened ? "won" : "lost";
+    return (isNo ? !bttsHappened : bttsHappened) ? "won" : "lost";
   }
 
-  // 5. Exact Score (e.g. "2-1")
-  const scoreMatch = mk.match(/(\d+)\s*-\s*(\d+)/);
+  // 5. Exact Score — e.g. "Correct Score 2-1", "Score 1-0", "2-1"
+  const scoreMatch = mk.match(/(\d+)\s*[-:]\s*(\d+)/);
   if (scoreMatch) {
     const h = parseInt(scoreMatch[1]);
     const a = parseInt(scoreMatch[2]);
@@ -386,18 +438,24 @@ async function resolveHistoryItemResult(item: UserHistoryItem): Promise<UserHist
           const competitors = comp?.competitors || [];
           const home = competitors.find((c: any) => c.homeAway === "home");
           const away = competitors.find((c: any) => c.homeAway === "away");
-          const homeName = String(home?.team?.displayName || "").toLowerCase().trim();
-          const awayName = String(away?.team?.displayName || "").toLowerCase().trim();
+          const homeName = String(home?.team?.displayName || home?.team?.name || "").toLowerCase().trim();
+          const awayName = String(away?.team?.displayName || away?.team?.name || "").toLowerCase().trim();
           const expectedHome = String(item.home || "").toLowerCase().trim();
           const expectedAway = String(item.away || "").toLowerCase().trim();
 
           if (!homeName || !awayName || !expectedHome || !expectedAway) continue;
-          const sameOrder = homeName.includes(expectedHome) && awayName.includes(expectedAway);
-          const reverseOrder = homeName.includes(expectedAway) && awayName.includes(expectedHome);
+
+          // Bidirectional fuzzy match: ESPN name contains stored name OR stored name contains ESPN name
+          const nameMatches = (a: string, b: string) => a.includes(b) || b.includes(a);
+          const sameOrder = nameMatches(homeName, expectedHome) && nameMatches(awayName, expectedAway);
+          const reverseOrder = nameMatches(homeName, expectedAway) && nameMatches(awayName, expectedHome);
           if (!sameOrder && !reverseOrder) continue;
 
-          const homeGoals = Number(home?.score ?? 0);
-          const awayGoals = Number(away?.score ?? 0);
+          const espnHomeGoals = Number(home?.score ?? 0);
+          const espnAwayGoals = Number(away?.score ?? 0);
+          // If teams are stored in reverse order vs ESPN, swap goals so home/away align with the prediction
+          const homeGoals = reverseOrder ? espnAwayGoals : espnHomeGoals;
+          const awayGoals = reverseOrder ? espnHomeGoals : espnAwayGoals;
           const result = evaluatePredictionMarket(item.predictionMarket, homeGoals, awayGoals);
           if (result === "pending") return null;
 
@@ -439,8 +497,9 @@ async function resolveHistoryItemResult(item: UserHistoryItem): Promise<UserHist
   const resolvedByTeams = await tryResolveFromAllScoreboard();
   if (resolvedByTeams) return resolvedByTeams;
 
-  // Professional guardrail: prevent eternal pending records after 24h.
-  if (isOlderThan24h) {
+  // 24h guardrail: after a day, if the match should be over but we still can't resolve it,
+  // mark as lost — UNLESS the market is one we can never resolve from scoreline data.
+  if (isOlderThan24h && !isNonResolvableMarket(normalizeMarket(item.predictionMarket))) {
     return { ...item, status: "lost", resolved_at: new Date().toISOString() };
   }
 
