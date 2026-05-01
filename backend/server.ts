@@ -2708,6 +2708,11 @@ async function startServer() {
     if (isInternal && !internalTarget) return c.json({ error: "Internal redirect target is required" }, 400);
     if (!isInternal && !externalLink) return c.json({ error: "External redirect URL is required" }, 400);
 
+    const parsedExpiresAt = body.expires_at ? new Date(body.expires_at) : null;
+    if (parsedExpiresAt && Number.isNaN(parsedExpiresAt.getTime())) {
+      return c.json({ error: "Invalid expiration date" }, 400);
+    }
+
     const ad = {
       id: crypto.randomUUID(),
       title: String(body.title || "").trim(),
@@ -2717,7 +2722,7 @@ async function startServer() {
       cta: String(body.cta || "Check Out").trim(),
       active: body.active !== false,
       target_group: normalizeAudience(body.target_group || body.target_plan || "all"),
-      expires_at: body.expires_at ? new Date(body.expires_at).toISOString() : null,
+      expires_at: parsedExpiresAt ? parsedExpiresAt.toISOString() : null,
       primary_color: String(body.primary_color || "#3b82f6"),
       created_at: new Date().toISOString(),
       views: 0,
@@ -2766,6 +2771,70 @@ async function startServer() {
       console.error("DB insert failed for ads:", e);
     }
     return c.json(ad);
+  });
+
+  app.patch("/api/admin/ads/:id", adminOnly, async (c) => {
+    const id = c.req.param("id");
+    const body = await c.req.json().catch(() => ({} as any));
+    const ads = await getCachedCollection<any>(ADMIN_ADS_KEY);
+    const existing = ads.find((a) => a.id === id);
+    if (!existing) return c.json({ error: "Ad not found" }, 404);
+
+    const expiresAt = body.expires_at ? new Date(body.expires_at) : null;
+    if (expiresAt && Number.isNaN(expiresAt.getTime())) return c.json({ error: "Invalid expiration date" }, 400);
+
+    const updated = {
+      ...existing,
+      title: String(body.title ?? existing.title ?? "").trim(),
+      subtitle: String(body.subtitle ?? existing.subtitle ?? "").trim(),
+      image_url: String(body.image_url ?? existing.image_url ?? "").trim(),
+      cta: String(body.cta ?? existing.cta ?? "Check Out").trim(),
+      active: body.active !== undefined ? Boolean(body.active) : existing.active !== false,
+      target_group: normalizeAudience(body.target_group ?? existing.target_group ?? "all"),
+      expires_at: body.expires_at !== undefined ? (expiresAt ? expiresAt.toISOString() : null) : (existing.expires_at ?? null),
+      primary_color: String(body.primary_color ?? existing.primary_color ?? "#3b82f6"),
+      gradient_to: String(body.gradient_to ?? existing.gradient_to ?? "#8b5cf6"),
+      hero_color: String(body.hero_color ?? existing.hero_color ?? "#ffffff"),
+      sub_color: String(body.sub_color ?? existing.sub_color ?? "#e4e4e7"),
+      button_color: String(body.button_color ?? existing.button_color ?? "#ffffff"),
+      button_text_color: String(body.button_text_color ?? existing.button_text_color ?? "#111827"),
+      hero_size: body.hero_size ?? existing.hero_size ?? null,
+      sub_size: body.sub_size ?? existing.sub_size ?? null,
+      button_text_size: body.button_text_size ?? existing.button_text_size ?? null,
+      button_radius: body.button_radius ?? existing.button_radius ?? null,
+      button_pad_x: body.button_pad_x ?? existing.button_pad_x ?? null,
+      button_pad_y: body.button_pad_y ?? existing.button_pad_y ?? null,
+    } as any;
+
+    if (!updated.title || !updated.subtitle) return c.json({ error: "Ad title and subtitle are required" }, 400);
+
+    const refreshed = ads.map((a) => (a.id === id ? updated : a));
+    await setCachedCollection(ADMIN_ADS_KEY, refreshed);
+
+    const { error } = await supabase.from("ads").update({
+      title: updated.title,
+      subtitle: updated.subtitle,
+      image_url: updated.image_url || null,
+      cta: updated.cta,
+      active: updated.active,
+      target_group: updated.target_group,
+      expires_at: updated.expires_at,
+      primary_color: updated.primary_color,
+      gradient_to: updated.gradient_to,
+      hero_color: updated.hero_color,
+      sub_color: updated.sub_color,
+      button_color: updated.button_color,
+      button_text_color: updated.button_text_color,
+      hero_size: updated.hero_size,
+      sub_size: updated.sub_size,
+      button_text_size: updated.button_text_size,
+      button_radius: updated.button_radius,
+      button_pad_x: updated.button_pad_x,
+      button_pad_y: updated.button_pad_y,
+    }).eq("id", id);
+    if (error) return c.json({ error: error.message }, 400);
+
+    return c.json({ success: true, ad: updated });
   });
 
   app.post("/api/admin/ads/broadcast", adminOnly, async (c) => {
@@ -2817,8 +2886,11 @@ ${ad.subtitle}`;
     const ads = await getCachedCollection<any>(ADMIN_ADS_KEY);
     await setCachedCollection(ADMIN_ADS_KEY, ads.filter((a) => a.id !== id));
     try {
-      await supabase.from("ads").delete().eq("id", id);
-    } catch {}
+      const { error } = await supabase.from("ads").delete().eq("id", id);
+      if (error) return c.json({ error: error.message }, 400);
+    } catch (e: any) {
+      return c.json({ error: e?.message || "Delete failed" }, 500);
+    }
     return c.json({ success: true });
   });
 

@@ -57,6 +57,7 @@ export const Admin: React.FC = () => {
   // Form states for adding items
   const [isAddingTask, setIsAddingTask] = useState(false);
   const [isAddingAd, setIsAddingAd] = useState(false);
+  const [editingAdId, setEditingAdId] = useState<string | null>(null);
   const [newTask, setNewTask] = useState({ title: '', description: '', reward: 10, url: '', buttonLabel: 'Start Task', image_url: '', active: true });
   const [newAd, setNewAd] = useState({ 
     title: '', 
@@ -315,6 +316,33 @@ export const Admin: React.FC = () => {
     }
   };
 
+  const sanitizeNumberish = (value: string, fallback: number) => {
+    const next = Number(value);
+    return Number.isFinite(next) ? next : fallback;
+  };
+
+  const handleEditAd = async () => {
+    if (!editingAdId) return;
+    try {
+      const res = await fetch(`/api/admin/ads/${editingAdId}`, {
+        method: 'PATCH',
+        headers: { 'Content-Type': 'application/json', 'X-TG-Init-Data': initData },
+        body: JSON.stringify(newAd)
+      });
+      const data = await res.json().catch(() => ({}));
+      if (!res.ok) {
+        showAlert(data.error || 'Failed to update ad');
+        return;
+      }
+      await fetchAds();
+      setEditingAdId(null);
+      setIsAddingAd(false);
+      showAlert('Ad updated successfully!');
+    } catch (e) {
+      showAlert('Failed to update ad');
+    }
+  };
+
   const broadcastAd = async (adId: string, group: string) => {
     setIsBroadcasting(true);
     try {
@@ -434,8 +462,18 @@ export const Admin: React.FC = () => {
   const deleteAd = async (id: string) => {
     showConfirm('Delete this ad?', async (ok) => {
        if (ok) {
-         await fetch(`/api/admin/ads/${id}`, { method: 'DELETE', headers: { 'X-TG-Init-Data': initData } });
-         fetchAds();
+         try {
+           const res = await fetch(`/api/admin/ads/${id}`, { method: 'DELETE', headers: { 'X-TG-Init-Data': initData } });
+           const data = await res.json().catch(() => ({}));
+           if (!res.ok) {
+             showAlert(data.error || 'Failed to delete ad');
+             return;
+           }
+           fetchAds();
+           showAlert('Ad deleted successfully');
+         } catch (e) {
+           showAlert('Failed to delete ad');
+         }
        }
     });
   };
@@ -852,7 +890,7 @@ export const Admin: React.FC = () => {
               className="space-y-6"
             >
               <button 
-                onClick={() => setIsAddingAd(true)}
+                onClick={() => { setEditingAdId(null); setIsAddingAd(true); }}
                 className="w-full bg-zinc-900 border border-zinc-800 border-dashed py-6 rounded-3xl flex flex-col items-center gap-2 hover:bg-zinc-800 transition-colors"
               >
                 <div className="w-10 h-10 rounded-full bg-blue-500/10 flex items-center justify-center">
@@ -874,6 +912,16 @@ export const Admin: React.FC = () => {
                           <p className="text-[10px] font-bold text-zinc-500 uppercase tracking-widest mt-1 line-clamp-1">{ad.subtitle || 'No description'}</p>
                         </div>
                         <div className="flex gap-2">
+                          <button
+                            onClick={() => {
+                              setNewAd({ ...newAd, ...ad, expires_at: ad?.expires_at ? String(ad.expires_at).slice(0, 16) : '' });
+                              setEditingAdId(ad.id);
+                              setIsAddingAd(true);
+                            }}
+                            className="w-10 h-10 rounded-xl bg-blue-500/10 flex items-center justify-center text-blue-500 hover:bg-blue-500 hover:text-white transition-all"
+                          >
+                            <ExternalLink className="w-4 h-4" />
+                          </button>
                           <button 
                             onClick={() => deleteAd(ad.id)}
                             className="w-10 h-10 rounded-xl bg-red-500/10 flex items-center justify-center text-red-500 hover:bg-red-500 hover:text-white transition-all"
@@ -966,12 +1014,12 @@ export const Admin: React.FC = () => {
                            <label className="text-[10px] font-bold text-zinc-500 uppercase tracking-widest cursor-pointer block">Upload PNG<input type="file" accept="image/png,image/*" className="hidden" onChange={(e) => { const file = e.target.files?.[0]; if (file) handleUploadAsDataUrl(file, (dataUrl) => setNewAd({ ...newAd, image_url: dataUrl }), { width: 480, height: 360, quality: 0.95 }); }} /></label>
                            <input value={newAd.cta} onChange={e => setNewAd({...newAd, cta: e.target.value})} placeholder="Button text" className="w-full bg-zinc-800 border-none rounded-2xl p-4 text-white text-sm font-bold placeholder:text-zinc-600 focus:ring-2 ring-blue-500/50" />
                            <div className="grid grid-cols-2 gap-3">
-                             <input type="number" min={18} max={48} value={newAd.hero_size || 32} onChange={e => setNewAd({ ...newAd, hero_size: Math.max(18, Math.min(48, Number(e.target.value) || 32)) })} placeholder="Hero text size" className="bg-zinc-800 border-none rounded-2xl p-3 text-white text-xs font-bold" />
-                             <input type="number" min={12} max={32} value={newAd.sub_size || 18} onChange={e => setNewAd({ ...newAd, sub_size: Math.max(12, Math.min(32, Number(e.target.value) || 18)) })} placeholder="Sub text size" className="bg-zinc-800 border-none rounded-2xl p-3 text-white text-xs font-bold" />
-                             <input type="number" min={10} max={24} value={newAd.button_text_size || 14} onChange={e => setNewAd({ ...newAd, button_text_size: Math.max(10, Math.min(24, Number(e.target.value) || 14)) })} placeholder="Button text size" className="bg-zinc-800 border-none rounded-2xl p-3 text-white text-xs font-bold" />
-                             <input type="number" min={8} max={999} value={newAd.button_radius || 999} onChange={e => setNewAd({ ...newAd, button_radius: Math.max(8, Math.min(999, Number(e.target.value) || 999)) })} placeholder="Button radius" className="bg-zinc-800 border-none rounded-2xl p-3 text-white text-xs font-bold" />
-                             <input type="number" min={8} max={40} value={newAd.button_pad_x || 20} onChange={e => setNewAd({ ...newAd, button_pad_x: Math.max(8, Math.min(40, Number(e.target.value) || 20)) })} placeholder="Button width pad" className="bg-zinc-800 border-none rounded-2xl p-3 text-white text-xs font-bold" />
-                             <input type="number" min={4} max={20} value={newAd.button_pad_y || 8} onChange={e => setNewAd({ ...newAd, button_pad_y: Math.max(4, Math.min(20, Number(e.target.value) || 8)) })} placeholder="Button height pad" className="bg-zinc-800 border-none rounded-2xl p-3 text-white text-xs font-bold" />
+                             <input type="number" value={newAd.hero_size || 32} onChange={e => setNewAd({ ...newAd, hero_size: sanitizeNumberish(e.target.value, 32) })} placeholder="Hero text size" className="bg-zinc-800 border-none rounded-2xl p-3 text-white text-xs font-bold" />
+                             <input type="number" value={newAd.sub_size || 18} onChange={e => setNewAd({ ...newAd, sub_size: sanitizeNumberish(e.target.value, 18) })} placeholder="Sub text size" className="bg-zinc-800 border-none rounded-2xl p-3 text-white text-xs font-bold" />
+                             <input type="number" value={newAd.button_text_size || 14} onChange={e => setNewAd({ ...newAd, button_text_size: sanitizeNumberish(e.target.value, 14) })} placeholder="Button text size" className="bg-zinc-800 border-none rounded-2xl p-3 text-white text-xs font-bold" />
+                             <input type="number" value={newAd.button_radius || 999} onChange={e => setNewAd({ ...newAd, button_radius: sanitizeNumberish(e.target.value, 999) })} placeholder="Button radius" className="bg-zinc-800 border-none rounded-2xl p-3 text-white text-xs font-bold" />
+                             <input type="number" value={newAd.button_pad_x || 20} onChange={e => setNewAd({ ...newAd, button_pad_x: sanitizeNumberish(e.target.value, 20) })} placeholder="Button width pad" className="bg-zinc-800 border-none rounded-2xl p-3 text-white text-xs font-bold" />
+                             <input type="number" value={newAd.button_pad_y || 8} onChange={e => setNewAd({ ...newAd, button_pad_y: sanitizeNumberish(e.target.value, 8) })} placeholder="Button height pad" className="bg-zinc-800 border-none rounded-2xl p-3 text-white text-xs font-bold" />
                            </div>
                         </div>
                         <div className="space-y-2">
@@ -987,7 +1035,7 @@ export const Admin: React.FC = () => {
                            <select value={newAd.target_group} onChange={e => setNewAd({...newAd, target_group: e.target.value})} className="w-full bg-zinc-800 rounded-2xl p-4 text-white text-sm font-bold focus:outline-none focus:ring-2 ring-blue-500/50"><option value="all">All users</option><option value="unsubscribed">Unsubscribed users</option><option value="subscribed">Subscribed users</option></select>
                            <input type="datetime-local" value={newAd.expires_at} onChange={e => setNewAd({...newAd, expires_at: e.target.value})} className="w-full bg-zinc-800 border-none rounded-2xl p-4 text-white text-sm font-bold focus:ring-2 ring-blue-500/50" />
                         </div>
-<button onClick={handleAddAd} className="w-full py-5 bg-blue-500 text-white font-black uppercase tracking-widest text-xs rounded-2xl shadow-[0_0_30px_rgba(59,130,246,0.3)]">Deploy to Rotation</button>
+<button onClick={editingAdId ? handleEditAd : handleAddAd} className="w-full py-5 bg-blue-500 text-white font-black uppercase tracking-widest text-xs rounded-2xl shadow-[0_0_30px_rgba(59,130,246,0.3)]">{editingAdId ? 'Save Ad Changes' : 'Deploy to Rotation'}</button>
                       </div>
                     </motion.div>
                   </>
