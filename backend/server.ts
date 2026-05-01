@@ -54,7 +54,15 @@ const PLAN_PRICE_USD: Record<string, number> = {
   monthly_basic: 8.99,
   monthly_pro: 14.99,
 };
-const USD_TO_STARS_RATE = 15;
+const USD_TO_STARS_RATE = 50;
+const PLAN_PRICE_STARS: Record<string, number> = {
+  monthly_basic: 500,
+  monthly_pro: 800,
+};
+const PLAN_PRICE_TON: Record<string, number> = {
+  monthly_basic: 6.86,
+  monthly_pro: 11.5,
+};
 
 const signupCreditsRaw = Number(process.env.SIGNUP_CREDITS ?? 3);
 const signupCredits = Number.isFinite(signupCreditsRaw) && signupCreditsRaw >= 0 ? Math.floor(signupCreditsRaw) : 3;
@@ -506,9 +514,11 @@ async function startServer() {
   });
 
   const getPlanUsdPrice = (planId: string): number => PLAN_PRICE_USD[String(planId || "").trim()] || 0;
-  const getExpectedStarsAmount = (planId: string): number => Math.ceil(getPlanUsdPrice(planId) * USD_TO_STARS_RATE);
+  const getExpectedStarsAmount = (planId: string): number => PLAN_PRICE_STARS[String(planId || "").trim()] || Math.ceil(getPlanUsdPrice(planId) * USD_TO_STARS_RATE);
   const getExpectedTonAmount = (planId: string, tonPerUsdRate: number): number => {
-    const usd = getPlanUsdPrice(planId);
+    const normalizedPlanId = String(planId || "").trim();
+    if (PLAN_PRICE_TON[normalizedPlanId]) return PLAN_PRICE_TON[normalizedPlanId];
+    const usd = getPlanUsdPrice(normalizedPlanId);
     if (!usd || !Number.isFinite(tonPerUsdRate) || tonPerUsdRate <= 0) return 0;
     return Number((usd * tonPerUsdRate).toFixed(2));
   };
@@ -1234,12 +1244,25 @@ async function startServer() {
       const { analyzeMatchWithSearch } = await import("./services/geminiService.js");
       let result: any;
       try {
-        result = await Promise.race([
-          analyzeMatchWithSearch(`${matchString} (LIVE)`, structuredContext),
-          new Promise((_, reject) => setTimeout(() => reject(new Error("AI analysis timeout")), 30_000))
-        ]);
-      } catch (analysisError) {
-        console.warn("Live AI analysis fallback engaged:", analysisError);
+        const withTimeout = <T,>(promise: Promise<T>, timeoutMs: number): Promise<T> => {
+          return new Promise<T>((resolve, reject) => {
+            const timer = setTimeout(() => reject(new Error("AI analysis timeout")), timeoutMs);
+            promise
+              .then((value) => {
+                clearTimeout(timer);
+                resolve(value);
+              })
+              .catch((error) => {
+                clearTimeout(timer);
+                reject(error);
+              });
+          });
+        };
+
+        result = await withTimeout(analyzeMatchWithSearch(`${matchString} (LIVE)`, structuredContext), 30_000);
+      } catch (analysisError: any) {
+        const reason = analysisError?.message || "Unknown analysis error";
+        console.warn(`Live AI analysis fallback engaged: ${reason}`);
         result = {
           matchId: matchString,
           predictions: [
@@ -1685,7 +1708,9 @@ async function startServer() {
       console.log(`💰 Payment success from ${telegramId}: ${amount} Stars for ${payload}`);
 
       // Extract plan from payload (e.g., "plan_weekly")
-      const planId = payload.startsWith('plan_') ? payload.replace('plan_', '') : 'free';
+      const planId = payload.startsWith('plan:')
+        ? payload.replace('plan:', '')
+        : (payload.startsWith('plan_') ? payload.replace('plan_', '') : 'free');
       const expectedStars = getExpectedStarsAmount(planId);
       if (!expectedStars) {
         await ctx.reply("⚠️ Unknown plan in payment payload. Please contact support.");
@@ -2127,7 +2152,7 @@ async function startServer() {
       const invoiceLink = await bot.telegram.createInvoiceLink({
         title: title || `Flash AI - ${normalizedPlanId.toUpperCase()} Plan`,
         description: description || `Access to premium football predictions and analyses.`,
-        payload: `plan_${normalizedPlanId}`,
+        payload: `plan:${normalizedPlanId}`,
         provider_token: "", // Empty for Telegram Stars
         currency: "XTR",
         prices: [{ label: "Stars", amount: expectedAmount }],
@@ -2702,15 +2727,40 @@ async function startServer() {
     if (!ad.title || !ad.subtitle) return c.json({ error: "Ad title and subtitle are required" }, 400);
     await setCachedCollection(ADMIN_ADS_KEY, [ad, ...ads]);
     try {
-      const { error: dbError } = await supabase.from("ads").insert({
+      const richPayload = {
         title: ad.title,
         subtitle: ad.subtitle,
         image_url: ad.image_url || "https://placehold.co/1200x630/png",
         link: ad.link,
+        cta: ad.cta,
         active: ad.active,
-      });
+        target_group: ad.target_group,
+        expires_at: ad.expires_at,
+        primary_color: ad.primary_color,
+        gradient_to: body.gradient_to || null,
+        hero_color: body.hero_color || null,
+        sub_color: body.sub_color || null,
+        button_color: body.button_color || null,
+        button_text_color: body.button_text_color || null,
+        hero_size: body.hero_size || null,
+        sub_size: body.sub_size || null,
+        button_text_size: body.button_text_size || null,
+        button_radius: body.button_radius || null,
+        button_pad_x: body.button_pad_x || null,
+        button_pad_y: body.button_pad_y || null,
+      } as any;
+
+      const { error: dbError } = await supabase.from("ads").insert(richPayload);
       if (dbError) {
-        console.error("DB insert failed for ads:", dbError);
+        const fallbackPayload = {
+          title: ad.title,
+          subtitle: ad.subtitle,
+          image_url: ad.image_url || "https://placehold.co/1200x630/png",
+          link: ad.link,
+          active: ad.active,
+        };
+        const { error: fallbackErr } = await supabase.from("ads").insert(fallbackPayload);
+        if (fallbackErr) console.error("DB insert failed for ads:", fallbackErr);
       }
     } catch (e) {
       console.error("DB insert failed for ads:", e);
