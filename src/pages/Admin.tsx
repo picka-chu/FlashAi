@@ -471,9 +471,42 @@ export const Admin: React.FC = () => {
     );
   }
 
-  const handleUploadAsDataUrl = (file: File, cb: (dataUrl: string) => void) => {
+  const handleUploadAsDataUrl = (
+    file: File,
+    cb: (dataUrl: string) => void,
+    options?: { width?: number; height?: number; quality?: number }
+  ) => {
     const reader = new FileReader();
-    reader.onload = () => cb(String(reader.result || ''));
+    reader.onload = () => {
+      const source = String(reader.result || '');
+      const width = options?.width || 800;
+      const height = options?.height || 450;
+      const quality = options?.quality || 0.92;
+      const img = new Image();
+      img.onload = () => {
+        const canvas = document.createElement('canvas');
+        canvas.width = width;
+        canvas.height = height;
+        const ctx = canvas.getContext('2d');
+        if (!ctx) {
+          cb(source);
+          return;
+        }
+        ctx.fillStyle = '#0b0b0f';
+        ctx.fillRect(0, 0, width, height);
+        const scale = Math.max(width / img.width, height / img.height);
+        const drawW = img.width * scale;
+        const drawH = img.height * scale;
+        const dx = (width - drawW) / 2;
+        const dy = (height - drawH) / 2;
+        ctx.imageSmoothingEnabled = true;
+        ctx.imageSmoothingQuality = 'high';
+        ctx.drawImage(img, dx, dy, drawW, drawH);
+        cb(canvas.toDataURL('image/jpeg', quality));
+      };
+      img.onerror = () => cb(source);
+      img.src = source;
+    };
     reader.readAsDataURL(file);
   };
 
@@ -913,7 +946,7 @@ export const Admin: React.FC = () => {
                         <div className="space-y-2">
                            <p className="text-[10px] font-bold text-zinc-600 uppercase ml-2">Image & CTA</p>
                            <input value={newAd.image_url} onChange={e => setNewAd({...newAd, image_url: e.target.value})} placeholder="PNG image URL (right side)" className="w-full bg-zinc-800 border-none rounded-2xl p-4 text-white text-sm font-bold placeholder:text-zinc-600 focus:ring-2 ring-blue-500/50" />
-                           <label className="text-[10px] font-bold text-zinc-500 uppercase tracking-widest cursor-pointer block">Upload PNG<input type="file" accept="image/png,image/*" className="hidden" onChange={(e) => { const file = e.target.files?.[0]; if (file) handleUploadAsDataUrl(file, (dataUrl) => setNewAd({ ...newAd, image_url: dataUrl })); }} /></label>
+                           <label className="text-[10px] font-bold text-zinc-500 uppercase tracking-widest cursor-pointer block">Upload PNG<input type="file" accept="image/png,image/*" className="hidden" onChange={(e) => { const file = e.target.files?.[0]; if (file) handleUploadAsDataUrl(file, (dataUrl) => setNewAd({ ...newAd, image_url: dataUrl }), { width: 720, height: 520, quality: 0.9 }); }} /></label>
                            <input value={newAd.cta} onChange={e => setNewAd({...newAd, cta: e.target.value})} placeholder="Button text" className="w-full bg-zinc-800 border-none rounded-2xl p-4 text-white text-sm font-bold placeholder:text-zinc-600 focus:ring-2 ring-blue-500/50" />
                         </div>
                         <div className="space-y-2">

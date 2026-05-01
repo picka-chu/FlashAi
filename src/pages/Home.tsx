@@ -460,72 +460,26 @@ export const Home: React.FC<HomeProps> = ({ onTabChange }) => {
             className="flex gap-4 overflow-x-auto no-scrollbar snap-x py-2"
           >
             {dynamicAds.map((ad: any, i: number) => {
-              const Icon = ad.icon || Megaphone;
-              const Deco = ad.deco || Sparkles;
-              const primaryColor = ad.primary_color || '#ccff00';
-              
+              const gradientFrom = ad?.primary_color || '#3b82f6';
+              const gradientTo = ad?.gradient_to || '#8b5cf6';
+              const heroColor = ad?.hero_color || '#ffffff';
+              const subColor = ad?.sub_color || '#e4e4e7';
+              const buttonBg = ad?.button_color || '#ffffff';
+              const buttonText = ad?.button_text_color || '#111827';
               return (
-                <div 
-                  key={ad.id || i}
-                  className={`shrink-0 w-full snap-center relative overflow-visible rounded-[32px] h-[160px] transition-all transform duration-500 ${i === adIndex ? 'scale-100' : 'scale-[0.97] opacity-50'}`}
-                  style={{ 
-                    background: `linear-gradient(135deg, ${primaryColor}cc 0%, ${primaryColor}99 50%, ${primaryColor}66 100%)`,
-                    boxShadow: i === adIndex ? `0 15px 40px ${primaryColor}50, 0 0 40px ${primaryColor}30` : `0 8px 20px ${primaryColor}30`,
-                    border: i === adIndex ? `2px solid rgba(255,255,255,0.3)` : '1px solid rgba(255,255,255,0.1)'
-                  }}
-                >
-                  {/* Subtle overlay for depth */}
-                  <div className="absolute inset-0 bg-gradient-to-r from-black/20 via-transparent to-transparent pointer-events-none rounded-[32px]" />
-
-                  {/* Right Side: Image - Prominent with no mask */}
-                  {ad.image_url && (
-                    <div className="absolute -right-8 top-1/2 transform -translate-y-1/2 h-[180px] w-[180px] overflow-visible z-20">
-                      <img 
-                        src={ad.image_url} 
-                        alt="" 
-                        className="w-full h-full object-contain transition-transform duration-1000 group-hover:scale-110"
-                        referrerPolicy="no-referrer"
-                        style={{ filter: 'drop-shadow(0 10px 30px rgba(0,0,0,0.3))' }}
-                      />
-                    </div>
-                  )}
-
-                  {/* Left Side: Content */}
-                  <div className="relative z-10 flex flex-col h-full justify-between p-6 w-3/5">
-                    {/* Top Section: Badge */}
-                    <div className="flex justify-between items-start">
-                      {ad.expires_at && <CountdownBadge expiresAt={ad.expires_at} color="rgba(255,255,255,0.9)" />}
-                    </div>
-                    
-                    {/* Middle/Bottom Section: Title, Subtitle, Button */}
-                    <div className="space-y-3">
+                <div key={ad.id || i} className={`shrink-0 w-[340px] snap-center ${i === adIndex ? 'opacity-100' : 'opacity-70'}`}>
+                  <div className="relative h-[186px] rounded-[30px] overflow-hidden border border-white/10 shadow-[0_14px_42px_rgba(0,0,0,0.35)]"
+                    style={{ background: `linear-gradient(100deg, ${gradientFrom} 0%, ${gradientTo} 75%)` }}>
+                    {ad?.image_url ? <img src={ad.image_url} alt="" className="absolute right-0 top-0 h-full w-[42%] object-cover" referrerPolicy="no-referrer" /> : null}
+                    <div className="absolute inset-0 bg-gradient-to-r from-black/10 via-transparent to-black/5" />
+                    <div className="relative z-10 h-full p-5 pr-24 flex flex-col justify-between">
                       <div>
-                        <h4 className="text-2xl font-black leading-tight text-white drop-shadow-lg">
-                          {ad.title}
-                        </h4>
-                        <p className="text-xs font-semibold mt-1 text-white/80 tracking-wide line-clamp-2">
-                          {ad.sub || ad.subtitle}
-                        </p>
+                        <h4 className="text-3xl font-black leading-[1.05] line-clamp-2" style={{ color: heroColor }}>{ad.title || 'Promotion'}</h4>
+                        <p className="mt-2 text-lg font-semibold leading-tight line-clamp-2" style={{ color: subColor }}>{ad.sub || ad.subtitle || 'Limited-time offer'}</p>
                       </div>
-
-                      <div className="flex items-center gap-3">
-                        <button 
-                          onClick={() => handleAdClick(ad)}
-                          className="text-xs font-black tracking-wider px-6 py-2.5 rounded-xl shadow-xl active:scale-95 transition-all uppercase bg-white text-black hover:shadow-2xl"
-                          style={{ 
-                            boxShadow: '0 8px 20px rgba(0,0,0,0.2)'
-                          }}
-                        >
-                          {ad.cta || 'Learn More'}
-                        </button>
-                        
-                        {ad.clicks && (
-                          <div className="flex items-center gap-1.5 opacity-70">
-                             <TrendingUp className="w-3.5 h-3.5 text-white" />
-                             <span className="text-xs font-bold text-white uppercase">{ad.clicks}</span>
-                          </div>
-                        )}
-                      </div>
+                      <button onClick={() => handleAdClick(ad)} className="self-start px-5 py-2.5 rounded-full text-sm font-black active:scale-95 transition-transform" style={{ backgroundColor: buttonBg, color: buttonText }}>
+                        {ad.cta || 'Learn more'}
+                      </button>
                     </div>
                   </div>
                 </div>
