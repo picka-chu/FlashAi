@@ -57,6 +57,7 @@ export const Admin: React.FC = () => {
   // Form states for adding items
   const [isAddingTask, setIsAddingTask] = useState(false);
   const [isAddingAd, setIsAddingAd] = useState(false);
+  const [editingAdId, setEditingAdId] = useState<string | null>(null);
   const [newTask, setNewTask] = useState({ title: '', description: '', reward: 10, url: '', buttonLabel: 'Start Task', image_url: '', active: true });
   const [newAd, setNewAd] = useState({ 
     title: '', 
@@ -276,10 +277,14 @@ export const Admin: React.FC = () => {
 
   const handleAddAd = async () => {
     try {
+      const adPayload = {
+        ...newAd,
+        expires_at: newAd.expires_at ? new Date(newAd.expires_at).toISOString() : ''
+      };
       const res = await fetch('/api/admin/ads', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json', 'X-TG-Init-Data': initData },
-        body: JSON.stringify(newAd)
+        body: JSON.stringify(adPayload)
       });
       if (res.ok) {
         fetchAds();
@@ -312,6 +317,52 @@ export const Admin: React.FC = () => {
       }
     } catch (e) {
       showAlert('Failed to add ad');
+    }
+  };
+
+  const sanitizeNumberish = (value: string, fallback: number) => {
+    if (value.trim() === '') return fallback;
+    const next = Number(value);
+    if (!Number.isFinite(next)) return fallback;
+    return Math.max(1, Math.min(200, next));
+  };
+
+  const isoToDatetimeLocal = (iso?: string | null) => {
+    if (!iso) return '';
+    const d = new Date(iso);
+    if (Number.isNaN(d.getTime())) return '';
+    const pad = (n: number) => String(n).padStart(2, '0');
+    const y = d.getFullYear();
+    const m = pad(d.getMonth() + 1);
+    const day = pad(d.getDate());
+    const h = pad(d.getHours());
+    const min = pad(d.getMinutes());
+    return `${y}-${m}-${day}T${h}:${min}`;
+  };
+
+  const handleEditAd = async () => {
+    if (!editingAdId) return;
+    try {
+      const adPayload = {
+        ...newAd,
+        expires_at: newAd.expires_at ? new Date(newAd.expires_at).toISOString() : ''
+      };
+      const res = await fetch(`/api/admin/ads/${editingAdId}`, {
+        method: 'PATCH',
+        headers: { 'Content-Type': 'application/json', 'X-TG-Init-Data': initData },
+        body: JSON.stringify(adPayload)
+      });
+      const data = await res.json().catch(() => ({}));
+      if (!res.ok) {
+        showAlert(data.error || 'Failed to update ad');
+        return;
+      }
+      await fetchAds();
+      setEditingAdId(null);
+      setIsAddingAd(false);
+      showAlert('Ad updated successfully!');
+    } catch (e) {
+      showAlert('Failed to update ad');
     }
   };
 
@@ -434,8 +485,18 @@ export const Admin: React.FC = () => {
   const deleteAd = async (id: string) => {
     showConfirm('Delete this ad?', async (ok) => {
        if (ok) {
-         await fetch(`/api/admin/ads/${id}`, { method: 'DELETE', headers: { 'X-TG-Init-Data': initData } });
-         fetchAds();
+         try {
+           const res = await fetch(`/api/admin/ads/${id}`, { method: 'DELETE', headers: { 'X-TG-Init-Data': initData } });
+           const data = await res.json().catch(() => ({}));
+           if (!res.ok) {
+             showAlert(data.error || 'Failed to delete ad');
+             return;
+           }
+           fetchAds();
+           showAlert('Ad deleted successfully');
+         } catch (e) {
+           showAlert('Failed to delete ad');
+         }
        }
     });
   };
@@ -532,18 +593,18 @@ export const Admin: React.FC = () => {
 
   const renderAdCard = (ad: any) => {
     const gradientFrom = ad?.primary_color || '#3b82f6';
-    const gradientTo = ad?.gradient_to || '#8b5cf6';
+    const gradientTo = ad?.gradient_to ?? '#8b5cf6';
     const heroColor = ad?.hero_color || '#ffffff';
     const subColor = ad?.sub_color || '#e4e4e7';
     const buttonBg = ad?.button_color || '#ffffff';
     const buttonText = ad?.button_text_color || '#111827';
-    const cta = String(ad?.cta || 'Learn more');
-    const heroSize = Number(ad?.hero_size || 32);
-    const subSize = Number(ad?.sub_size || 18);
-    const btnTextSize = Number(ad?.button_text_size || 14);
-    const btnRadius = Number(ad?.button_radius || 999);
-    const btnPadX = Number(ad?.button_pad_x || 20);
-    const btnPadY = Number(ad?.button_pad_y || 8);
+    const cta = String(ad?.cta ?? 'Learn more');
+    const heroSize = Number(ad?.hero_size ?? 32);
+    const subSize = Number(ad?.sub_size ?? 18);
+    const btnTextSize = Number(ad?.button_text_size ?? 14);
+    const btnRadius = Number(ad?.button_radius ?? 999);
+    const btnPadX = Number(ad?.button_pad_x ?? 20);
+    const btnPadY = Number(ad?.button_pad_y ?? 8);
     return (
       <div className="relative min-w-[300px] w-[300px] h-[164px] rounded-[24px] overflow-hidden border border-white/10 shadow-[0_12px_40px_rgba(0,0,0,0.35)]"
         style={{ background: `linear-gradient(100deg, ${gradientFrom} 0%, ${gradientTo} 75%)` }}>
@@ -852,7 +913,7 @@ export const Admin: React.FC = () => {
               className="space-y-6"
             >
               <button 
-                onClick={() => setIsAddingAd(true)}
+                onClick={() => { setEditingAdId(null); setIsAddingAd(true); }}
                 className="w-full bg-zinc-900 border border-zinc-800 border-dashed py-6 rounded-3xl flex flex-col items-center gap-2 hover:bg-zinc-800 transition-colors"
               >
                 <div className="w-10 h-10 rounded-full bg-blue-500/10 flex items-center justify-center">
@@ -874,6 +935,16 @@ export const Admin: React.FC = () => {
                           <p className="text-[10px] font-bold text-zinc-500 uppercase tracking-widest mt-1 line-clamp-1">{ad.subtitle || 'No description'}</p>
                         </div>
                         <div className="flex gap-2">
+                          <button
+                            onClick={() => {
+                              setNewAd({ ...newAd, ...ad, expires_at: isoToDatetimeLocal(ad?.expires_at) });
+                              setEditingAdId(ad.id);
+                              setIsAddingAd(true);
+                            }}
+                            className="w-10 h-10 rounded-xl bg-blue-500/10 flex items-center justify-center text-blue-500 hover:bg-blue-500 hover:text-white transition-all"
+                          >
+                            <ExternalLink className="w-4 h-4" />
+                          </button>
                           <button 
                             onClick={() => deleteAd(ad.id)}
                             className="w-10 h-10 rounded-xl bg-red-500/10 flex items-center justify-center text-red-500 hover:bg-red-500 hover:text-white transition-all"
@@ -966,12 +1037,12 @@ export const Admin: React.FC = () => {
                            <label className="text-[10px] font-bold text-zinc-500 uppercase tracking-widest cursor-pointer block">Upload PNG<input type="file" accept="image/png,image/*" className="hidden" onChange={(e) => { const file = e.target.files?.[0]; if (file) handleUploadAsDataUrl(file, (dataUrl) => setNewAd({ ...newAd, image_url: dataUrl }), { width: 480, height: 360, quality: 0.95 }); }} /></label>
                            <input value={newAd.cta} onChange={e => setNewAd({...newAd, cta: e.target.value})} placeholder="Button text" className="w-full bg-zinc-800 border-none rounded-2xl p-4 text-white text-sm font-bold placeholder:text-zinc-600 focus:ring-2 ring-blue-500/50" />
                            <div className="grid grid-cols-2 gap-3">
-                             <input type="number" min={18} max={48} value={newAd.hero_size || 32} onChange={e => setNewAd({ ...newAd, hero_size: Math.max(18, Math.min(48, Number(e.target.value) || 32)) })} placeholder="Hero text size" className="bg-zinc-800 border-none rounded-2xl p-3 text-white text-xs font-bold" />
-                             <input type="number" min={12} max={32} value={newAd.sub_size || 18} onChange={e => setNewAd({ ...newAd, sub_size: Math.max(12, Math.min(32, Number(e.target.value) || 18)) })} placeholder="Sub text size" className="bg-zinc-800 border-none rounded-2xl p-3 text-white text-xs font-bold" />
-                             <input type="number" min={10} max={24} value={newAd.button_text_size || 14} onChange={e => setNewAd({ ...newAd, button_text_size: Math.max(10, Math.min(24, Number(e.target.value) || 14)) })} placeholder="Button text size" className="bg-zinc-800 border-none rounded-2xl p-3 text-white text-xs font-bold" />
-                             <input type="number" min={8} max={999} value={newAd.button_radius || 999} onChange={e => setNewAd({ ...newAd, button_radius: Math.max(8, Math.min(999, Number(e.target.value) || 999)) })} placeholder="Button radius" className="bg-zinc-800 border-none rounded-2xl p-3 text-white text-xs font-bold" />
-                             <input type="number" min={8} max={40} value={newAd.button_pad_x || 20} onChange={e => setNewAd({ ...newAd, button_pad_x: Math.max(8, Math.min(40, Number(e.target.value) || 20)) })} placeholder="Button width pad" className="bg-zinc-800 border-none rounded-2xl p-3 text-white text-xs font-bold" />
-                             <input type="number" min={4} max={20} value={newAd.button_pad_y || 8} onChange={e => setNewAd({ ...newAd, button_pad_y: Math.max(4, Math.min(20, Number(e.target.value) || 8)) })} placeholder="Button height pad" className="bg-zinc-800 border-none rounded-2xl p-3 text-white text-xs font-bold" />
+                             <input type="number" value={newAd.hero_size ?? 32} onChange={e => setNewAd({ ...newAd, hero_size: sanitizeNumberish(e.target.value, 32) })} placeholder="Hero text size" className="bg-zinc-800 border-none rounded-2xl p-3 text-white text-xs font-bold" />
+                             <input type="number" value={newAd.sub_size ?? 18} onChange={e => setNewAd({ ...newAd, sub_size: sanitizeNumberish(e.target.value, 18) })} placeholder="Sub text size" className="bg-zinc-800 border-none rounded-2xl p-3 text-white text-xs font-bold" />
+                             <input type="number" value={newAd.button_text_size ?? 14} onChange={e => setNewAd({ ...newAd, button_text_size: sanitizeNumberish(e.target.value, 14) })} placeholder="Button text size" className="bg-zinc-800 border-none rounded-2xl p-3 text-white text-xs font-bold" />
+                             <input type="number" value={newAd.button_radius ?? 999} onChange={e => setNewAd({ ...newAd, button_radius: sanitizeNumberish(e.target.value, 999) })} placeholder="Button radius" className="bg-zinc-800 border-none rounded-2xl p-3 text-white text-xs font-bold" />
+                             <input type="number" value={newAd.button_pad_x ?? 20} onChange={e => setNewAd({ ...newAd, button_pad_x: sanitizeNumberish(e.target.value, 20) })} placeholder="Button width pad" className="bg-zinc-800 border-none rounded-2xl p-3 text-white text-xs font-bold" />
+                             <input type="number" value={newAd.button_pad_y ?? 8} onChange={e => setNewAd({ ...newAd, button_pad_y: sanitizeNumberish(e.target.value, 8) })} placeholder="Button height pad" className="bg-zinc-800 border-none rounded-2xl p-3 text-white text-xs font-bold" />
                            </div>
                         </div>
                         <div className="space-y-2">
@@ -984,10 +1055,10 @@ export const Admin: React.FC = () => {
                             </select>
                            )}
                            <label className="flex items-center gap-2 text-xs text-zinc-400 font-bold ml-1 mt-1"><input type="checkbox" checked={newAd.is_internal} onChange={(e) => setNewAd({ ...newAd, is_internal: e.target.checked, link: e.target.checked ? '' : newAd.link })} className="accent-blue-500" />Use internal redirect page selection</label>
-                           <select value={newAd.target_group} onChange={e => setNewAd({...newAd, target_group: e.target.value})} className="w-full bg-zinc-800 rounded-2xl p-4 text-white text-sm font-bold focus:outline-none focus:ring-2 ring-blue-500/50"><option value="all">All users</option><option value="unsubscribed">Unsubscribed users</option><option value="subscribed">Subscribed users</option></select>
+                           <select value={newAd.target_group} onChange={e => setNewAd({...newAd, target_group: e.target.value})} className="w-full bg-zinc-800 rounded-2xl p-4 text-white text-sm font-bold focus:outline-none focus:ring-2 ring-blue-500/50"><option value="all">All users</option><option value="unsubscribed">Unsubscribed users</option><option value="subscribed">Subscribed users</option><option value="monthly_basic">Monthly Basic users</option><option value="monthly_pro">Monthly Pro users</option><option value="admin">Admins only</option></select>
                            <input type="datetime-local" value={newAd.expires_at} onChange={e => setNewAd({...newAd, expires_at: e.target.value})} className="w-full bg-zinc-800 border-none rounded-2xl p-4 text-white text-sm font-bold focus:ring-2 ring-blue-500/50" />
                         </div>
-<button onClick={handleAddAd} className="w-full py-5 bg-blue-500 text-white font-black uppercase tracking-widest text-xs rounded-2xl shadow-[0_0_30px_rgba(59,130,246,0.3)]">Deploy to Rotation</button>
+<button onClick={editingAdId ? handleEditAd : handleAddAd} className="w-full py-5 bg-blue-500 text-white font-black uppercase tracking-widest text-xs rounded-2xl shadow-[0_0_30px_rgba(59,130,246,0.3)]">{editingAdId ? 'Save Ad Changes' : 'Deploy to Rotation'}</button>
                       </div>
                     </motion.div>
                   </>
