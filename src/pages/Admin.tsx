@@ -69,7 +69,18 @@ export const Admin: React.FC = () => {
     cta: 'Check Out', 
     target_group: 'all',
     expires_at: '',
-    primary_color: '#3b82f6'
+    primary_color: '#3b82f6',
+    gradient_to: '#8b5cf6',
+    hero_color: '#ffffff',
+    sub_color: '#e4e4e7',
+    button_text_color: '#111827',
+    button_color: '#ffffff',
+    hero_size: 32,
+    sub_size: 18,
+    button_text_size: 14,
+    button_radius: 999,
+    button_pad_x: 20,
+    button_pad_y: 8
   });
   const [isBroadcasting, setIsBroadcasting] = useState(false);
   const [isSendingNotification, setIsSendingNotification] = useState(false);
@@ -284,7 +295,18 @@ export const Admin: React.FC = () => {
           cta: 'Check Out', 
           target_group: 'all',
           expires_at: '',
-          primary_color: '#3b82f6'
+          primary_color: '#3b82f6',
+          gradient_to: '#8b5cf6',
+          hero_color: '#ffffff',
+          sub_color: '#e4e4e7',
+          button_text_color: '#111827',
+          button_color: '#ffffff',
+          hero_size: 32,
+          sub_size: 18,
+          button_text_size: 14,
+          button_radius: 999,
+          button_pad_x: 20,
+          button_pad_y: 8
         });
         showAlert('Ad added to rotation successfully!');
       }
@@ -461,10 +483,85 @@ export const Admin: React.FC = () => {
     );
   }
 
-  const handleUploadAsDataUrl = (file: File, cb: (dataUrl: string) => void) => {
+  const handleUploadAsDataUrl = (
+    file: File,
+    cb: (dataUrl: string) => void,
+    options?: { width?: number; height?: number; quality?: number }
+  ) => {
     const reader = new FileReader();
-    reader.onload = () => cb(String(reader.result || ''));
+    reader.onload = () => {
+      const source = String(reader.result || '');
+      const width = options?.width || 800;
+      const height = options?.height || 450;
+      const quality = options?.quality || 0.92;
+      const img = new Image();
+      img.onload = () => {
+        const canvas = document.createElement('canvas');
+        canvas.width = width;
+        canvas.height = height;
+        const ctx = canvas.getContext('2d');
+        if (!ctx) {
+          cb(source);
+          return;
+        }
+        ctx.clearRect(0, 0, width, height);
+        const scale = Math.min(width / img.width, height / img.height);
+        const drawW = img.width * scale;
+        const drawH = img.height * scale;
+        const dx = (width - drawW) / 2;
+        const dy = (height - drawH) / 2;
+        ctx.imageSmoothingEnabled = true;
+        ctx.imageSmoothingQuality = 'high';
+        ctx.drawImage(img, dx, dy, drawW, drawH);
+        cb(canvas.toDataURL('image/png', quality));
+      };
+      img.onerror = () => cb(source);
+      img.src = source;
+    };
     reader.readAsDataURL(file);
+  };
+
+  const normalizeInternalTargetLabel = (v: string) => ({
+    home: 'Home',
+    matches: 'Matches',
+    analyze: 'Analyze',
+    history: 'History',
+    profile: 'Profile',
+    livePreview: 'Live Preview'
+  } as Record<string,string>)[v] || v;
+
+  const renderAdCard = (ad: any) => {
+    const gradientFrom = ad?.primary_color || '#3b82f6';
+    const gradientTo = ad?.gradient_to || '#8b5cf6';
+    const heroColor = ad?.hero_color || '#ffffff';
+    const subColor = ad?.sub_color || '#e4e4e7';
+    const buttonBg = ad?.button_color || '#ffffff';
+    const buttonText = ad?.button_text_color || '#111827';
+    const cta = String(ad?.cta || 'Learn more');
+    const heroSize = Number(ad?.hero_size || 32);
+    const subSize = Number(ad?.sub_size || 18);
+    const btnTextSize = Number(ad?.button_text_size || 14);
+    const btnRadius = Number(ad?.button_radius || 999);
+    const btnPadX = Number(ad?.button_pad_x || 20);
+    const btnPadY = Number(ad?.button_pad_y || 8);
+    return (
+      <div className="relative min-w-[300px] w-[300px] h-[164px] rounded-[24px] overflow-hidden border border-white/10 shadow-[0_12px_40px_rgba(0,0,0,0.35)]"
+        style={{ background: `linear-gradient(100deg, ${gradientFrom} 0%, ${gradientTo} 75%)` }}>
+        {ad?.image_url ? (
+          <img src={ad.image_url} alt="" className="absolute right-2 top-1/2 -translate-y-1/2 h-[78%] w-[36%] object-contain drop-shadow-[0_10px_18px_rgba(0,0,0,0.22)]" referrerPolicy="no-referrer" />
+        ) : null}
+        <div className="absolute inset-0 bg-gradient-to-r from-black/10 via-transparent to-black/5" />
+        <div className="relative z-10 h-full p-5 pr-24 flex flex-col justify-between">
+          <div>
+            <p className="font-black leading-[1.05] line-clamp-2" style={{ color: heroColor, fontSize: `${heroSize}px` }}>{ad?.title || 'Hero title'}</p>
+            <p className="mt-2 font-semibold leading-tight line-clamp-2" style={{ color: subColor, fontSize: `${subSize}px` }}>{ad?.subtitle || 'Sub text goes here'}</p>
+          </div>
+          <button type="button" className="self-start font-black" style={{ backgroundColor: buttonBg, color: buttonText, fontSize: `${btnTextSize}px`, borderRadius: `${btnRadius}px`, padding: `${btnPadY}px ${btnPadX}px` }}>
+            {cta}
+          </button>
+        </div>
+      </div>
+    );
   };
 
   const sendPushNotification = async () => {
@@ -765,12 +862,11 @@ export const Admin: React.FC = () => {
               </button>
 
               <div className="space-y-4">
+                <div className="overflow-x-auto no-scrollbar">
+                  <div className="flex gap-4 w-max pr-4">
                 {ads.map(ad => (
-                  <div key={ad.id} className="bg-zinc-900 border border-zinc-800 rounded-3xl overflow-hidden shadow-2xl">
-                    <div className="relative h-24 overflow-hidden">
-                       <img src={ad.image_url} alt="" className="w-full h-full object-cover opacity-60" referrerPolicy="no-referrer" />
-                       <div className="absolute inset-0 bg-gradient-to-t from-zinc-900 to-transparent" />
-                    </div>
+                  <div key={ad.id} className="bg-zinc-900 border border-zinc-800 rounded-3xl overflow-hidden shadow-2xl min-w-[340px]">
+                    <div className="p-4">{renderAdCard(ad)}</div>
                     <div className="p-5">
                       <div className="flex items-start justify-between mb-4">
                         <div>
@@ -820,6 +916,8 @@ export const Admin: React.FC = () => {
                     </div>
                   </div>
                 ))}
+                  </div>
+                </div>
               </div>
 
               <div className="pt-8">
@@ -842,89 +940,54 @@ export const Admin: React.FC = () => {
                       initial={{ y: '100%' }} animate={{ y: 0 }} exit={{ y: '100%' }}
                       className="fixed bottom-0 left-0 right-0 bg-zinc-900 rounded-t-[40px] z-50 p-8 space-y-6 pt-12 max-h-[90vh] overflow-y-auto no-scrollbar"
                     >
-                      <h3 className="text-xl font-black text-white">Advanced Campaign Builder</h3>
+                      <h3 className="text-xl font-black text-white">Ads Creation Studio</h3>
+                      <p className="text-xs text-zinc-500">Design cards with live preview, custom gradient, typography and CTA behavior.</p>
+                      <div className="space-y-4">
+                        <p className="text-[10px] font-bold text-zinc-600 uppercase ml-2">Live Preview</p>
+                        <div className="overflow-x-auto no-scrollbar"><div className="w-max pr-4">{renderAdCard(newAd)}</div></div>
+                      </div>
                       <div className="space-y-4">
                         <div className="space-y-2">
                            <p className="text-[10px] font-bold text-zinc-600 uppercase ml-2">Display Content</p>
-                           <input value={newAd.title} onChange={e => setNewAd({...newAd, title: e.target.value})} placeholder="Ad Headline (e.g. 50% Weekend Bonus)" className="w-full bg-zinc-800 border-none rounded-2xl p-4 text-white text-sm font-bold placeholder:text-zinc-600 focus:ring-2 ring-blue-500/50" />
-                           <textarea value={newAd.subtitle} onChange={e => setNewAd({...newAd, subtitle: e.target.value})} placeholder="Compelling Description (FOMO text)" className="w-full bg-zinc-800 border-none rounded-2xl p-4 text-white text-sm font-bold placeholder:text-zinc-600 h-24 focus:ring-2 ring-blue-500/50" />
+                           <input value={newAd.title} onChange={e => setNewAd({...newAd, title: e.target.value})} placeholder="Hero text" className="w-full bg-zinc-800 border-none rounded-2xl p-4 text-white text-sm font-bold placeholder:text-zinc-600 focus:ring-2 ring-blue-500/50" />
+                           <textarea value={newAd.subtitle} onChange={e => setNewAd({...newAd, subtitle: e.target.value})} placeholder="Sub text" className="w-full bg-zinc-800 border-none rounded-2xl p-4 text-white text-sm font-bold placeholder:text-zinc-600 h-24 focus:ring-2 ring-blue-500/50" />
                         </div>
-
+                        <div className="grid grid-cols-2 gap-3">
+                          <div className="bg-zinc-800 rounded-2xl p-3"><p className="text-[10px] text-zinc-500 mb-2">Gradient from</p><input type="color" value={newAd.primary_color} onChange={e => setNewAd({...newAd, primary_color: e.target.value})} className="w-full h-10 rounded-lg" /></div>
+                          <div className="bg-zinc-800 rounded-2xl p-3"><p className="text-[10px] text-zinc-500 mb-2">Gradient to</p><input type="color" value={newAd.gradient_to || '#8b5cf6'} onChange={e => setNewAd({...newAd, gradient_to: e.target.value})} className="w-full h-10 rounded-lg" /></div>
+                          <div className="bg-zinc-800 rounded-2xl p-3"><p className="text-[10px] text-zinc-500 mb-2">Hero color</p><input type="color" value={newAd.hero_color || '#ffffff'} onChange={e => setNewAd({...newAd, hero_color: e.target.value})} className="w-full h-10 rounded-lg" /></div>
+                          <div className="bg-zinc-800 rounded-2xl p-3"><p className="text-[10px] text-zinc-500 mb-2">Sub color</p><input type="color" value={newAd.sub_color || '#e4e4e7'} onChange={e => setNewAd({...newAd, sub_color: e.target.value})} className="w-full h-10 rounded-lg" /></div>
+                          <div className="bg-zinc-800 rounded-2xl p-3"><p className="text-[10px] text-zinc-500 mb-2">Button color</p><input type="color" value={newAd.button_color || '#ffffff'} onChange={e => setNewAd({...newAd, button_color: e.target.value})} className="w-full h-10 rounded-lg" /></div>
+                          <div className="bg-zinc-800 rounded-2xl p-3"><p className="text-[10px] text-zinc-500 mb-2">Button text color</p><input type="color" value={newAd.button_text_color || '#111827'} onChange={e => setNewAd({...newAd, button_text_color: e.target.value})} className="w-full h-10 rounded-lg" /></div>
+                        </div>
                         <div className="space-y-2">
-                           <p className="text-[10px] font-bold text-zinc-600 uppercase ml-2">Visuals & Branding</p>
-                           <div className="flex gap-4">
-                              <input value={newAd.image_url} onChange={e => setNewAd({...newAd, image_url: e.target.value})} placeholder="Banner Image URL" className="flex-[3] bg-zinc-800 border-none rounded-2xl p-4 text-white text-sm font-bold placeholder:text-zinc-600 focus:ring-2 ring-blue-500/50" />
-                              <input type="color" value={newAd.primary_color} onChange={e => setNewAd({...newAd, primary_color: e.target.value})} className="flex-1 h-[52px] bg-zinc-800 border-none rounded-2xl p-2 cursor-pointer" />
+                           <p className="text-[10px] font-bold text-zinc-600 uppercase ml-2">Image & CTA</p>
+                           <input value={newAd.image_url} onChange={e => setNewAd({...newAd, image_url: e.target.value})} placeholder="PNG image URL (right side)" className="w-full bg-zinc-800 border-none rounded-2xl p-4 text-white text-sm font-bold placeholder:text-zinc-600 focus:ring-2 ring-blue-500/50" />
+                           <label className="text-[10px] font-bold text-zinc-500 uppercase tracking-widest cursor-pointer block">Upload PNG<input type="file" accept="image/png,image/*" className="hidden" onChange={(e) => { const file = e.target.files?.[0]; if (file) handleUploadAsDataUrl(file, (dataUrl) => setNewAd({ ...newAd, image_url: dataUrl }), { width: 480, height: 360, quality: 0.95 }); }} /></label>
+                           <input value={newAd.cta} onChange={e => setNewAd({...newAd, cta: e.target.value})} placeholder="Button text" className="w-full bg-zinc-800 border-none rounded-2xl p-4 text-white text-sm font-bold placeholder:text-zinc-600 focus:ring-2 ring-blue-500/50" />
+                           <div className="grid grid-cols-2 gap-3">
+                             <input type="number" min={18} max={48} value={newAd.hero_size || 32} onChange={e => setNewAd({ ...newAd, hero_size: Math.max(18, Math.min(48, Number(e.target.value) || 32)) })} placeholder="Hero text size" className="bg-zinc-800 border-none rounded-2xl p-3 text-white text-xs font-bold" />
+                             <input type="number" min={12} max={32} value={newAd.sub_size || 18} onChange={e => setNewAd({ ...newAd, sub_size: Math.max(12, Math.min(32, Number(e.target.value) || 18)) })} placeholder="Sub text size" className="bg-zinc-800 border-none rounded-2xl p-3 text-white text-xs font-bold" />
+                             <input type="number" min={10} max={24} value={newAd.button_text_size || 14} onChange={e => setNewAd({ ...newAd, button_text_size: Math.max(10, Math.min(24, Number(e.target.value) || 14)) })} placeholder="Button text size" className="bg-zinc-800 border-none rounded-2xl p-3 text-white text-xs font-bold" />
+                             <input type="number" min={8} max={999} value={newAd.button_radius || 999} onChange={e => setNewAd({ ...newAd, button_radius: Math.max(8, Math.min(999, Number(e.target.value) || 999)) })} placeholder="Button radius" className="bg-zinc-800 border-none rounded-2xl p-3 text-white text-xs font-bold" />
+                             <input type="number" min={8} max={40} value={newAd.button_pad_x || 20} onChange={e => setNewAd({ ...newAd, button_pad_x: Math.max(8, Math.min(40, Number(e.target.value) || 20)) })} placeholder="Button width pad" className="bg-zinc-800 border-none rounded-2xl p-3 text-white text-xs font-bold" />
+                             <input type="number" min={4} max={20} value={newAd.button_pad_y || 8} onChange={e => setNewAd({ ...newAd, button_pad_y: Math.max(4, Math.min(20, Number(e.target.value) || 8)) })} placeholder="Button height pad" className="bg-zinc-800 border-none rounded-2xl p-3 text-white text-xs font-bold" />
                            </div>
-                           <label className="text-[10px] font-bold text-zinc-500 uppercase tracking-widest cursor-pointer block">
-                              Upload ad image
-                              <input type="file" accept="image/*" className="hidden" onChange={(e) => {
-                                const file = e.target.files?.[0];
-                                if (file) handleUploadAsDataUrl(file, (dataUrl) => setNewAd({ ...newAd, image_url: dataUrl }));
-                              }} />
-                           </label>
                         </div>
-
                         <div className="space-y-2">
-                           <p className="text-[10px] font-bold text-zinc-600 uppercase ml-2">Audience</p>
-                           <select value={newAd.target_group} onChange={e => setNewAd({...newAd, target_group: e.target.value})} className="w-full bg-zinc-800 rounded-2xl p-4 text-white text-sm font-bold focus:outline-none focus:ring-2 ring-blue-500/50">
-                              <option value="all">All users</option>
-                              <option value="unsubscribed">Unsubscribed users</option>
-                              <option value="subscribed">Subscribed users</option>
-                           </select>
+                           <p className="text-[10px] font-bold text-zinc-600 uppercase ml-2">Redirect</p>
+                           {!newAd.is_internal ? (
+                            <input value={newAd.link} onChange={e => setNewAd({ ...newAd, link: e.target.value })} placeholder="External URL (https://...)" className="w-full bg-zinc-800 border-none rounded-2xl p-4 text-white text-sm font-bold placeholder:text-zinc-600 focus:ring-2 ring-blue-500/50" />
+                           ) : (
+                            <select value={newAd.internal_target} onChange={e => setNewAd({ ...newAd, internal_target: e.target.value })} className="w-full bg-zinc-800 rounded-2xl p-4 text-white text-sm font-bold focus:outline-none focus:ring-2 ring-blue-500/50">
+                              <option value="home">Home page</option><option value="matches">Matches page</option><option value="analyze">Analyze page</option><option value="history">History page</option><option value="profile">Profile page</option><option value="livePreview">Live Preview page</option>
+                            </select>
+                           )}
+                           <label className="flex items-center gap-2 text-xs text-zinc-400 font-bold ml-1 mt-1"><input type="checkbox" checked={newAd.is_internal} onChange={(e) => setNewAd({ ...newAd, is_internal: e.target.checked, link: e.target.checked ? '' : newAd.link })} className="accent-blue-500" />Use internal redirect page selection</label>
+                           <select value={newAd.target_group} onChange={e => setNewAd({...newAd, target_group: e.target.value})} className="w-full bg-zinc-800 rounded-2xl p-4 text-white text-sm font-bold focus:outline-none focus:ring-2 ring-blue-500/50"><option value="all">All users</option><option value="unsubscribed">Unsubscribed users</option><option value="subscribed">Subscribed users</option></select>
+                           <input type="datetime-local" value={newAd.expires_at} onChange={e => setNewAd({...newAd, expires_at: e.target.value})} className="w-full bg-zinc-800 border-none rounded-2xl p-4 text-white text-sm font-bold focus:ring-2 ring-blue-500/50" />
                         </div>
-
-                        <div className="space-y-2">
-                           <p className="text-[10px] font-bold text-zinc-600 uppercase ml-2">Campaign Schedule</p>
-                           <input 
-                            type="datetime-local" 
-                            value={newAd.expires_at} 
-                            onChange={e => setNewAd({...newAd, expires_at: e.target.value})} 
-                            className="w-full bg-zinc-800 border-none rounded-2xl p-4 text-white text-sm font-bold focus:ring-2 ring-blue-500/50" 
-                           />
-                        </div>
-
-                        <div className="space-y-2">
-                           <p className="text-[10px] font-bold text-zinc-600 uppercase ml-2">Call to Action</p>
-                           <div className="flex gap-4">
-                              <input value={newAd.cta} onChange={e => setNewAd({...newAd, cta: e.target.value})} placeholder="Btn Text (Claim)" className="flex-1 bg-zinc-800 border-none rounded-2xl p-4 text-white text-sm font-bold placeholder:text-zinc-600 focus:ring-2 ring-blue-500/50" />
-                              {!newAd.is_internal ? (
-                                <input
-                                  value={newAd.link}
-                                  onChange={e => setNewAd({ ...newAd, link: e.target.value })}
-                                  placeholder="Destination URL (https://...)"
-                                  className="flex-[2] bg-zinc-800 border-none rounded-2xl p-4 text-white text-sm font-bold placeholder:text-zinc-600 focus:ring-2 ring-blue-500/50"
-                                />
-                              ) : (
-                                <select
-                                  value={newAd.internal_target}
-                                  onChange={e => setNewAd({ ...newAd, internal_target: e.target.value })}
-                                  className="flex-[2] bg-zinc-800 rounded-2xl p-4 text-white text-sm font-bold focus:outline-none focus:ring-2 ring-blue-500/50"
-                                >
-                                  <option value="home">Home tab</option>
-                                  <option value="analyze">Analyze tab</option>
-                                  <option value="history">History tab</option>
-                                  <option value="profile">Profile tab</option>
-                                  <option value="leaderboard">Leaderboard tab</option>
-                                </select>
-                              )}
-                           </div>
-                           <label className="flex items-center gap-2 text-xs text-zinc-400 font-bold ml-1 mt-1">
-                              <input
-                                type="checkbox"
-                                checked={newAd.is_internal}
-                                onChange={(e) => setNewAd({
-                                  ...newAd,
-                                  is_internal: e.target.checked,
-                                  link: e.target.checked ? '' : newAd.link
-                                })}
-                                className="accent-blue-500"
-                              />
-                              Use internal app redirect (tab navigation)
-                           </label>
-                        </div>
-
-                        <button onClick={handleAddAd} className="w-full py-5 bg-blue-500 text-white font-black uppercase tracking-widest text-xs rounded-2xl shadow-[0_0_30px_rgba(59,130,246,0.3)]">Deploy to Rotation</button>
+<button onClick={handleAddAd} className="w-full py-5 bg-blue-500 text-white font-black uppercase tracking-widest text-xs rounded-2xl shadow-[0_0_30px_rgba(59,130,246,0.3)]">Deploy to Rotation</button>
                       </div>
                     </motion.div>
                   </>

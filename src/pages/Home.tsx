@@ -170,13 +170,33 @@ export const Home: React.FC<HomeProps> = ({ onTabChange }) => {
          body: JSON.stringify({ type: 'click' })
        }).catch(() => {});
     }
+
+    const normalizeInternalTab = (raw: string) => {
+      const compact = String(raw || '').trim().replace(/^internal:/i, '').replace(/^\/+/, '').toLowerCase().replace(/[\s_-]+/g, '');
+      const map: Record<string, string> = {
+        home: 'home',
+        matches: 'matches',
+        analyze: 'analyze',
+        analysis: 'analyze',
+        history: 'history',
+        profile: 'profile',
+        admin: 'admin',
+        livepreview: 'livePreview',
+        livematchpreview: 'livePreview',
+        live: 'livePreview',
+      };
+      return map[compact] || null;
+    };
+
     if (ad.link) {
        if (ad.link.startsWith('internal:')) {
-         onTabChange(ad.link.replace('internal:', '').replace('/', ''));
+         const tab = normalizeInternalTab(ad.link);
+         if (tab) onTabChange(tab);
        } else if (ad.link.startsWith('http')) {
          tg.openLink(ad.link);
        } else {
-         onTabChange(ad.link.replace('/', ''));
+         const tab = normalizeInternalTab(ad.link);
+         if (tab) onTabChange(tab);
        }
     }
   };
@@ -433,88 +453,39 @@ export const Home: React.FC<HomeProps> = ({ onTabChange }) => {
             />
 
         {/* Ad Carousel */}
-        <div className="relative group px-1">
+        <div className="relative group">
           <div 
             ref={adsRef}
             onScroll={() => handleScroll(adsRef, setAdIndex)}
-            className="flex gap-4 overflow-x-auto no-scrollbar snap-x py-2"
+            className="flex gap-3 overflow-x-auto no-scrollbar snap-x py-1 px-0.5"
           >
             {dynamicAds.map((ad: any, i: number) => {
-              const Icon = ad.icon || Megaphone;
-              const Deco = ad.deco || Sparkles;
-              const primaryColor = ad.primary_color || '#ccff00';
-              
+              const gradientFrom = ad?.primary_color || '#3b82f6';
+              const gradientTo = ad?.gradient_to || '#8b5cf6';
+              const heroColor = ad?.hero_color || '#ffffff';
+              const subColor = ad?.sub_color || '#e4e4e7';
+              const buttonBg = ad?.button_color || '#ffffff';
+              const buttonText = ad?.button_text_color || '#111827';
+              const heroSize = Number(ad?.hero_size || 32);
+              const subSize = Number(ad?.sub_size || 18);
+              const btnTextSize = Number(ad?.button_text_size || 14);
+              const btnRadius = Number(ad?.button_radius || 999);
+              const btnPadX = Number(ad?.button_pad_x || 20);
+              const btnPadY = Number(ad?.button_pad_y || 8);
               return (
-                <div 
-                  key={ad.id || i}
-                  className={`shrink-0 w-full snap-center relative overflow-hidden rounded-[40px] p-6 min-h-[220px] transition-all transform duration-500 ${i === adIndex ? 'scale-100' : 'scale-[0.97] opacity-50'}`}
-                  style={{ 
-                    backgroundColor: ad.image_url ? '#09090b' : undefined,
-                    boxShadow: i === adIndex ? `0 20px 40px -20px ${primaryColor}40` : 'none',
-                    border: i === adIndex ? `1px solid ${primaryColor}30` : '1px solid #27272a'
-                  }}
-                >
-                  {ad.image_url ? (
-                     <>
-                       <img 
-                        src={ad.image_url} 
-                        alt="" 
-                        className="absolute inset-0 w-full h-full object-cover opacity-40 transition-transform duration-1000 group-hover:scale-110"
-                        referrerPolicy="no-referrer"
-                       />
-                       <div className="absolute inset-0 bg-gradient-to-t from-zinc-900 via-transparent to-transparent opacity-80" />
-                       <div 
-                         className="absolute inset-0 opacity-20 transition-opacity duration-1000"
-                         style={{ background: `radial-gradient(circle at center, ${primaryColor}20, transparent 70%)` }}
-                       />
-                     </>
-                  ) : (
-                    <div className={`absolute inset-0 bg-gradient-to-br ${ad.bg || 'from-zinc-800 to-zinc-900'}`} />
-                  )}
-
-                  <div className="relative z-10 flex flex-col h-full justify-between">
-                    <div className="flex justify-between items-start">
-                      <div className="flex gap-2">
-                         <div 
-                          className={`${ad.darkText ? 'bg-black/10' : 'bg-white/10'} backdrop-blur-xl p-3 rounded-[20px]`}
-                          style={{ border: `1px solid ${primaryColor}40` }}
-                         >
-                           <Icon className="w-5 h-5" style={{ color: primaryColor }} />
-                         </div>
-                      </div>
-                      
-                      {ad.expires_at && <CountdownBadge expiresAt={ad.expires_at} color={primaryColor} />}
-                    </div>
-                    
-                    <div className="mt-auto space-y-4">
+                <div key={ad.id || i} className={`shrink-0 w-[300px] snap-center ${i === adIndex ? 'opacity-100' : 'opacity-70'}`}>
+                  <div className="relative h-[164px] rounded-[24px] overflow-hidden border border-white/10 shadow-[0_12px_40px_rgba(0,0,0,0.35)]"
+                    style={{ background: `linear-gradient(100deg, ${gradientFrom} 0%, ${gradientTo} 75%)` }}>
+                    {ad?.image_url ? <img src={ad.image_url} alt="" className="absolute right-2 top-1/2 -translate-y-1/2 h-[78%] w-[36%] object-contain drop-shadow-[0_10px_18px_rgba(0,0,0,0.22)]" referrerPolicy="no-referrer" /> : null}
+                    <div className="absolute inset-0 bg-gradient-to-r from-black/10 via-transparent to-black/5" />
+                    <div className="relative z-10 h-full p-5 pr-24 flex flex-col justify-between">
                       <div>
-                        <h4 className={`text-xl font-black leading-tight ${ad.darkText ? 'text-black' : 'text-white'}`}>
-                          {ad.title}
-                        </h4>
-                        <p className={`text-[11px] font-bold mt-1 opacity-70 tracking-wide uppercase line-clamp-2 ${ad.darkText ? 'text-black' : 'text-zinc-400'}`}>
-                          {ad.sub || ad.subtitle}
-                        </p>
+                        <h4 className="font-black leading-[1.05] line-clamp-2" style={{ color: heroColor, fontSize: `${heroSize}px` }}>{ad.title || 'Promotion'}</h4>
+                        <p className="mt-2 font-semibold leading-tight line-clamp-2" style={{ color: subColor, fontSize: `${subSize}px` }}>{ad.sub || ad.subtitle || 'Limited-time offer'}</p>
                       </div>
-
-                      <div className="flex items-center gap-3">
-                        <button 
-                          onClick={() => handleAdClick(ad)}
-                          className="text-[10px] font-black tracking-[0.15em] px-6 py-3 rounded-2xl shadow-2xl active:scale-95 transition-all uppercase"
-                          style={{ 
-                            backgroundColor: primaryColor,
-                            color: ad.darkText ? 'black' : (primaryColor === '#ccff00' ? 'black' : 'white')
-                          }}
-                        >
-                          {ad.cta || 'Claim Now'}
-                        </button>
-                        
-                        {ad.clicks && (
-                          <div className="flex items-center gap-1 opacity-40">
-                             <TrendingUp className="w-3 h-3 text-white" />
-                             <span className="text-[9px] font-bold text-white uppercase">{ad.clicks} users</span>
-                          </div>
-                        )}
-                      </div>
+                      <button onClick={() => handleAdClick(ad)} className="self-start font-black active:scale-95 transition-transform" style={{ backgroundColor: buttonBg, color: buttonText, fontSize: `${btnTextSize}px`, borderRadius: `${btnRadius}px`, padding: `${btnPadY}px ${btnPadX}px` }}>
+                        {String(ad?.cta || '').trim() || 'Learn more'}
+                      </button>
                     </div>
                   </div>
                 </div>
