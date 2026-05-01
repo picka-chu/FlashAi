@@ -461,17 +461,17 @@ export const Home: React.FC<HomeProps> = ({ onTabChange }) => {
           >
             {dynamicAds.map((ad: any, i: number) => {
               const gradientFrom = ad?.primary_color || '#3b82f6';
-              const gradientTo = ad?.gradient_to || '#8b5cf6';
+              const gradientTo = ad?.gradient_to ?? '#8b5cf6';
               const heroColor = ad?.hero_color || '#ffffff';
               const subColor = ad?.sub_color || '#e4e4e7';
               const buttonBg = ad?.button_color || '#ffffff';
               const buttonText = ad?.button_text_color || '#111827';
-              const heroSize = Number(ad?.hero_size || 32);
-              const subSize = Number(ad?.sub_size || 18);
-              const btnTextSize = Number(ad?.button_text_size || 14);
-              const btnRadius = Number(ad?.button_radius || 999);
-              const btnPadX = Number(ad?.button_pad_x || 20);
-              const btnPadY = Number(ad?.button_pad_y || 8);
+              const heroSize = Number(ad?.hero_size ?? 32);
+              const subSize = Number(ad?.sub_size ?? 18);
+              const btnTextSize = Number(ad?.button_text_size ?? 14);
+              const btnRadius = Number(ad?.button_radius ?? 999);
+              const btnPadX = Number(ad?.button_pad_x ?? 20);
+              const btnPadY = Number(ad?.button_pad_y ?? 8);
               return (
                 <div key={ad.id || i} className={`shrink-0 w-[300px] snap-center ${i === adIndex ? 'opacity-100' : 'opacity-70'}`}>
                   <div className="relative h-[164px] rounded-[24px] overflow-hidden border border-white/10 shadow-[0_12px_40px_rgba(0,0,0,0.35)]"
@@ -484,7 +484,7 @@ export const Home: React.FC<HomeProps> = ({ onTabChange }) => {
                         <p className="mt-2 font-semibold leading-tight line-clamp-2" style={{ color: subColor, fontSize: `${subSize}px` }}>{ad.sub || ad.subtitle || 'Limited-time offer'}</p>
                       </div>
                       <button onClick={() => handleAdClick(ad)} className="self-start font-black active:scale-95 transition-transform" style={{ backgroundColor: buttonBg, color: buttonText, fontSize: `${btnTextSize}px`, borderRadius: `${btnRadius}px`, padding: `${btnPadY}px ${btnPadX}px` }}>
-                        {String(ad?.cta || '').trim() || 'Learn more'}
+                        {String(ad?.cta ?? '').trim() || 'Learn more'}
                       </button>
                     </div>
                   </div>
