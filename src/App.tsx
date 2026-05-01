@@ -124,10 +124,29 @@ export default function App() {
     const requestedTab = params.get("tab");
     if (!requestedTab) return;
 
-    const validTabs: TabType[] = ["home", "matches", "analyze", "history", "profile", "admin", "livePreview"];
-    if (!validTabs.includes(requestedTab as TabType)) return;
+    const normalizeTab = (tab: string): TabType | null => {
+      const raw = String(tab || "").trim();
+      if (!raw) return null;
+      const compact = raw.toLowerCase().replace(/[\s_-]+/g, "");
+      const map: Record<string, TabType> = {
+        home: "home",
+        matches: "matches",
+        analyze: "analyze",
+        analysis: "analyze",
+        history: "history",
+        profile: "profile",
+        admin: "admin",
+        livepreview: "livePreview",
+        livematchpreview: "livePreview",
+        live: "livePreview",
+      };
+      return map[compact] || null;
+    };
 
-    setActiveTab(requestedTab as TabType);
+    const normalizedTab = normalizeTab(requestedTab);
+    if (!normalizedTab) return;
+
+    setActiveTab(normalizedTab);
   }, []);
 
   const renderPage = () => {
