@@ -17,7 +17,7 @@ import {
   BrainCircuit,
 } from 'lucide-react';
 
-type HistoryStatus = 'pending' | 'won' | 'lost';
+type HistoryStatus = 'pending' | 'won' | 'lost' | 'not_applicable';
 
 type AnalysisPayload = {
   predictions?: { market: string; confidence: number; reasoning: string }[];
@@ -58,7 +58,16 @@ const statusUi: Record<HistoryStatus, { label: string; className: string; icon: 
     className: 'text-amber-200 bg-amber-500/10 border-amber-500/30',
     icon: <Clock className="w-3.5 h-3.5 text-amber-400" />,
   },
+  not_applicable: {
+    label: 'N/A',
+    className: 'text-zinc-400 bg-zinc-800/50 border-zinc-700/50',
+    icon: <ShieldAlert className="w-3.5 h-3.5 text-zinc-500" />,
+  },
 };
+
+function getStatusUi(status: string) {
+  return statusUi[status as HistoryStatus] ?? statusUi['pending'];
+}
 
 export const History: React.FC = () => {
   const [searchQuery, setSearchQuery] = useState('');
@@ -96,7 +105,7 @@ export const History: React.FC = () => {
           predictionMarket: item.predictionMarket || 'Unknown market',
           confidence: Number(item.confidence || 0),
           reasoning: item.reasoning || '',
-          status: (item.status || 'pending') as HistoryStatus,
+          status: (['won', 'lost', 'pending', 'not_applicable'].includes(item.status) ? item.status : 'pending') as HistoryStatus,
           created_at: item.created_at,
           resolved_at: item.resolved_at || null,
           analysisPayload: item.analysisPayload || null,
@@ -161,7 +170,7 @@ export const History: React.FC = () => {
             <div className="text-center text-zinc-500 text-sm py-10">Loading history...</div>
           ) : filteredHistory.length > 0 ? (
             filteredHistory.map((item, i) => {
-              const status = statusUi[item.status];
+              const status = getStatusUi(item.status);
               return (
                 <motion.button
                   key={item.id}
@@ -219,7 +228,7 @@ export const History: React.FC = () => {
         {!loading && historyItems.some((item) => item.status === 'pending') && (
           <div className="mt-3 flex items-start gap-2 rounded-2xl border border-amber-500/30 bg-amber-500/10 p-3">
             <ShieldAlert className="w-4 h-4 text-amber-400 mt-0.5" />
-            <p className="text-[10px] font-bold text-amber-200">Pending items are auto-resolved when the match is finished.</p>
+            <p className="text-[10px] font-bold text-amber-200">Pending items auto-resolve when the match finishes. Markets like corners or player scorers show N/A as they can't be verified from the final score.</p>
           </div>
         )}
       </div>

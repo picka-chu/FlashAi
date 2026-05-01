@@ -42,6 +42,31 @@ import { useUserStore } from '../store/useUserStore';
 
 type AdminTab = 'dashboard' | 'analytics' | 'tasks' | 'ads' | 'users' | 'notifications' | 'reports';
 
+const DEFAULT_AD = {
+  title: '',
+  subtitle: '',
+  image_url: '',
+  link: '',
+  is_internal: false,
+  internal_target: 'home',
+  active: true,
+  cta: 'Check Out',
+  target_group: 'all',
+  expires_at: '',
+  primary_color: '#3b82f6',
+  gradient_to: '#8b5cf6',
+  hero_color: '#ffffff',
+  sub_color: '#e4e4e7',
+  button_text_color: '#111827',
+  button_color: '#ffffff',
+  hero_size: 32,
+  sub_size: 18,
+  button_text_size: 14,
+  button_radius: 999,
+  button_pad_x: 20,
+  button_pad_y: 8,
+};
+
 export const Admin: React.FC = () => {
   const [activeTab, setActiveTab] = useState<AdminTab>('dashboard');
   const { tg, hapticFeedback, showAlert, showConfirm, initData } = useTelegram();
@@ -59,30 +84,7 @@ export const Admin: React.FC = () => {
   const [isAddingAd, setIsAddingAd] = useState(false);
   const [editingAdId, setEditingAdId] = useState<string | null>(null);
   const [newTask, setNewTask] = useState({ title: '', description: '', reward: 10, url: '', buttonLabel: 'Start Task', image_url: '', active: true });
-  const [newAd, setNewAd] = useState({ 
-    title: '', 
-    subtitle: '', 
-    image_url: '', 
-    link: '', 
-    is_internal: false,
-    internal_target: 'home',
-    active: true, 
-    cta: 'Check Out', 
-    target_group: 'all',
-    expires_at: '',
-    primary_color: '#3b82f6',
-    gradient_to: '#8b5cf6',
-    hero_color: '#ffffff',
-    sub_color: '#e4e4e7',
-    button_text_color: '#111827',
-    button_color: '#ffffff',
-    hero_size: 32,
-    sub_size: 18,
-    button_text_size: 14,
-    button_radius: 999,
-    button_pad_x: 20,
-    button_pad_y: 8
-  });
+  const [newAd, setNewAd] = useState({ ...DEFAULT_AD });
   const [isBroadcasting, setIsBroadcasting] = useState(false);
   const [isSendingNotification, setIsSendingNotification] = useState(false);
   const [reports, setReports] = useState<any[]>([]);
@@ -289,30 +291,8 @@ export const Admin: React.FC = () => {
       if (res.ok) {
         fetchAds();
         setIsAddingAd(false);
-        setNewAd({ 
-          title: '', 
-          subtitle: '', 
-          image_url: '', 
-          link: '', 
-          is_internal: false,
-          internal_target: 'home',
-          active: true, 
-          cta: 'Check Out', 
-          target_group: 'all',
-          expires_at: '',
-          primary_color: '#3b82f6',
-          gradient_to: '#8b5cf6',
-          hero_color: '#ffffff',
-          sub_color: '#e4e4e7',
-          button_text_color: '#111827',
-          button_color: '#ffffff',
-          hero_size: 32,
-          sub_size: 18,
-          button_text_size: 14,
-          button_radius: 999,
-          button_pad_x: 20,
-          button_pad_y: 8
-        });
+        setEditingAdId(null);
+        setNewAd({ ...DEFAULT_AD });
         showAlert('Ad added to rotation successfully!');
       }
     } catch (e) {
@@ -320,11 +300,13 @@ export const Admin: React.FC = () => {
     }
   };
 
-  const sanitizeNumberish = (value: string, fallback: number) => {
-    if (value.trim() === '') return fallback;
+  const sanitizeNumberish = (value: string, _fallback: number) => {
+    // Allow any non-negative number; keep the raw string value during typing.
+    // We return the numeric value only when the string represents a valid number.
+    if (value === '' || value === '-') return _fallback;
     const next = Number(value);
-    if (!Number.isFinite(next)) return fallback;
-    return Math.max(1, Math.min(200, next));
+    if (!Number.isFinite(next) || next < 0) return _fallback;
+    return next;
   };
 
   const isoToDatetimeLocal = (iso?: string | null) => {
@@ -360,6 +342,7 @@ export const Admin: React.FC = () => {
       await fetchAds();
       setEditingAdId(null);
       setIsAddingAd(false);
+      setNewAd({ ...DEFAULT_AD });
       showAlert('Ad updated successfully!');
     } catch (e) {
       showAlert('Failed to update ad');
@@ -913,7 +896,7 @@ export const Admin: React.FC = () => {
               className="space-y-6"
             >
               <button 
-                onClick={() => { setEditingAdId(null); setIsAddingAd(true); }}
+                onClick={() => { setEditingAdId(null); setNewAd({ ...DEFAULT_AD }); setIsAddingAd(true); }}
                 className="w-full bg-zinc-900 border border-zinc-800 border-dashed py-6 rounded-3xl flex flex-col items-center gap-2 hover:bg-zinc-800 transition-colors"
               >
                 <div className="w-10 h-10 rounded-full bg-blue-500/10 flex items-center justify-center">
@@ -937,7 +920,7 @@ export const Admin: React.FC = () => {
                         <div className="flex gap-2">
                           <button
                             onClick={() => {
-                              setNewAd({ ...newAd, ...ad, expires_at: isoToDatetimeLocal(ad?.expires_at) });
+                              setNewAd({ ...DEFAULT_AD, ...ad, expires_at: isoToDatetimeLocal(ad?.expires_at) });
                               setEditingAdId(ad.id);
                               setIsAddingAd(true);
                             }}
@@ -1005,7 +988,7 @@ export const Admin: React.FC = () => {
                     <motion.div 
                       initial={{ opacity: 0 }} animate={{ opacity: 1 }} exit={{ opacity: 0 }}
                       className="fixed inset-0 bg-black/80 backdrop-blur-sm z-50"
-                      onClick={() => setIsAddingAd(false)}
+                      onClick={() => { setIsAddingAd(false); setEditingAdId(null); setNewAd({ ...DEFAULT_AD }); }}
                     />
                     <motion.div 
                       initial={{ y: '100%' }} animate={{ y: 0 }} exit={{ y: '100%' }}

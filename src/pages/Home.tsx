@@ -188,7 +188,10 @@ export const Home: React.FC<HomeProps> = ({ onTabChange }) => {
       return map[compact] || null;
     };
 
-    if (ad.link) {
+    if (ad.is_internal && ad.internal_target) {
+       const tab = normalizeInternalTab(ad.internal_target);
+       if (tab) onTabChange(tab);
+    } else if (ad.link) {
        if (ad.link.startsWith('internal:')) {
          const tab = normalizeInternalTab(ad.link);
          if (tab) onTabChange(tab);
