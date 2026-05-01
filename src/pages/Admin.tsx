@@ -492,8 +492,9 @@ export const Admin: React.FC = () => {
           cb(source);
           return;
         }
-        ctx.clearRect(0, 0, width, height);
-        const scale = Math.min(width / img.width, height / img.height);
+        ctx.fillStyle = '#0b0b0f';
+        ctx.fillRect(0, 0, width, height);
+        const scale = Math.max(width / img.width, height / img.height);
         const drawW = img.width * scale;
         const drawH = img.height * scale;
         const dx = (width - drawW) / 2;
