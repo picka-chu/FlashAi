@@ -1259,10 +1259,20 @@ async function startServer() {
           });
         };
 
-        result = await withTimeout(analyzeMatchWithSearch(`${matchString} (LIVE)`, structuredContext), 30_000);
+        // Increased timeout to 60s for live analysis with search
+        result = await withTimeout(analyzeMatchWithSearch(`${matchString} (LIVE)`, structuredContext), 60_000);
       } catch (analysisError: any) {
         const reason = analysisError?.message || "Unknown analysis error";
         console.warn(`Live AI analysis fallback engaged: ${reason}`);
+        
+        // Professional error handling for quota/availability
+        if (reason.includes("RESOURCE_EXHAUSTED") || reason.includes("quota") || analysisError?.status === 429) {
+          return c.json({ error: "AI quota temporarily exhausted. Please retry in a minute." }, 429);
+        }
+        if (reason.includes("UNAVAILABLE") || analysisError?.status === 503) {
+          return c.json({ error: "AI model temporarily unavailable. Please retry shortly." }, 503);
+        }
+
         result = {
           matchId: matchString,
           predictions: [
