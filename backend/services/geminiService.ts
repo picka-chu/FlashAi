@@ -98,27 +98,70 @@ export async function analyzeMatchWithSearch(matchString: string, structuredCont
     for (const model of PREDICTION_MODELS) {
       try {
         const ai = new GoogleGenAI({ apiKey });
+        const today = new Date().toISOString().split('T')[0];
         const structuredDataPrompt = structuredContext
-          ? `\nUse this structured football dataset as your PRIMARY source of truth:\n${structuredContext}\nOnly use Google Search to fill missing fields or confirm news.`
+          ? `\n\nPRIMARY DATA SOURCE (use this first — it contains live BSD API + statistical model data):\n${structuredContext}\n\nOnly use Google Search to SUPPLEMENT missing fields, verify news, or find current odds.`
           : '';
         const prompt = `
-          You are an expert sports betting analyst.
-          Use Google Search to find the latest news, form, injuries, and betting odds for the upcoming match: ${matchString}.
-          ${structuredDataPrompt}
-          Based on your search, generate exactly 10 different betting predictions (e.g., Match Winner, Over/Under Goals, BTTS, Player to Score, Corners, etc.).
-          Evaluate the confidence of each prediction from 0 to 100.
-          
-          Return the response ONLY as a valid JSON object with the following structure:
-          {
-            "predictions": [
-              { "market": "string", "confidence": number, "reasoning": "string" }
-            ],
-            "overallReasoning": "string (detailed overall match analysis)",
-            "teamData": {
-              "home": { "name": "string", "form": "string", "injuries": ["string"], "keyStats": ["string"] },
-              "away": { "name": "string", "form": "string", "injuries": ["string"], "keyStats": ["string"] }
-            }
-          }
+You are a senior quantitative analyst at a professional football betting syndicate.
+Today: ${today}. Target match: **${matchString}**
+${structuredDataPrompt}
+
+PHASE 1 — INTELLIGENCE GATHERING (use Google Search)
+Search for ALL of the following:
+1. "${matchString} injuries suspensions team news ${today}"
+2. "${matchString} form standings league table"
+3. "${matchString} odds betting tips prediction"
+4. "${matchString} head to head h2h history"
+
+PHASE 2 — ELITE ANALYSIS
+Using the gathered data + any provided statistical model data, produce exactly 10 betting predictions covering:
+- Match Winner (1, X, 2)
+- Double Chance (1X, X2, 12)
+- Goals markets (Over/Under 1.5, 2.5, 3.5)
+- BTTS (Yes/No)
+- Most Likely Correct Score (e.g., "Correct Score 1-1")
+- DNB (Draw No Bet if applicable)
+- Any high-confidence corners/cards market if strong signal exists
+- Best value bet (where model probability significantly exceeds market-implied probability)
+
+CONFIDENCE SCORING RULES:
+- 85-95: Statistical + qualitative + odds value all aligned. Sharp, specific evidence.
+- 70-84: Good statistical signal, moderate qualitative support.
+- 55-69: Mixed signals, thin data, or high variance match.
+- Below 55: Low conviction — still include but flag as speculative.
+
+PROFESSIONAL STANDARDS:
+- Be SPECIFIC: cite actual league positions, actual recent scorelines, actual player names
+- Flag any key absences that shift the prediction
+- If Over 2.5 seems obvious, check if the odds reflect it (value may be in Under instead)
+- Rank predictions by confidence descending
+
+Return ONLY a valid JSON object (no markdown, no explanation outside the JSON):
+{
+  "predictions": [
+    {
+      "market": "<exact market name>",
+      "confidence": <integer 50-95>,
+      "reasoning": "<2-3 sentences: specific evidence for this pick. Name players, results, statistics.>"
+    }
+  ],
+  "overallReasoning": "<5-8 sentence professional match preview. Cover: team form, key absences, head-to-head pattern, tactical outlook, and the single sharpest insight. Be specific and data-driven.>",
+  "teamData": {
+    "home": {
+      "name": "<team name>",
+      "form": "<last 5 e.g. WWDLW>",
+      "injuries": ["<player name and position>"],
+      "keyStats": ["<specific stat e.g. 'Scored in 8 of last 10 home games'>"]
+    },
+    "away": {
+      "name": "<team name>",
+      "form": "<last 5>",
+      "injuries": ["<player name and position>"],
+      "keyStats": ["<specific stat>"]
+    }
+  }
+}
         `;
 
         const result = await ai.models.generateContent({

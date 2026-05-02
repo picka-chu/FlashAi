@@ -231,6 +231,56 @@ export async function getLiveMatchPreview(fixtureId: string) {
   return null;
 }
 
+/**
+ * Fetch rich BSD match stats for a named match (used by prediction pipeline when no fixture ID).
+ * Searches BSD live events by team names to find the match.
+ */
+export async function fetchBsdMatchStatsByName(homeName: string, awayName: string): Promise<any | null> {
+  if (!BSD_API_KEY) return null;
+  try {
+    const liveEvents = await fetchBsdLiveEvents();
+    const homeNameLower = homeName.toLowerCase();
+    const awayNameLower = awayName.toLowerCase();
+
+    const match = liveEvents.find((e: any) => {
+      const h = (e?.homeTeam?.name || e?.home?.name || e?.homeTeam || '').toLowerCase();
+      const a = (e?.awayTeam?.name || e?.away?.name || e?.awayTeam || '').toLowerCase();
+      return (
+        (h.includes(homeNameLower) || homeNameLower.includes(h)) &&
+        (a.includes(awayNameLower) || awayNameLower.includes(a))
+      );
+    });
+
+    if (!match) {
+      // Try upcoming matches too
+      const upcomingUrls = [`${BSD_API_BASE}/upcoming/`, `${BSD_API_BASE}/upcoming`, `${BSD_API_BASE}/fixtures`];
+      for (const url of upcomingUrls) {
+        try {
+          const res = await axios.get(url, { headers: BSD_HEADERS, timeout: 8000 });
+          const events = res.data?.events || res.data?.matches || res.data?.data || [];
+          if (Array.isArray(events)) {
+            const found = events.find((e: any) => {
+              const h = (e?.homeTeam?.name || e?.home?.name || e?.homeTeam || '').toLowerCase();
+              const a = (e?.awayTeam?.name || e?.away?.name || e?.awayTeam || '').toLowerCase();
+              return (
+                (h.includes(homeNameLower) || homeNameLower.includes(h)) &&
+                (a.includes(awayNameLower) || awayNameLower.includes(a))
+              );
+            });
+            if (found) return mapBSDEvent(found);
+          }
+        } catch { continue; }
+      }
+      return null;
+    }
+
+    return mapBSDEvent(match);
+  } catch (e) {
+    console.warn('[footballService] fetchBsdMatchStatsByName failed:', e);
+    return null;
+  }
+}
+
 export async function searchMatches(query: string) {
   const today = getTodayDateString();
   const promises = POPULAR_LEAGUES.map((league) =>
@@ -245,20 +295,67 @@ export async function searchMatches(query: string) {
 
 export async function getMatchDetails(fixtureId: number | string, match?: any): Promise<MatchData> {
   const idStr = fixtureId.toString();
-  const parts = idStr.startsWith('espn_') ? idStr.split('_') : [];
-  const eventId = parts[1] || idStr;
+  const isBSD = idStr.startsWith('bsd_');
+  const isESPN = idStr.startsWith('espn_');
+  const parts = isESPN ? idStr.split('_') : [];
+  const eventId = parts[1] || idStr.replace(/^bsd_/, '');
   const leagueSlug = parts[2] || 'eng.1';
 
   const homeStats: TeamStats = { id: 1, name: match?.home || 'Home', last5: { goalsScored: 0, goalsConceded: 0, results: [] }, season: { played: 0, goalsScored: 0, goalsConceded: 0 } };
   const awayStats: TeamStats = { id: 2, name: match?.away || 'Away', last5: { goalsScored: 0, goalsConceded: 0, results: [] }, season: { played: 0, goalsScored: 0, goalsConceded: 0 } };
 
   const deepContext: any = {};
-  if (idStr.startsWith('espn_')) {
-    const summaryRes = await axios.get(`${ESPN_BASE}/${leagueSlug}/summary?event=${eventId}`).catch(() => null);
-    const standingsRes = await axios.get(`${ESPN_BASE}/${leagueSlug}/standings`).catch(() => null);
-    if (summaryRes?.data) deepContext.summary = summaryRes.data;
-    if (summaryRes?.data?.injuries) deepContext.injuries = summaryRes.data.injuries;
-    if (standingsRes?.data) deepContext.standings = standingsRes.data;
+
+  // 1. Try BSD first for live xG, odds, and stats
+  if ((isBSD || BSD_API_KEY) && (match?.home || match?.away)) {
+    try {
+      const bsdMatch = await fetchBsdMatchStatsByName(match.home, match.away);
+      if (bsdMatch) {
+        deepContext.bsd = bsdMatch;
+        deepContext.xG = bsdMatch.xG;
+        deepContext.liveStats = bsdMatch.stats;
+        deepContext.score = `${bsdMatch.goals?.home || 0}-${bsdMatch.goals?.away || 0}`;
+        deepContext.elapsed = bsdMatch.fixture?.status?.elapsed || 0;
+        // Pull BSD odds into base odds structure
+        if (bsdMatch.odds) {
+          const o = bsdMatch.odds;
+          return {
+            id: idStr,
+            home: homeStats,
+            away: awayStats,
+            leagueAvgGoals: 2.6,
+            odds: {
+              home: o['1'] || o.home || 2.10,
+              draw: o['X'] || o.draw || 3.30,
+              away: o['2'] || o.away || 3.40,
+              over25: o.over25 || o['Over 2.5'] || 1.90,
+              under25: o.under25 || o['Under 2.5'] || 1.90,
+              bttsYes: o.bttsYes || o['BTTS Yes'] || 1.80,
+              dc1X: o.dc1X || o['1X'] || 1.30,
+              dcX2: o.dcX2 || o['X2'] || 1.70,
+              over15: o.over15 || o['Over 1.5'] || 1.30,
+              over35: o.over35 || o['Over 3.5'] || 3.20,
+            },
+            deepContext,
+          };
+        }
+      }
+    } catch (e) {
+      console.warn('[getMatchDetails] BSD enrichment failed:', e);
+    }
+  }
+
+  // 2. ESPN detailed summary as fallback
+  if (isESPN) {
+    try {
+      const summaryRes = await axios.get(`${ESPN_BASE}/${leagueSlug}/summary?event=${eventId}`).catch(() => null);
+      const standingsRes = await axios.get(`${ESPN_BASE}/${leagueSlug}/standings`).catch(() => null);
+      if (summaryRes?.data) deepContext.summary = summaryRes.data;
+      if (summaryRes?.data?.injuries) deepContext.injuries = summaryRes.data.injuries;
+      if (standingsRes?.data) deepContext.standings = standingsRes.data;
+    } catch (e) {
+      console.warn('[getMatchDetails] ESPN enrichment failed:', e);
+    }
   }
 
   return {
@@ -266,7 +363,7 @@ export async function getMatchDetails(fixtureId: number | string, match?: any): 
     home: homeStats,
     away: awayStats,
     leagueAvgGoals: 2.6,
-    odds: { home: 2.1, draw: 3.3, away: 3.4, over25: 1.9, under25: 1.9, bttsYes: 1.8, dc1X: 1.3, dcX2: 1.7 },
+    odds: { home: 2.1, draw: 3.3, away: 3.4, over25: 1.9, under25: 1.9, bttsYes: 1.8, dc1X: 1.3, dcX2: 1.7, over15: 1.3, over35: 3.2 },
     deepContext,
   };
 }

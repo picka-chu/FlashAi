@@ -100,25 +100,56 @@ class MultiAgentService {
     const cacheKey = analysisCache.generateKey('context', { matchName });
     
     return executeWithRetry(async (apiKey, keyIndex) => {
+      const today = new Date().toISOString().split('T')[0];
       const prompt = `
-        You are a world-class football data analyst and betting expert. 
-        Extract the following information for the match: ${matchName}.
-        Use Google Search to find real-time data about:
-        1. Injuries and Suspensions (key players missing).
-        2. Team Motivation (relegation battle, title race, cup final, etc.).
-        3. Recent Fatigue (travel, fixture congestion).
-        4. Current Weather conditions if relevant.
-        
-        Return ONLY a JSON object with this structure:
-        {
-          "home_missing": number,
-          "away_missing": number,
-          "home_motivation": "HIGH" | "MEDIUM" | "LOW",
-          "away_motivation": "HIGH" | "MEDIUM" | "LOW",
-          "home_fatigue": boolean,
-          "away_fatigue": boolean,
-          "reasoning": "A professional, data-driven summary of how these factors influence the match."
-        }
+You are an elite football intelligence analyst working for a professional betting syndicate.
+Today's date: ${today}.
+Target match: **${matchName}**
+
+MISSION: Gather all pre-match intelligence that could shift the outcome probability.
+
+Use Google Search NOW to find the following for BOTH teams in "${matchName}":
+
+STEP 1 — INJURY & SUSPENSION REPORT
+Search: "${matchName} injuries suspensions lineup ${today}"
+- Count confirmed absentees (not just doubts)
+- Identify if any KEY players (strikers, central defenders, goalkeeper, playmakers) are missing
+- Note if the team has a depleted bench
+
+STEP 2 — MOTIVATION ASSESSMENT
+Search: "${matchName} standings form league table"
+- Is either team in a relegation battle? (HIGH motivation)
+- Title race / top-4 chase? (HIGH motivation)
+- Nothing at stake for a mid-table side? (LOW motivation)
+- Cup final / knockout stage? (EXTREME — rate as HIGH)
+- Derby match? (LOCAL rivalry = HIGH)
+
+STEP 3 — FATIGUE & SCHEDULE
+Search: "${matchName} fixture schedule midweek"
+- Did either team play within the last 3 days?
+- Is either team managing multiple competitions?
+- Long distance travel (intercontinental)?
+
+STEP 4 — MANAGERIAL / SQUAD NEWS
+Search: "${matchName} news manager squad update ${today}"
+- Any tactical changes, rotation hints from press conference?
+- Squad depth concerns?
+
+Now synthesize ALL found data and return ONLY a valid JSON object (no markdown, no preamble):
+{
+  "home_missing": <integer: confirmed absentees for home team, 0-11>,
+  "away_missing": <integer: confirmed absentees for away team, 0-11>,
+  "home_key_absentee": "<name of most important missing player or empty string>",
+  "away_key_absentee": "<name of most important missing player or empty string>",
+  "home_motivation": "HIGH" | "MEDIUM" | "LOW",
+  "away_motivation": "HIGH" | "MEDIUM" | "LOW",
+  "home_fatigue": <boolean: true if played within 72 hours or heavy schedule>,
+  "away_fatigue": <boolean>,
+  "is_derby": <boolean: true if local/historic rivalry>,
+  "home_form_context": "<1-sentence qualitative summary of home team's recent run>",
+  "away_form_context": "<1-sentence qualitative summary of away team's recent run>",
+  "reasoning": "<3-5 sentence professional betting intelligence summary. Be specific about which factors are MOST likely to shift the outcome. Mention specific players, specific league positions, specific recent results. Do not use vague language.>"
+}
       `;
 
       const result = await this.generateWithFallback(prompt, { allowSearch: true });
@@ -151,11 +182,16 @@ class MultiAgentService {
     }).catch(() => ({
       home_missing: 0,
       away_missing: 0,
+      home_key_absentee: '',
+      away_key_absentee: '',
       home_motivation: 'MEDIUM',
       away_motivation: 'MEDIUM',
       home_fatigue: false,
       away_fatigue: false,
-      reasoning: "Limited real-time data available."
+      is_derby: false,
+      home_form_context: '',
+      away_form_context: '',
+      reasoning: "Limited real-time data available. Statistical model applied without qualitative adjustments."
     }));
   }
 
@@ -163,25 +199,98 @@ class MultiAgentService {
     const cacheKey = analysisCache.generateKey('analysis', { matchData });
 
     return executeWithRetry(async (apiKey, keyIndex) => {
+      const today = new Date().toISOString().split('T')[0];
+      
+      // Build structured data block from all available sources
+      const matchStr = matchData.match || 'Unknown Match';
+      const homeStats = matchData.stats?.home;
+      const awayStats = matchData.stats?.away;
+      const lambdas = matchData.poissonLambdas;
+      const probs = matchData.probabilities;
+      const valueBets = matchData.valueBets || [];
+      const context = matchData.context || {};
+      const bsdData = matchData.bsdData || null;
+      const odds = matchData.odds || {};
+
       const prompt = `
-        You are a professional betting syndicate analyst. 
-        Analyze this match data and provide a high-accuracy prediction:
-        ${JSON.stringify(matchData)}
-        
-        Consider:
-        - xG (Expected Goals) trends.
-        - Tactical matchups.
-        - Market value vs. actual probability.
-        - Deep context (injuries, standings, recent news) if provided in the data.
-        
-        Provide deep reasoning, a confidence score (0-100), and the best value market (e.g., "Home Win", "Over 2.5 Goals", "BTTS - Yes").
-        
-        Return ONLY a JSON object:
-        {
-          "reasoning": "Detailed technical analysis...",
-          "confidence": number,
-          "best_value_market": "string"
-        }
+You are a senior quantitative analyst at a professional football betting syndicate. 
+Today: ${today}. Match: **${matchStr}**.
+
+You have been provided with a FULL pre-computed statistical dataset below. Your job is to:
+1. Validate the statistical model findings with current real-world intelligence (use Google Search)
+2. Add qualitative insight the model cannot capture (tactical, psychological, situational)
+3. Identify any OVERRIDES — situations where the qualitative picture strongly contradicts the model
+4. Produce a final high-conviction prediction with precise reasoning
+
+═══════════════════════════════════════════
+STATISTICAL MODEL DATA (Dixon-Coles Poisson)
+═══════════════════════════════════════════
+Home xG lambda: ${lambdas?.home?.toFixed(3) || 'N/A'}
+Away xG lambda: ${lambdas?.away?.toFixed(3) || 'N/A'}
+
+Probabilities:
+- Home Win: ${probs?.homeWin || 'N/A'}
+- Draw: ${probs?.draw || 'N/A'}
+- Away Win: ${probs?.awayWin || 'N/A'}
+- Over 2.5 Goals: ${probs?.over25 || 'N/A'}
+- BTTS Yes: ${probs?.bttsYes || 'N/A'}
+
+Season Stats:
+- Home: ${homeStats?.played || '?'} played, ${homeStats?.goalsScored || 0} scored, ${homeStats?.goalsConceded || 0} conceded
+- Away: ${awayStats?.played || '?'} played, ${awayStats?.goalsScored || 0} scored, ${awayStats?.goalsConceded || 0} conceded
+
+Form (last 5): Home: ${(matchData.form?.home || []).join('')} | Away: ${(matchData.form?.away || []).join('')}
+
+Pre-Match Intelligence (from search agents):
+- Home missing: ${context.home_missing || 0} players${context.home_key_absentee ? ` (key: ${context.home_key_absentee})` : ''}
+- Away missing: ${context.away_missing || 0} players${context.away_key_absentee ? ` (key: ${context.away_key_absentee})` : ''}
+- Home motivation: ${context.home_motivation || 'MEDIUM'} | Away motivation: ${context.away_motivation || 'MEDIUM'}
+- Home fatigue: ${context.home_fatigue || false} | Away fatigue: ${context.away_fatigue || false}
+- Derby: ${context.is_derby || false}
+- Context: ${context.reasoning || 'Not available'}
+
+Value Bets Detected by Model:
+${valueBets.length > 0 ? valueBets.map((v: any) => `  - ${v.market}: edge ${v.edge}, odds ${v.odds}`).join('\n') : '  None detected (no odds available)'}
+
+${bsdData?.liveStats ? `
+Live Match State (BSD API):
+- Score: ${bsdData.score || 'N/A'} | Minute: ${bsdData.elapsed || '?'}
+- Possession: ${bsdData.liveStats?.possession?.home || '?'}% vs ${bsdData.liveStats?.possession?.away || '?'}%
+- Shots on Target: ${bsdData.liveStats?.shotsOnTarget?.home || 0} vs ${bsdData.liveStats?.shotsOnTarget?.away || 0}
+` : ''}
+
+Current Odds Available:
+${Object.entries(odds).filter(([_, v]) => v > 1).map(([k, v]) => `  ${k}: ${v}`).join('\n') || '  No odds provided'}
+
+═══════════════════════════════════════════
+YOUR ANALYSIS TASK
+═══════════════════════════════════════════
+Use Google Search to verify:
+1. Search: "${matchStr} latest news injuries form ${today}"
+2. Search: "${matchStr} odds betting tips"
+3. Search: "${matchStr.split(' vs ')[0]} tactical setup" (if relevant)
+
+Then produce your elite analysis. Be SPECIFIC — name players, cite actual recent results, reference league position. 
+Do NOT use vague language like "both teams are capable."
+
+CRITICAL RULES:
+- If the statistical model and qualitative picture AGREE → high confidence
+- If they DISAGREE → explain why and which takes precedence
+- Highlight if any value bet has exceptionally strong edge (>10%)
+- The "best_value_market" must be the single best bet accounting for BOTH the model AND your qualitative findings
+- Confidence 85-95: model + qualitative strongly aligned + value edge present
+- Confidence 70-84: good alignment, moderate edge
+- Confidence 50-69: mixed signals or thin data
+- Never exceed 95 (overconfidence is professional malpractice)
+
+Return ONLY a valid JSON object (absolutely no markdown, no preamble, no trailing text):
+{
+  "reasoning": "<4-7 sentence elite analysis. Reference specific statistics, specific player names, specific recent results. Explain the SINGLE most important factor driving this prediction. Mention any model override if applicable.>",
+  "confidence": <integer 50-95>,
+  "best_value_market": "<exact market name e.g. 'Over 2.5 Goals' or 'Home Win' or '1X' or 'BTTS - Yes'>",
+  "key_insight": "<1 sentence: the single sharpest insight a casual bettor would miss>",
+  "risk_flag": "<'LOW' | 'MEDIUM' | 'HIGH': overall prediction risk based on uncertainty factors>"
+}
       `;
 
       const result = await this.generateWithFallback(prompt, { json: true });
@@ -218,57 +327,76 @@ class MultiAgentService {
     const cacheKey = analysisCache.generateKey('fallback', { matchName });
 
     return executeWithRetry(async (apiKey, keyIndex) => {
+      const today = new Date().toISOString().split('T')[0];
       const prompt = `
-        You are a professional football data scout. 
-        Fetch the latest data and odds for the match: ${matchName}.
-        Use Google Search to find:
-        1. Recent 5 match results for both teams.
-        2. Season stats (played, goals scored/conceded).
-        3. Current real-world bookmaker odds (Home, Draw, Away, Over/Under 2.5, BTTS).
-        
-        Return ONLY a JSON object with this structure:
-        {
-          "id": "fallback",
-          "home": {
-            "id": 0,
-            "name": "Home Team Name",
-            "last5": {
-              "goalsScored": number,
-              "goalsConceded": number,
-              "results": ["W", "D", "L", "W", "W"]
-            },
-            "season": {
-              "played": number,
-              "goalsScored": number,
-              "goalsConceded": number
-            }
-          },
-          "away": {
-            "id": 0,
-            "name": "Away Team Name",
-            "last5": {
-              "goalsScored": number,
-              "goalsConceded": number,
-              "results": ["W", "D", "L", "W", "W"]
-            },
-            "season": {
-              "played": number,
-              "goalsScored": number,
-              "goalsConceded": number
-            }
-          },
-          "leagueAvgGoals": number,
-          "odds": {
-            "home": number,
-            "draw": number,
-            "away": number,
-            "over25": number,
-            "under25": number,
-            "bttsYes": number,
-            "dc1X": number,
-            "dcX2": number
-          }
-        }
+You are a professional football data scout. Today: ${today}.
+Target match: **${matchName}**
+
+Use Google Search to gather the following data — be PRECISE, cite actual numbers:
+
+SEARCH 1: "${matchName} recent results form ${today}"
+- Find last 5 results for EACH team (W/D/L) with actual scores
+- Calculate goals scored and conceded in those 5 games
+
+SEARCH 2: "${matchName} season stats goals scored conceded"
+- Find total games played this season for each team
+- Total goals scored and conceded this season
+
+SEARCH 3: "${matchName} betting odds today"
+- Find current bookmaker odds: Home Win, Draw, Away Win
+- Over/Under 2.5 Goals odds
+- BTTS Yes/No odds
+- Use Betway, Bet365, William Hill, or any major bookmaker
+
+SEARCH 4: "${matchName} league average goals"
+- What is the average goals per game in this league?
+
+Return ONLY a valid JSON object (no markdown, no preamble):
+{
+  "id": "fallback",
+  "home": {
+    "id": 0,
+    "name": "<exact home team name>",
+    "last5": {
+      "goalsScored": <integer: total goals scored in last 5 games>,
+      "goalsConceded": <integer: total goals conceded in last 5 games>,
+      "results": ["W"|"D"|"L", "W"|"D"|"L", "W"|"D"|"L", "W"|"D"|"L", "W"|"D"|"L"]
+    },
+    "season": {
+      "played": <integer>,
+      "goalsScored": <integer>,
+      "goalsConceded": <integer>
+    }
+  },
+  "away": {
+    "id": 0,
+    "name": "<exact away team name>",
+    "last5": {
+      "goalsScored": <integer>,
+      "goalsConceded": <integer>,
+      "results": ["W"|"D"|"L", "W"|"D"|"L", "W"|"D"|"L", "W"|"D"|"L", "W"|"D"|"L"]
+    },
+    "season": {
+      "played": <integer>,
+      "goalsScored": <integer>,
+      "goalsConceded": <integer>
+    }
+  },
+  "leagueAvgGoals": <float: typical is 2.4-3.2 for top European leagues>,
+  "odds": {
+    "home": <float: e.g. 2.10>,
+    "draw": <float: e.g. 3.30>,
+    "away": <float: e.g. 3.50>,
+    "over25": <float: e.g. 1.90>,
+    "under25": <float: e.g. 1.90>,
+    "bttsYes": <float: e.g. 1.80>,
+    "bttsNo": <float: e.g. 1.95>,
+    "dc1X": <float: e.g. 1.30>,
+    "dcX2": <float: e.g. 1.70>,
+    "over15": <float: e.g. 1.30>,
+    "over35": <float: e.g. 3.20>
+  }
+}
       `;
 
       const result = await this.generateWithFallback(prompt, { allowSearch: true });
