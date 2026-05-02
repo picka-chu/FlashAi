@@ -1841,10 +1841,100 @@ async function startServer() {
       }
     };
 
+    // ── Daily Pro Accumulator ─────────────────────────────────────────────────
+    // Fires once per day after 09:30 UTC, picks up to 4 of today's matches,
+    // runs them through Gemini, and sends the combined accumulator slip to
+    // every monthly_pro user via Telegram.
+    let lastAccumulatorDate = "";
+    const maybeSendDailyAccumulator = async () => {
+      const now = new Date();
+      const todayKey = now.toISOString().slice(0, 10);
+      if (lastAccumulatorDate === todayKey) return;
+      if (now.getUTCHours() < 9 || (now.getUTCHours() === 9 && now.getUTCMinutes() < 30)) return;
+
+      try {
+        const upcoming = await getUpcomingMatches();
+        const todaysMatches = (upcoming || [])
+          .filter((m: any) => String(m?.fixture?.date || "").startsWith(todayKey))
+          .slice(0, 4);
+
+        if (todaysMatches.length < 2) {
+          console.log("Accumulator skipped — fewer than 2 matches today.");
+          return;
+        }
+
+        const { analyzeMatchWithSearch } = await import("./services/geminiService.js");
+
+        // Analyse each match and pick the single top prediction per match
+        const legs: { match: string; pick: string; confidence: number }[] = [];
+        for (const m of todaysMatches) {
+          const home = m?.teams?.home?.name || "Home";
+          const away = m?.teams?.away?.name || "Away";
+          const matchStr = `${home} vs ${away}`;
+          try {
+            const result: any = await Promise.race([
+              analyzeMatchWithSearch(matchStr),
+              new Promise((_, rej) => setTimeout(() => rej(new Error("timeout")), 25_000))
+            ]);
+            const top = result?.predictions?.[0];
+            if (top?.market && top?.confidence) {
+              legs.push({ match: matchStr, pick: top.market, confidence: Number(top.confidence) });
+            }
+          } catch {
+            // If one match fails analysis, skip it rather than aborting the whole slip
+          }
+        }
+
+        if (legs.length < 2) {
+          console.log("Accumulator skipped — not enough successful analyses.");
+          return;
+        }
+
+        const legEmoji = ["🏆", "⚡", "🎯", "🔥"];
+        const legLines = legs.map((l, i) =>
+          `${legEmoji[i] || "•"} ${l.match}\n   → ${l.pick} (${l.confidence}% confidence)`
+        );
+        const avgConfidence = Math.round(legs.reduce((s, l) => s + l.confidence, 0) / legs.length);
+
+        const message =
+          `⚡ *Daily Pro Accumulator — ${todayKey}*\n\n` +
+          `${legLines.join("\n\n")}\n\n` +
+          `📊 Average confidence: *${avgConfidence}%*\n` +
+          `📌 ${legs.length}-leg accumulator\n\n` +
+          `_Open Flash AI to view full analysis for each match._`;
+
+        const { data: proUsers } = await supabase
+          .from("users")
+          .select("telegram_id")
+          .eq("plan", "monthly_pro")
+          .not("telegram_id", "is", null)
+          .limit(1000);
+
+        let sentCount = 0;
+        for (const u of proUsers || []) {
+          try {
+            await bot.telegram.sendMessage(Number(u.telegram_id), message, {
+              parse_mode: "Markdown",
+              ...Markup.inlineKeyboard([[Markup.button.webApp("Open Flash AI", appUrl)]]),
+            });
+            sentCount++;
+            if (sentCount % 20 === 0) await new Promise(r => setTimeout(r, 1000));
+          } catch { /* user may have blocked the bot */ }
+        }
+
+        lastAccumulatorDate = todayKey;
+        console.log(`Daily accumulator sent to ${sentCount} Pro users.`);
+      } catch (err) {
+        console.error("Daily accumulator task failed:", err);
+      }
+    };
+
     setInterval(() => {
       maybeSendMatchdayReminders().catch(() => undefined);
+      maybeSendDailyAccumulator().catch(() => undefined);
     }, 60 * 60 * 1000);
     maybeSendMatchdayReminders().catch(() => undefined);
+    maybeSendDailyAccumulator().catch(() => undefined);
   }
 
   // Auth/Signup Request Endpoint
@@ -2746,12 +2836,20 @@ async function startServer() {
 
   // Ad Management
   app.get("/api/admin/ads", adminOnly, async (c) => {
-    let ads = await getCachedCollection<any>(ADMIN_ADS_KEY);
-    if (!ads.length) {
-      const { data } = await supabase.from("ads").select("*").order("created_at", { ascending: false }).limit(200);
-      ads = data || [];
+    // Always read from DB — never trust the cache for admin display.
+    // The cache can be stale, empty, or missing styling columns.
+    const { data, error } = await supabase
+      .from("ads")
+      .select("*")
+      .order("created_at", { ascending: false })
+      .limit(200);
+
+    if (error) {
+      console.error("Failed to fetch ads from DB:", error.message);
+      return c.json({ error: "Failed to fetch ads" }, 500);
     }
-    ads = ads.map((ad: any) => {
+
+    const ads = (data || []).map((ad: any) => {
       const link = String(ad?.link || "");
       const derivedInternal = link.startsWith("internal:");
       const derivedTarget = derivedInternal ? link.replace(/^internal:/, "") : null;
@@ -2761,7 +2859,7 @@ async function startServer() {
         internal_target: ad?.internal_target ?? derivedTarget,
       };
     });
-    ads.sort((a, b) => new Date(b.created_at || 0).getTime() - new Date(a.created_at || 0).getTime());
+
     return c.json(ads);
   });
 
@@ -2812,9 +2910,9 @@ async function startServer() {
     };
 
     if (!ad.title || !ad.subtitle) return c.json({ error: "Ad title and subtitle are required" }, 400);
-    await setCachedCollection(ADMIN_ADS_KEY, [ad, ...ads]);
+
     try {
-      const richPayload = {
+      const { data: inserted, error: dbError } = await supabase.from("ads").insert({
         title: ad.title,
         subtitle: ad.subtitle,
         image_url: ad.image_url || null,
@@ -2837,14 +2935,22 @@ async function startServer() {
         button_radius: ad.button_radius,
         button_pad_x: ad.button_pad_x,
         button_pad_y: ad.button_pad_y,
-      };
+      }).select().single();
 
-      const { error: dbError } = await supabase.from("ads").insert(richPayload);
-      if (dbError) console.error("DB insert failed for ads:", dbError.message);
-    } catch (e) {
+      if (dbError) {
+        console.error("DB insert failed for ads:", dbError.message);
+        return c.json({ error: `Database error: ${dbError.message}` }, 500);
+      }
+
+      // Also update the in-memory cache so broadcast can find it immediately
+      const existingCache = await getCachedCollection<any>(ADMIN_ADS_KEY);
+      await setCachedCollection(ADMIN_ADS_KEY, [inserted || ad, ...existingCache]);
+
+      return c.json(inserted || ad);
+    } catch (e: any) {
       console.error("DB insert failed for ads:", e);
+      return c.json({ error: e?.message || "Failed to save ad" }, 500);
     }
-    return c.json(ad);
   });
 
   app.patch("/api/admin/ads/:id", adminOnly, async (c) => {
@@ -3355,6 +3461,78 @@ ${ad.subtitle}`;
       disabled: true,
       message: "Retention automation is disabled. Use Admin > Notifications for manual messaging."
     }, 410);
+  });
+
+  // Manual trigger: send the daily Pro accumulator right now (bypasses the time guard)
+  app.post("/api/admin/accumulator/send-now", adminOnly, async (c) => {
+    if (!bot) return c.json({ error: "Bot not configured" }, 500);
+    try {
+      const now = new Date();
+      const todayKey = now.toISOString().slice(0, 10);
+      const upcoming = await getUpcomingMatches();
+      const todaysMatches = (upcoming || [])
+        .filter((m: any) => String(m?.fixture?.date || "").startsWith(todayKey))
+        .slice(0, 4);
+
+      if (todaysMatches.length < 2) {
+        return c.json({ error: "Not enough matches today to build an accumulator (need at least 2)." }, 400);
+      }
+
+      const { analyzeMatchWithSearch } = await import("./services/geminiService.js");
+      const legs: { match: string; pick: string; confidence: number }[] = [];
+      for (const m of todaysMatches) {
+        const home = m?.teams?.home?.name || "Home";
+        const away = m?.teams?.away?.name || "Away";
+        const matchStr = `${home} vs ${away}`;
+        try {
+          const result: any = await Promise.race([
+            analyzeMatchWithSearch(matchStr),
+            new Promise((_, rej) => setTimeout(() => rej(new Error("timeout")), 25_000))
+          ]);
+          const top = result?.predictions?.[0];
+          if (top?.market && top?.confidence) {
+            legs.push({ match: matchStr, pick: top.market, confidence: Number(top.confidence) });
+          }
+        } catch { /* skip failed match */ }
+      }
+
+      if (legs.length < 2) return c.json({ error: "Analysis failed for too many matches." }, 500);
+
+      const legEmoji = ["🏆", "⚡", "🎯", "🔥"];
+      const legLines = legs.map((l, i) =>
+        `${legEmoji[i] || "•"} ${l.match}\n   → ${l.pick} (${l.confidence}% confidence)`
+      );
+      const avgConfidence = Math.round(legs.reduce((s, l) => s + l.confidence, 0) / legs.length);
+      const message =
+        `⚡ *Daily Pro Accumulator — ${todayKey}*\n\n` +
+        `${legLines.join("\n\n")}\n\n` +
+        `📊 Average confidence: *${avgConfidence}%*\n` +
+        `📌 ${legs.length}-leg accumulator\n\n` +
+        `_Open Flash AI to view full analysis for each match._`;
+
+      const { data: proUsers } = await supabase
+        .from("users")
+        .select("telegram_id")
+        .eq("plan", "monthly_pro")
+        .not("telegram_id", "is", null)
+        .limit(1000);
+
+      let sentCount = 0;
+      for (const u of proUsers || []) {
+        try {
+          await bot.telegram.sendMessage(Number(u.telegram_id), message, {
+            parse_mode: "Markdown",
+            ...Markup.inlineKeyboard([[Markup.button.webApp("Open Flash AI", appUrl)]]),
+          });
+          sentCount++;
+          if (sentCount % 20 === 0) await new Promise(r => setTimeout(r, 1000));
+        } catch { /* user may have blocked the bot */ }
+      }
+
+      return c.json({ success: true, sentCount, legs: legs.length, avgConfidence });
+    } catch (e: any) {
+      return c.json({ error: e?.message || "Failed to send accumulator" }, 500);
+    }
   });
 
   // Retention & Engagement Automation (Single Definition)
