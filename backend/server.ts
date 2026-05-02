@@ -3095,6 +3095,33 @@ ${ad.subtitle}`;
     }
   });
 
+  app.post("/api/admin/users/unsuspend", adminOnly, async (c) => {
+    const { telegramId } = await c.req.json().catch(() => ({} as any));
+    if (!telegramId) return c.json({ error: "telegramId is required" }, 400);
+
+    try {
+      const { error } = await supabase
+        .from("users")
+        .update({ is_suspended: false, last_active: new Date().toISOString() })
+        .eq("telegram_id", Number(telegramId));
+
+      if (error) throw error;
+
+      if (bot) {
+        try {
+          await bot.telegram.sendMessage(
+            Number(telegramId),
+            "Your account has been reinstated. Welcome back to Flash AI!"
+          );
+        } catch {}
+      }
+
+      return c.json({ success: true });
+    } catch (error: any) {
+      return c.json({ error: error?.message || "Failed to unsuspend user" }, 500);
+    }
+  });
+
   app.post("/api/admin/users/delete", adminOnly, async (c) => {
     const { telegramId } = await c.req.json().catch(() => ({} as any));
     if (!telegramId) return c.json({ error: "telegramId is required" }, 400);
