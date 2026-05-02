@@ -165,6 +165,28 @@ export const Admin: React.FC = () => {
     });
   };
 
+  const unsuspendUser = async (telegramId: number) => {
+    showConfirm('Unsuspend this user? They will regain access to the app.', async (confirmed) => {
+      if (!confirmed) return;
+      try {
+        const res = await fetch('/api/admin/users/unsuspend', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json', 'X-TG-Init-Data': initData },
+          body: JSON.stringify({ telegramId })
+        });
+        const data = await res.json().catch(() => ({}));
+        if (res.ok) {
+          fetchUsers(userSearch, usersPage);
+          showAlert('User unsuspended successfully.');
+        } else {
+          showAlert(data.error || 'Failed to unsuspend user');
+        }
+      } catch (e) {
+        showAlert('Error unsuspending user');
+      }
+    });
+  };
+
   const deleteUser = async (telegramId: number) => {
     showConfirm('Delete this user and all their data? This action cannot be undone.', async (confirmed) => {
       if (!confirmed) return;
@@ -259,18 +281,24 @@ export const Admin: React.FC = () => {
   };
 
   const handleAddTask = async () => {
-    if (!newTask.title || !newTask.description) return;
+    if (!newTask.title || !newTask.description) {
+      showAlert('Task title and description are required.');
+      return;
+    }
     try {
       const res = await fetch('/api/admin/tasks', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json', 'X-TG-Init-Data': initData },
         body: JSON.stringify(newTask)
       });
+      const data = await res.json().catch(() => ({}));
       if (res.ok) {
         fetchTasks();
         setIsAddingTask(false);
         setNewTask({ title: '', description: '', reward: 10, url: '', buttonLabel: 'Start Task', image_url: '', active: true });
         showAlert('Task added successfully!');
+      } else {
+        showAlert(data.error || 'Failed to add task');
       }
     } catch (e) {
       showAlert('Failed to add task');
@@ -278,6 +306,19 @@ export const Admin: React.FC = () => {
   };
 
   const handleAddAd = async () => {
+    // Client-side validation before hitting server
+    if (!newAd.title.trim() || !newAd.subtitle.trim()) {
+      showAlert('Ad title and subtitle are required.');
+      return;
+    }
+    if (!newAd.is_internal && !newAd.link.trim()) {
+      showAlert('Please enter an external URL, or switch to internal redirect.');
+      return;
+    }
+    if (newAd.is_internal && !newAd.internal_target) {
+      showAlert('Please select an internal redirect page.');
+      return;
+    }
     try {
       const adPayload = {
         ...newAd,
@@ -288,12 +329,15 @@ export const Admin: React.FC = () => {
         headers: { 'Content-Type': 'application/json', 'X-TG-Init-Data': initData },
         body: JSON.stringify(adPayload)
       });
+      const data = await res.json().catch(() => ({}));
       if (res.ok) {
         fetchAds();
         setIsAddingAd(false);
         setEditingAdId(null);
         setNewAd({ ...DEFAULT_AD });
         showAlert('Ad added to rotation successfully!');
+      } else {
+        showAlert(data.error || 'Failed to add ad');
       }
     } catch (e) {
       showAlert('Failed to add ad');
@@ -406,14 +450,21 @@ export const Admin: React.FC = () => {
   };
 
   const promoteUser = async (telegramId: number, role: 'user' | 'admin') => {
-    const res = await fetch('/api/admin/users/promote', {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json', 'X-TG-Init-Data': initData },
-      body: JSON.stringify({ telegramId, role })
-    });
-    if (res.ok) {
-      fetchUsers(userSearch, usersPage);
-      showAlert(`User updated to ${role}`);
+    try {
+      const res = await fetch('/api/admin/users/promote', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json', 'X-TG-Init-Data': initData },
+        body: JSON.stringify({ telegramId, role })
+      });
+      const data = await res.json().catch(() => ({}));
+      if (res.ok) {
+        fetchUsers(userSearch, usersPage);
+        showAlert(`User updated to ${role}`);
+      } else {
+        showAlert(data.error || 'Failed to update user role');
+      }
+    } catch (e) {
+      showAlert('Failed to update user role');
     }
   };
 
@@ -450,6 +501,7 @@ export const Admin: React.FC = () => {
     });
     const data = await res.json().catch(() => ({}));
     if (res.ok) {
+      setNotifyMessage('');
       showAlert('Notification sent.');
     } else {
       showAlert(data.error || 'Failed to notify user');
@@ -459,8 +511,18 @@ export const Admin: React.FC = () => {
   const deleteTask = async (id: string) => {
     showConfirm('Delete this task?', async (ok) => {
        if (ok) {
-         await fetch(`/api/admin/tasks/${id}`, { method: 'DELETE', headers: { 'X-TG-Init-Data': initData } });
-         fetchTasks();
+         try {
+           const res = await fetch(`/api/admin/tasks/${id}`, { method: 'DELETE', headers: { 'X-TG-Init-Data': initData } });
+           const data = await res.json().catch(() => ({}));
+           if (!res.ok) {
+             showAlert(data.error || 'Failed to delete task');
+             return;
+           }
+           fetchTasks();
+           showAlert('Task deleted successfully');
+         } catch (e) {
+           showAlert('Failed to delete task');
+         }
        }
     });
   };
@@ -859,7 +921,12 @@ export const Admin: React.FC = () => {
                       initial={{ y: '100%' }} animate={{ y: 0 }} exit={{ y: '100%' }}
                       className="fixed bottom-0 left-0 right-0 bg-zinc-900 rounded-t-[40px] z-50 p-8 space-y-6 pt-12"
                     >
-                      <h3 className="text-xl font-black text-white">Create Daily Task</h3>
+                      <div className="flex items-center justify-between">
+                        <h3 className="text-xl font-black text-white">Create Daily Task</h3>
+                        <button onClick={() => setIsAddingTask(false)} className="w-8 h-8 rounded-full bg-zinc-800 border border-zinc-700 flex items-center justify-center">
+                          <XCircle className="w-4 h-4 text-zinc-400" />
+                        </button>
+                      </div>
                       <div className="space-y-4">
                         <input value={newTask.title} onChange={e => setNewTask({...newTask, title: e.target.value})} placeholder="Task Title" className="w-full bg-zinc-800 border-none rounded-2xl p-4 text-white text-sm font-bold placeholder:text-zinc-600 focus:ring-2 ring-[#ccff00]/50" />
                         <textarea value={newTask.description} onChange={e => setNewTask({...newTask, description: e.target.value})} placeholder="Task Description" className="w-full bg-zinc-800 border-none rounded-2xl p-4 text-white text-sm font-bold placeholder:text-zinc-600 h-24 focus:ring-2 ring-[#ccff00]/50" />
@@ -916,8 +983,26 @@ export const Admin: React.FC = () => {
                         <div>
                           <p className="text-sm font-black text-white leading-tight">{ad.title || 'Flash Promotion'}</p>
                           <p className="text-[10px] font-bold text-zinc-500 uppercase tracking-widest mt-1 line-clamp-1">{ad.subtitle || 'No description'}</p>
+                          <span className={`inline-block mt-1.5 px-2 py-0.5 rounded-full text-[9px] font-black uppercase tracking-widest ${ad.active !== false ? 'bg-green-500/15 text-green-400' : 'bg-zinc-700/50 text-zinc-500'}`}>
+                            {ad.active !== false ? '● Active' : '○ Inactive'}
+                          </span>
                         </div>
                         <div className="flex gap-2">
+                          <button
+                            title={ad.active !== false ? 'Deactivate ad' : 'Activate ad'}
+                            onClick={async () => {
+                              const res = await fetch(`/api/admin/ads/${ad.id}`, {
+                                method: 'PATCH',
+                                headers: { 'Content-Type': 'application/json', 'X-TG-Init-Data': initData },
+                                body: JSON.stringify({ active: ad.active === false })
+                              });
+                              if (res.ok) fetchAds();
+                              else showAlert('Failed to toggle ad status');
+                            }}
+                            className={`w-10 h-10 rounded-xl flex items-center justify-center transition-all text-xs font-black ${ad.active !== false ? 'bg-green-500/10 text-green-400 hover:bg-green-500 hover:text-white' : 'bg-zinc-700/30 text-zinc-500 hover:bg-zinc-600 hover:text-white'}`}
+                          >
+                            {ad.active !== false ? '●' : '○'}
+                          </button>
                           <button
                             onClick={() => {
                               setNewAd({ ...DEFAULT_AD, ...ad, expires_at: isoToDatetimeLocal(ad?.expires_at) });
@@ -1040,6 +1125,7 @@ export const Admin: React.FC = () => {
                            <label className="flex items-center gap-2 text-xs text-zinc-400 font-bold ml-1 mt-1"><input type="checkbox" checked={newAd.is_internal} onChange={(e) => setNewAd({ ...newAd, is_internal: e.target.checked, link: e.target.checked ? '' : newAd.link })} className="accent-blue-500" />Use internal redirect page selection</label>
                            <select value={newAd.target_group} onChange={e => setNewAd({...newAd, target_group: e.target.value})} className="w-full bg-zinc-800 rounded-2xl p-4 text-white text-sm font-bold focus:outline-none focus:ring-2 ring-blue-500/50"><option value="all">All users</option><option value="unsubscribed">Unsubscribed users</option><option value="subscribed">Subscribed users</option><option value="monthly_basic">Monthly Basic users</option><option value="monthly_pro">Monthly Pro users</option><option value="admin">Admins only</option></select>
                            <input type="datetime-local" value={newAd.expires_at} onChange={e => setNewAd({...newAd, expires_at: e.target.value})} className="w-full bg-zinc-800 border-none rounded-2xl p-4 text-white text-sm font-bold focus:ring-2 ring-blue-500/50" />
+                           <label className="flex items-center gap-2 text-xs text-zinc-400 font-bold ml-1"><input type="checkbox" checked={newAd.active} onChange={(e) => setNewAd({ ...newAd, active: e.target.checked })} className="accent-blue-500" />Ad is active (shown to users)</label>
                         </div>
 <button onClick={editingAdId ? handleEditAd : handleAddAd} className="w-full py-5 bg-blue-500 text-white font-black uppercase tracking-widest text-xs rounded-2xl shadow-[0_0_30px_rgba(59,130,246,0.3)]">{editingAdId ? 'Save Ad Changes' : 'Deploy to Rotation'}</button>
                       </div>
@@ -1105,7 +1191,10 @@ export const Admin: React.FC = () => {
                        <button onClick={() => promoteUser(u.telegram_id, 'admin')} className="flex-1 min-w-[80px] py-2 rounded-xl bg-[#ccff00]/10 text-[10px] font-black uppercase text-[#ccff00]">Make Admin</button>
                        <button onClick={() => promoteUser(u.telegram_id, 'user')} className="flex-1 min-w-[80px] py-2 rounded-xl bg-zinc-800 text-[10px] font-black uppercase text-zinc-300">Make User</button>
                        <button onClick={() => notifyUser(u.telegram_id)} className="flex-1 min-w-[80px] py-2 rounded-xl bg-blue-500/10 text-[10px] font-black uppercase text-blue-300">Notify</button>
-                       <button onClick={() => suspendUser(u.telegram_id)} className="flex-1 min-w-[80px] py-2 rounded-xl bg-orange-500/10 text-[10px] font-black uppercase text-orange-400">Suspend</button>
+                       {u.is_suspended
+                         ? <button onClick={() => unsuspendUser(u.telegram_id)} className="flex-1 min-w-[80px] py-2 rounded-xl bg-green-500/10 text-[10px] font-black uppercase text-green-400">Unsuspend</button>
+                         : <button onClick={() => suspendUser(u.telegram_id)} className="flex-1 min-w-[80px] py-2 rounded-xl bg-orange-500/10 text-[10px] font-black uppercase text-orange-400">Suspend</button>
+                       }
                        <button onClick={() => deleteUser(u.telegram_id)} className="flex-1 min-w-[80px] py-2 rounded-xl bg-red-500/10 text-[10px] font-black uppercase text-red-400">Delete</button>
                      </div>
                      <div className="flex gap-2 items-center">
