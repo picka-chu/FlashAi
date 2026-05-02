@@ -2826,31 +2826,21 @@ async function startServer() {
         target_group: ad.target_group,
         expires_at: ad.expires_at,
         primary_color: ad.primary_color,
-        gradient_to: body.gradient_to ?? null,
-        hero_color: body.hero_color ?? null,
-        sub_color: body.sub_color ?? null,
-        button_color: body.button_color ?? null,
-        button_text_color: body.button_text_color ?? null,
-        hero_size: body.hero_size ?? null,
-        sub_size: body.sub_size ?? null,
-        button_text_size: body.button_text_size ?? null,
-        button_radius: body.button_radius ?? null,
-        button_pad_x: body.button_pad_x ?? null,
-        button_pad_y: body.button_pad_y ?? null,
-      } as any;
+        gradient_to: ad.gradient_to,
+        hero_color: ad.hero_color,
+        sub_color: ad.sub_color,
+        button_color: ad.button_color,
+        button_text_color: ad.button_text_color,
+        hero_size: ad.hero_size,
+        sub_size: ad.sub_size,
+        button_text_size: ad.button_text_size,
+        button_radius: ad.button_radius,
+        button_pad_x: ad.button_pad_x,
+        button_pad_y: ad.button_pad_y,
+      };
 
       const { error: dbError } = await supabase.from("ads").insert(richPayload);
-      if (dbError) {
-        const fallbackPayload = {
-          title: ad.title,
-          subtitle: ad.subtitle,
-          image_url: ad.image_url || null,
-          link: ad.link,
-          active: ad.active,
-        };
-        const { error: fallbackErr } = await supabase.from("ads").insert(fallbackPayload);
-        if (fallbackErr) console.error("DB insert failed for ads:", fallbackErr);
-      }
+      if (dbError) console.error("DB insert failed for ads:", dbError.message);
     } catch (e) {
       console.error("DB insert failed for ads:", e);
     }
@@ -3300,11 +3290,16 @@ ${ad.subtitle}`;
 
   app.get("/api/common/ads", async (c) => {
     const now = Date.now();
-    let ads = await getCachedCollection<any>(ADMIN_ADS_KEY);
-    if (!ads.length) {
-      const { data } = await supabase.from("ads").select("*").eq("active", true).order("created_at", { ascending: false }).limit(50);
-      ads = data || [];
-    }
+
+    // Always fetch from DB so expiry and target_group filtering is always fresh.
+    // Never rely on the admin cache here — it contains ALL ads including inactive ones.
+    const { data: dbAds } = await supabase
+      .from("ads")
+      .select("*")
+      .eq("active", true)
+      .order("created_at", { ascending: false })
+      .limit(50);
+    const ads: any[] = dbAds || [];
 
     const initData = c.req.header("X-TG-Init-Data") || "";
     const tgUser = initData ? getTelegramUserFromInitData(initData) : null;
@@ -3316,6 +3311,7 @@ ${ad.subtitle}`;
 
     const filtered = ads.filter((ad) => {
       if (ad.active === false) return false;
+      // Filter out expired ads
       if (ad.expires_at && new Date(ad.expires_at).getTime() < now) return false;
 
       const group = normalizeAudience(ad.target_group || "all");
