@@ -68,28 +68,53 @@ export async function getLiveMatchPreview(fixtureId: string, initData = '') {
 }
 
 export async function analyzeLiveMatch(payload: { fixtureId: string; liveSnapshot?: any }, initData = '') {
-  const controller = new AbortController();
-  // Increased to 65s to allow backend (60s) to finish first
-  const timeoutId = setTimeout(() => controller.abort(), 65_000);
-  let response: Response;
-  try {
-    response = await fetch('/api/analyze-live', {
-      method: 'POST',
-      headers: {
-        'Content-Type': 'application/json',
-        ...(initData ? { 'X-TG-Init-Data': initData } : {}),
-      },
-      signal: controller.signal,
-      body: JSON.stringify(payload),
-    });
-  } finally {
-    clearTimeout(timeoutId);
+  const MAX_ATTEMPTS = 3;
+  let lastError: Error = new Error('Live analysis failed');
+
+  for (let attempt = 1; attempt <= MAX_ATTEMPTS; attempt++) {
+    const controller = new AbortController();
+    const timeoutId = setTimeout(() => controller.abort(), 70_000);
+
+    try {
+      const response = await fetch('/api/analyze-live', {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          ...(initData ? { 'X-TG-Init-Data': initData } : {}),
+        },
+        signal: controller.signal,
+        body: JSON.stringify(payload),
+      });
+      clearTimeout(timeoutId);
+
+      const data = await response.json().catch(() => ({}));
+
+      if (response.ok) return data;
+
+      // Non-retryable errors — surface immediately
+      if (response.status === 401 || response.status === 403 || response.status === 402 || response.status === 400) {
+        throw new Error(data?.error || 'Live analysis failed');
+      }
+
+      // Retryable (503, 500, network issues)
+      lastError = new Error(data?.error || `Server error (${response.status})`);
+    } catch (e: any) {
+      clearTimeout(timeoutId);
+      if (e?.name === 'AbortError') {
+        lastError = new Error('Analysis is taking longer than expected. Retrying…');
+      } else if (e?.message && (e.message.includes('401') || e.message.includes('403') || e.message.includes('402'))) {
+        throw e; // don't retry auth/plan errors
+      } else {
+        lastError = e;
+      }
+    }
+
+    if (attempt < MAX_ATTEMPTS) {
+      await new Promise(r => setTimeout(r, 2000 * attempt)); // 2s, 4s back-off
+    }
   }
-  const data = await response.json().catch(() => ({}));
-  if (!response.ok) {
-    throw new Error(data?.error || 'Failed to analyze live match');
-  }
-  return data;
+
+  throw lastError;
 }
 
 export async function getUpcomingMatches() {
