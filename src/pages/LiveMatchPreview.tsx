@@ -1,5 +1,5 @@
 import React, { useEffect, useMemo, useState } from 'react';
-import { ArrowLeft, BarChart3, Loader2, RefreshCw, Sparkles, Zap } from 'lucide-react';
+import { ArrowLeft, BarChart3, Loader2, RefreshCw, Sparkles, Zap, AlertTriangle } from 'lucide-react';
 import { analyzeLiveMatch, getLiveMatchPreview } from '../services/footballService';
 import { useTelegram } from '../hooks/useTelegram';
 import { useUserStore } from '../store/useUserStore';
@@ -15,6 +15,8 @@ export const LiveMatchPreview: React.FC<{ onBack: () => void; onGoAnalyze: () =>
   const { initData, showAlert, hapticFeedback } = useTelegram();
   const [loading, setLoading] = useState(false);
   const [analyzing, setAnalyzing] = useState(false);
+  const [analyzeError, setAnalyzeError] = useState<string | null>(null);
+  const [attemptCount, setAttemptCount] = useState(0);
 
   const fixtureId =
     livePreviewMatch?.id ??
@@ -32,7 +34,7 @@ export const LiveMatchPreview: React.FC<{ onBack: () => void; onGoAnalyze: () =>
         const data = await getLiveMatchPreview(String(fixtureId), initData || '');
         if (mounted) setLivePreviewMatch({ ...livePreviewMatch, ...data });
       } catch {
-        // keep last snapshot in UI to avoid blank state
+        // keep last snapshot — don't show error for background refresh failures
       } finally {
         if (mounted) setLoading(false);
       }
@@ -44,7 +46,7 @@ export const LiveMatchPreview: React.FC<{ onBack: () => void; onGoAnalyze: () =>
       mounted = false;
       clearInterval(interval);
     };
-  }, [fixtureId, initData, setLivePreviewMatch, livePreviewMatch]);
+  }, [fixtureId]);
 
   const rows = useMemo(() => {
     const stats = livePreviewMatch?.stats || {};
@@ -68,22 +70,38 @@ export const LiveMatchPreview: React.FC<{ onBack: () => void; onGoAnalyze: () =>
   const handleAnalyze = async () => {
     if (analyzing) return;
     setAnalyzing(true);
+    setAnalyzeError(null);
+    setAttemptCount(n => n + 1);
     hapticFeedback('medium');
+
     try {
       if (!fixtureId) {
-        throw new Error('Live fixture ID is missing. Please reopen this match from Live Matches.');
+        setAnalyzeError('Live fixture ID is missing. Go back and reopen this match from Live Matches.');
+        return;
       }
-      const payload = await analyzeLiveMatch({ fixtureId: String(fixtureId), liveSnapshot: livePreviewMatch }, initData || '');
+      const payload = await analyzeLiveMatch(
+        { fixtureId: String(fixtureId), liveSnapshot: livePreviewMatch },
+        initData || ''
+      );
       setSelectedMatch({ ...livePreviewMatch, liveSnapshot: payload?.liveData || livePreviewMatch, analysisType: 'live' });
       if (!payload?.result) {
-        throw new Error('Live analysis response was incomplete. Please retry.');
+        setAnalyzeError('Analysis response was incomplete. Tap Retry to try again.');
+        return;
       }
       setAnalysisResult(payload.result);
       setIsAnalyzing(false);
       if (typeof payload?.newCredits === 'number' && user) setUser({ ...user, credits: payload.newCredits });
       onGoAnalyze();
     } catch (error: any) {
-      showAlert(error?.message || 'Live analysis failed');
+      const msg = error?.message || 'Live analysis failed. Please try again.';
+      // Only use showAlert for permanent errors (auth, plan, credits)
+      // For transient errors, show inline so the app doesn't close
+      const isPermanent = msg.includes('paid plan') || msg.includes('credit') || msg.includes('authentication') || msg.includes('not identified');
+      if (isPermanent) {
+        showAlert(msg);
+      } else {
+        setAnalyzeError(msg);
+      }
     } finally {
       setAnalyzing(false);
     }
@@ -102,7 +120,7 @@ export const LiveMatchPreview: React.FC<{ onBack: () => void; onGoAnalyze: () =>
         </div>
       </div>
 
-      <div className="p-4 pb-28 space-y-4">
+      <div className="p-4 pb-36 space-y-4">
         <div className="rounded-3xl border border-zinc-800 bg-zinc-900/80 p-5">
           <div className="grid grid-cols-[1fr_auto_1fr] items-center gap-3">
             <div className="text-center">
@@ -132,6 +150,24 @@ export const LiveMatchPreview: React.FC<{ onBack: () => void; onGoAnalyze: () =>
             </div>
           ))}
         </div>
+
+        {/* Inline error — never use showAlert for transient errors as it can close the mini-app */}
+        {analyzeError && (
+          <div className="rounded-2xl border border-red-500/30 bg-red-500/10 p-4 flex items-start gap-3">
+            <AlertTriangle className="w-4 h-4 text-red-400 mt-0.5 shrink-0" />
+            <div className="flex-1 min-w-0">
+              <p className="text-xs font-bold text-red-300 leading-relaxed">{analyzeError}</p>
+              {attemptCount < 5 && (
+                <button
+                  onClick={handleAnalyze}
+                  className="mt-2 text-[10px] font-black uppercase tracking-widest text-[#ccff00] underline underline-offset-2"
+                >
+                  Tap to retry
+                </button>
+              )}
+            </div>
+          </div>
+        )}
       </div>
 
       <button
@@ -140,7 +176,7 @@ export const LiveMatchPreview: React.FC<{ onBack: () => void; onGoAnalyze: () =>
         className="fixed bottom-24 right-5 z-30 h-14 px-5 rounded-full bg-[#ccff00] text-black font-black text-sm shadow-[0_12px_32px_rgba(204,255,0,0.35)] inline-flex items-center gap-2 disabled:opacity-70"
       >
         {analyzing ? <Loader2 className="w-5 h-5 animate-spin" /> : <Zap className="w-5 h-5" />}
-        {analyzing ? 'Gathering live data…' : 'Run Live Analysis'}
+        {analyzing ? 'Analysing… (up to 35s)' : analyzeError ? '↺ Retry Analysis' : 'Run Live Analysis'}
       </button>
 
       <div className="fixed bottom-10 left-1/2 -translate-x-1/2 text-[10px] text-zinc-500 inline-flex items-center gap-1 bg-zinc-900/80 border border-zinc-800 rounded-full px-3 py-1">
