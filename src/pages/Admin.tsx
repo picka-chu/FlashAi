@@ -85,6 +85,38 @@ export const Admin: React.FC = () => {
   const [editingAdId, setEditingAdId] = useState<string | null>(null);
   const [newTask, setNewTask] = useState({ title: '', description: '', reward: 10, url: '', buttonLabel: 'Start Task', image_url: '', active: true });
   const [newAd, setNewAd] = useState({ ...DEFAULT_AD });
+  // Separate string state for the 6 number fields so the user can type freely
+  // without React clamping/replacing the value on every keystroke.
+  const [sizeFields, setSizeFields] = useState({
+    hero_size: String(DEFAULT_AD.hero_size),
+    sub_size: String(DEFAULT_AD.sub_size),
+    button_text_size: String(DEFAULT_AD.button_text_size),
+    button_radius: String(DEFAULT_AD.button_radius),
+    button_pad_x: String(DEFAULT_AD.button_pad_x),
+    button_pad_y: String(DEFAULT_AD.button_pad_y),
+  });
+
+  // Call this whenever you need to flush sizeFields into newAd (on blur or submit)
+  const flushSizeFields = (fields = sizeFields) => {
+    const parse = (v: string, fallback: number) => {
+      const n = Number(v);
+      return Number.isFinite(n) && n >= 0 ? n : fallback;
+    };
+    return {
+      hero_size: parse(fields.hero_size, DEFAULT_AD.hero_size),
+      sub_size: parse(fields.sub_size, DEFAULT_AD.sub_size),
+      button_text_size: parse(fields.button_text_size, DEFAULT_AD.button_text_size),
+      button_radius: parse(fields.button_radius, DEFAULT_AD.button_radius),
+      button_pad_x: parse(fields.button_pad_x, DEFAULT_AD.button_pad_x),
+      button_pad_y: parse(fields.button_pad_y, DEFAULT_AD.button_pad_y),
+    };
+  };
+
+  // Sync sizeFields → newAd on every sizeFields change so the preview updates live
+  useEffect(() => {
+    const parsed = flushSizeFields(sizeFields);
+    setNewAd(prev => ({ ...prev, ...parsed }));
+  }, [sizeFields]);
   const [isBroadcasting, setIsBroadcasting] = useState(false);
   const [isSendingNotification, setIsSendingNotification] = useState(false);
   const [reports, setReports] = useState<any[]>([]);
@@ -335,6 +367,7 @@ export const Admin: React.FC = () => {
         setIsAddingAd(false);
         setEditingAdId(null);
         setNewAd({ ...DEFAULT_AD });
+        resetSizeFields();
         showAlert('Ad added to rotation successfully!');
       } else {
         showAlert(data.error || 'Failed to add ad');
@@ -345,13 +378,29 @@ export const Admin: React.FC = () => {
   };
 
   const sanitizeNumberish = (value: string, _fallback: number) => {
-    // Allow any non-negative number; keep the raw string value during typing.
-    // We return the numeric value only when the string represents a valid number.
     if (value === '' || value === '-') return _fallback;
     const next = Number(value);
     if (!Number.isFinite(next) || next < 0) return _fallback;
     return next;
   };
+
+  const resetSizeFields = () => setSizeFields({
+    hero_size: String(DEFAULT_AD.hero_size),
+    sub_size: String(DEFAULT_AD.sub_size),
+    button_text_size: String(DEFAULT_AD.button_text_size),
+    button_radius: String(DEFAULT_AD.button_radius),
+    button_pad_x: String(DEFAULT_AD.button_pad_x),
+    button_pad_y: String(DEFAULT_AD.button_pad_y),
+  });
+
+  const loadSizeFieldsFromAd = (ad: any) => setSizeFields({
+    hero_size: String(ad.hero_size ?? DEFAULT_AD.hero_size),
+    sub_size: String(ad.sub_size ?? DEFAULT_AD.sub_size),
+    button_text_size: String(ad.button_text_size ?? DEFAULT_AD.button_text_size),
+    button_radius: String(ad.button_radius ?? DEFAULT_AD.button_radius),
+    button_pad_x: String(ad.button_pad_x ?? DEFAULT_AD.button_pad_x),
+    button_pad_y: String(ad.button_pad_y ?? DEFAULT_AD.button_pad_y),
+  });
 
   const isoToDatetimeLocal = (iso?: string | null) => {
     if (!iso) return '';
@@ -387,6 +436,7 @@ export const Admin: React.FC = () => {
       setEditingAdId(null);
       setIsAddingAd(false);
       setNewAd({ ...DEFAULT_AD });
+      resetSizeFields();
       showAlert('Ad updated successfully!');
     } catch (e) {
       showAlert('Failed to update ad');
@@ -651,13 +701,13 @@ export const Admin: React.FC = () => {
     const btnPadX = Number(ad?.button_pad_x ?? 20);
     const btnPadY = Number(ad?.button_pad_y ?? 8);
     return (
-      <div className="relative min-w-[300px] w-[300px] h-[164px] rounded-[24px] overflow-hidden border border-white/10 shadow-[0_12px_40px_rgba(0,0,0,0.35)]"
+      <div className="relative min-w-[272px] w-[272px] h-[152px] rounded-[22px] overflow-hidden border border-white/10 shadow-[0_12px_40px_rgba(0,0,0,0.35)]"
         style={{ background: `linear-gradient(100deg, ${gradientFrom} 0%, ${gradientTo} 75%)` }}>
         {ad?.image_url ? (
           <img src={ad.image_url} alt="" className="absolute right-2 top-1/2 -translate-y-1/2 h-[78%] w-[36%] object-contain drop-shadow-[0_10px_18px_rgba(0,0,0,0.22)]" referrerPolicy="no-referrer" />
         ) : null}
         <div className="absolute inset-0 bg-gradient-to-r from-black/10 via-transparent to-black/5" />
-        <div className="relative z-10 h-full p-5 pr-24 flex flex-col justify-between">
+        <div className="relative z-10 h-full p-4 pr-20 flex flex-col justify-between">
           <div>
             <p className="font-black leading-[1.05] line-clamp-2" style={{ color: heroColor, fontSize: `${heroSize}px` }}>{ad?.title || 'Hero title'}</p>
             <p className="mt-2 font-semibold leading-tight line-clamp-2" style={{ color: subColor, fontSize: `${subSize}px` }}>{ad?.subtitle || 'Sub text goes here'}</p>
@@ -963,7 +1013,7 @@ export const Admin: React.FC = () => {
               className="space-y-6"
             >
               <button 
-                onClick={() => { setEditingAdId(null); setNewAd({ ...DEFAULT_AD }); setIsAddingAd(true); }}
+                onClick={() => { setEditingAdId(null); setNewAd({ ...DEFAULT_AD }); resetSizeFields(); setIsAddingAd(true); }}
                 className="w-full bg-zinc-900 border border-zinc-800 border-dashed py-6 rounded-3xl flex flex-col items-center gap-2 hover:bg-zinc-800 transition-colors"
               >
                 <div className="w-10 h-10 rounded-full bg-blue-500/10 flex items-center justify-center">
@@ -1006,6 +1056,7 @@ export const Admin: React.FC = () => {
                           <button
                             onClick={() => {
                               setNewAd({ ...DEFAULT_AD, ...ad, expires_at: isoToDatetimeLocal(ad?.expires_at) });
+                              loadSizeFieldsFromAd(ad);
                               setEditingAdId(ad.id);
                               setIsAddingAd(true);
                             }}
@@ -1073,7 +1124,7 @@ export const Admin: React.FC = () => {
                     <motion.div 
                       initial={{ opacity: 0 }} animate={{ opacity: 1 }} exit={{ opacity: 0 }}
                       className="fixed inset-0 bg-black/80 backdrop-blur-sm z-50"
-                      onClick={() => { setIsAddingAd(false); setEditingAdId(null); setNewAd({ ...DEFAULT_AD }); }}
+                      onClick={() => { setIsAddingAd(false); setEditingAdId(null); setNewAd({ ...DEFAULT_AD }); resetSizeFields(); }}
                     />
                     <motion.div 
                       initial={{ y: '100%' }} animate={{ y: 0 }} exit={{ y: '100%' }}
@@ -1105,12 +1156,30 @@ export const Admin: React.FC = () => {
                            <label className="text-[10px] font-bold text-zinc-500 uppercase tracking-widest cursor-pointer block">Upload PNG<input type="file" accept="image/png,image/*" className="hidden" onChange={(e) => { const file = e.target.files?.[0]; if (file) handleUploadAsDataUrl(file, (dataUrl) => setNewAd({ ...newAd, image_url: dataUrl }), { width: 480, height: 360, quality: 0.95 }); }} /></label>
                            <input value={newAd.cta} onChange={e => setNewAd({...newAd, cta: e.target.value})} placeholder="Button text" className="w-full bg-zinc-800 border-none rounded-2xl p-4 text-white text-sm font-bold placeholder:text-zinc-600 focus:ring-2 ring-blue-500/50" />
                            <div className="grid grid-cols-2 gap-3">
-                             <input type="number" value={newAd.hero_size ?? 32} onChange={e => setNewAd({ ...newAd, hero_size: sanitizeNumberish(e.target.value, 32) })} placeholder="Hero text size" className="bg-zinc-800 border-none rounded-2xl p-3 text-white text-xs font-bold" />
-                             <input type="number" value={newAd.sub_size ?? 18} onChange={e => setNewAd({ ...newAd, sub_size: sanitizeNumberish(e.target.value, 18) })} placeholder="Sub text size" className="bg-zinc-800 border-none rounded-2xl p-3 text-white text-xs font-bold" />
-                             <input type="number" value={newAd.button_text_size ?? 14} onChange={e => setNewAd({ ...newAd, button_text_size: sanitizeNumberish(e.target.value, 14) })} placeholder="Button text size" className="bg-zinc-800 border-none rounded-2xl p-3 text-white text-xs font-bold" />
-                             <input type="number" value={newAd.button_radius ?? 999} onChange={e => setNewAd({ ...newAd, button_radius: sanitizeNumberish(e.target.value, 999) })} placeholder="Button radius" className="bg-zinc-800 border-none rounded-2xl p-3 text-white text-xs font-bold" />
-                             <input type="number" value={newAd.button_pad_x ?? 20} onChange={e => setNewAd({ ...newAd, button_pad_x: sanitizeNumberish(e.target.value, 20) })} placeholder="Button width pad" className="bg-zinc-800 border-none rounded-2xl p-3 text-white text-xs font-bold" />
-                             <input type="number" value={newAd.button_pad_y ?? 8} onChange={e => setNewAd({ ...newAd, button_pad_y: sanitizeNumberish(e.target.value, 8) })} placeholder="Button height pad" className="bg-zinc-800 border-none rounded-2xl p-3 text-white text-xs font-bold" />
+                             <div className="bg-zinc-800/50 rounded-2xl p-3 space-y-1">
+                               <p className="text-[10px] text-zinc-500">Hero text size (px)</p>
+                               <input type="number" min="0" value={sizeFields.hero_size} onChange={e => setSizeFields(f => ({ ...f, hero_size: e.target.value }))} onBlur={e => { if (e.target.value === '') setSizeFields(f => ({ ...f, hero_size: String(DEFAULT_AD.hero_size) })); }} placeholder="32" className="w-full bg-transparent text-white text-sm font-bold focus:outline-none" />
+                             </div>
+                             <div className="bg-zinc-800/50 rounded-2xl p-3 space-y-1">
+                               <p className="text-[10px] text-zinc-500">Sub text size (px)</p>
+                               <input type="number" min="0" value={sizeFields.sub_size} onChange={e => setSizeFields(f => ({ ...f, sub_size: e.target.value }))} onBlur={e => { if (e.target.value === '') setSizeFields(f => ({ ...f, sub_size: String(DEFAULT_AD.sub_size) })); }} placeholder="18" className="w-full bg-transparent text-white text-sm font-bold focus:outline-none" />
+                             </div>
+                             <div className="bg-zinc-800/50 rounded-2xl p-3 space-y-1">
+                               <p className="text-[10px] text-zinc-500">Button text size (px)</p>
+                               <input type="number" min="0" value={sizeFields.button_text_size} onChange={e => setSizeFields(f => ({ ...f, button_text_size: e.target.value }))} onBlur={e => { if (e.target.value === '') setSizeFields(f => ({ ...f, button_text_size: String(DEFAULT_AD.button_text_size) })); }} placeholder="14" className="w-full bg-transparent text-white text-sm font-bold focus:outline-none" />
+                             </div>
+                             <div className="bg-zinc-800/50 rounded-2xl p-3 space-y-1">
+                               <p className="text-[10px] text-zinc-500">Button radius (px)</p>
+                               <input type="number" min="0" value={sizeFields.button_radius} onChange={e => setSizeFields(f => ({ ...f, button_radius: e.target.value }))} onBlur={e => { if (e.target.value === '') setSizeFields(f => ({ ...f, button_radius: String(DEFAULT_AD.button_radius) })); }} placeholder="999" className="w-full bg-transparent text-white text-sm font-bold focus:outline-none" />
+                             </div>
+                             <div className="bg-zinc-800/50 rounded-2xl p-3 space-y-1">
+                               <p className="text-[10px] text-zinc-500">Button pad X (px)</p>
+                               <input type="number" min="0" value={sizeFields.button_pad_x} onChange={e => setSizeFields(f => ({ ...f, button_pad_x: e.target.value }))} onBlur={e => { if (e.target.value === '') setSizeFields(f => ({ ...f, button_pad_x: String(DEFAULT_AD.button_pad_x) })); }} placeholder="20" className="w-full bg-transparent text-white text-sm font-bold focus:outline-none" />
+                             </div>
+                             <div className="bg-zinc-800/50 rounded-2xl p-3 space-y-1">
+                               <p className="text-[10px] text-zinc-500">Button pad Y (px)</p>
+                               <input type="number" min="0" value={sizeFields.button_pad_y} onChange={e => setSizeFields(f => ({ ...f, button_pad_y: e.target.value }))} onBlur={e => { if (e.target.value === '') setSizeFields(f => ({ ...f, button_pad_y: String(DEFAULT_AD.button_pad_y) })); }} placeholder="8" className="w-full bg-transparent text-white text-sm font-bold focus:outline-none" />
+                             </div>
                            </div>
                         </div>
                         <div className="space-y-2">
