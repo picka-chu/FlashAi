@@ -79,9 +79,12 @@ export const Analyze: React.FC<{ onTabChange?: (tab: string) => void }> = ({ onT
   useEffect(() => {
     const performAnalysis = async () => {
       if (isAnalyzing && selectedMatch && !analysisResult) {
+        // Live analysis results are pre-loaded by LiveMatchPreview before navigation.
+        // If analysisResult is already set (the normal live flow), just stop the spinner.
+        // Only show an error if we somehow arrived here without a result.
         if (selectedMatch.analysisType === 'live') {
           setIsAnalyzing(false);
-          setError('Live analysis result not ready. Please return to live preview and retry.');
+          // analysisResult already set by LiveMatchPreview.handleAnalyze — nothing to do.
           return;
         }
         setError(null);

@@ -139,18 +139,19 @@ export const Matches: React.FC<MatchesProps> = ({ onTabChange }) => {
       showAlert('This live match is missing a valid fixture id. Please refresh and try another match.');
       return;
     }
+    hapticFeedback('light');
+
+    // Optimistic navigation: open the page immediately with whatever data we have.
+    // The page will auto-refresh every 20s for live stats.
+    setLivePreviewMatch(formatMatch(match));
+    onTabChange('livePreview');
+
+    // Then try to enrich with fresh data from the backend (non-blocking).
     try {
-      hapticFeedback('light');
       const preview = await getLiveMatchPreview(String(match.id), initData || '');
-      setLivePreviewMatch(formatMatch(preview));
-      onTabChange('livePreview');
-    } catch (error: any) {
-      if (match?.teams && match?.fixture) {
-        setLivePreviewMatch(formatMatch(match));
-        onTabChange('livePreview');
-        return;
-      }
-      showAlert(error?.message || 'Failed to open live match preview');
+      if (preview) setLivePreviewMatch(formatMatch(preview));
+    } catch {
+      // Silently ignore — user is already on the live preview page with the snapshot data.
     }
   };
 

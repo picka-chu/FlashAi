@@ -4,9 +4,10 @@ import { analyzeLiveMatch, getLiveMatchPreview } from '../services/footballServi
 import { useTelegram } from '../hooks/useTelegram';
 import { useUserStore } from '../store/useUserStore';
 
-const statPercent = (value: string | number) => {
+const statPercent = (value: string | number | undefined | null, fallback = 0) => {
+  if (value == null || value === '') return fallback;
   const raw = typeof value === 'number' ? value : Number(String(value).replace('%', '').replace(',', '.'));
-  if (!Number.isFinite(raw)) return 50;
+  if (!Number.isFinite(raw)) return fallback;
   return Math.max(0, Math.min(100, raw));
 };
 
@@ -52,10 +53,10 @@ export const LiveMatchPreview: React.FC<{ onBack: () => void; onGoAnalyze: () =>
     const stats = livePreviewMatch?.stats || {};
     const homePassing = statPercent(stats?.possession?.home || 50);
     return [
-      { label: 'Attacks', home: statPercent(stats?.shots?.home || 50), away: statPercent(stats?.shots?.away || 50) },
+      { label: 'Attacks', home: statPercent(stats?.shots?.home), away: statPercent(stats?.shots?.away) },
       { label: 'Possession', home: homePassing, away: 100 - homePassing },
-      { label: 'On Target', home: statPercent(stats?.shotsOnTarget?.home || 50), away: statPercent(stats?.shotsOnTarget?.away || 50) },
-      { label: 'Corners', home: statPercent(stats?.corners?.home || 50), away: statPercent(stats?.corners?.away || 50) },
+      { label: 'On Target', home: statPercent(stats?.shotsOnTarget?.home), away: statPercent(stats?.shotsOnTarget?.away) },
+      { label: 'Corners', home: statPercent(stats?.corners?.home), away: statPercent(stats?.corners?.away) },
     ];
   }, [livePreviewMatch]);
 
@@ -83,14 +84,27 @@ export const LiveMatchPreview: React.FC<{ onBack: () => void; onGoAnalyze: () =>
         { fixtureId: String(fixtureId), liveSnapshot: livePreviewMatch },
         initData || ''
       );
-      setSelectedMatch({ ...livePreviewMatch, liveSnapshot: payload?.liveData || livePreviewMatch, analysisType: 'live' });
+
       if (!payload?.result) {
         setAnalyzeError('Analysis response was incomplete. Tap Retry to try again.');
         return;
       }
+
+      // Set ALL store state BEFORE navigating — Analyze.tsx reads on mount.
+      // Wrong order = race condition = blank/error page.
       setAnalysisResult(payload.result);
       setIsAnalyzing(false);
-      if (typeof payload?.newCredits === 'number' && user) setUser({ ...user, credits: payload.newCredits });
+      setSelectedMatch({
+        ...livePreviewMatch,
+        liveSnapshot: payload?.liveData || livePreviewMatch,
+        analysisType: 'live',
+      });
+      if (typeof payload?.newCredits === 'number' && user) {
+        setUser({ ...user, credits: payload.newCredits });
+      }
+
+      // Let Zustand flush before React re-renders the new tab
+      await new Promise(r => setTimeout(r, 30));
       onGoAnalyze();
     } catch (error: any) {
       const msg = error?.message || 'Live analysis failed. Please try again.';
