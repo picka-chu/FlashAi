@@ -1,20 +1,22 @@
 /**
  * Professional API Caching System for Gemini AI
- * Optimized for analysis and prediction usage
- * Features:
- * - Intelligent cache key generation
- * - TTL-based expiration
- * - Circular API key rotation (9 keys)
- * - Rate limit handling
- * - Error recovery
+ * Optimized for real-time prediction accuracy.
+ *
+ * TTL Strategy (accuracy-first):
+ *   Context (injuries/lineups) → 15 min  [was 2h — stale lineups are the #1 accuracy killer]
+ *   Match analysis             → 20 min  [was 2h — model kept serving stale AI reasoning]
+ *   Predictions                → 20 min
+ *   Live match data            →  3 min
+ *   Top fixtures               → 15 min
+ *   H2H / historical           → 60 min  [slow-changing, OK to cache longer]
+ *   Fallback AI-sourced stats  → 10 min  [estimates — expire quickly]
  */
 
 import { GoogleGenAI } from "@google/genai";
 
-// Cache configuration
 export interface CacheConfig {
-  ttl: number; // Time to live in milliseconds
-  maxEntries?: number; // Maximum cache entries (for memory safety)
+  ttl: number;
+  maxEntries?: number;
 }
 
 export interface CachedResponse<T> {
@@ -29,523 +31,243 @@ export interface CachedResponse<T> {
   };
 }
 
-// Default cache configuration
-const DEFAULT_CACHE_CONFIG: CacheConfig = {
-  ttl: 60 * 60 * 1000, // 1 hour for predictions
-  maxEntries: 1000,
-};
+// ─── TTL constants (single source of truth) ──────────────────────────────────
+export const TTL = {
+  CONTEXT:    15 * 60 * 1000,  // injuries/lineups — must expire fast
+  ANALYSIS:   20 * 60 * 1000,  // AI match analysis
+  PREDICTION: 20 * 60 * 1000,  // full prediction results
+  LIVE:        3 * 60 * 1000,  // live in-play state
+  FIXTURES:   15 * 60 * 1000,  // today's fixture list
+  H2H:        60 * 60 * 1000,  // head-to-head history
+  FALLBACK:   10 * 60 * 1000,  // AI-sourced team stats (short — they are estimates)
+} as const;
 
-// Analysis-specific cache (longer TTL for stable data)
-const ANALYSIS_CACHE_CONFIG: CacheConfig = {
-  ttl: 2 * 60 * 60 * 1000, // 2 hours
-  maxEntries: 500,
-};
+const ANALYSIS_CACHE_CONFIG:  CacheConfig = { ttl: TTL.ANALYSIS,    maxEntries: 500 };
+const PREDICTION_CACHE_CONFIG: CacheConfig = { ttl: TTL.PREDICTION,  maxEntries: 300 };
+const GLOBAL_CACHE_CONFIG:    CacheConfig = { ttl: TTL.FIXTURES,     maxEntries: 200 };
 
-// Prediction-specific cache (shorter TTL for real-time accuracy)
-const PREDICTION_CACHE_CONFIG: CacheConfig = {
-  ttl: 30 * 60 * 1000, // 30 minutes
-  maxEntries: 300,
-};
-
+// ─── Cache Manager ────────────────────────────────────────────────────────────
 class ApiCacheManager {
   private cache: Map<string, CachedResponse<any>>;
   private config: CacheConfig;
-  private storageAvailable: boolean;
 
-  constructor(config: CacheConfig = DEFAULT_CACHE_CONFIG) {
+  constructor(config: CacheConfig) {
     this.cache = new Map();
     this.config = config;
-    this.storageAvailable = typeof localStorage !== 'undefined';
-    
-    // Load from localStorage if available
-    if (this.storageAvailable) {
-      this.loadFromStorage();
-    }
-
-    // Periodic cleanup
-    setInterval(() => this.cleanup(), 5 * 60 * 1000); // Every 5 minutes
+    setInterval(() => this.cleanup(), 5 * 60 * 1000);
   }
 
-  /**
-   * Generate intelligent cache key based on request type and parameters
-   */
   generateKey(prefix: string, params: any): string {
     const normalizedParams = JSON.stringify(params, Object.keys(params).sort());
-    const hash = this.simpleHash(normalizedParams);
-    return `${prefix}_${hash}`;
+    return `${prefix}_${this.simpleHash(normalizedParams)}`;
   }
 
-  /**
-   * Simple hash function for cache keys
-   */
   private simpleHash(str: string): string {
     let hash = 0;
     for (let i = 0; i < str.length; i++) {
       const char = str.charCodeAt(i);
       hash = ((hash << 5) - hash) + char;
-      hash = hash & hash; // Convert to 32bit integer
+      hash = hash & hash;
     }
     return Math.abs(hash).toString(36);
   }
 
-  /**
-   * Get cached response if valid
-   */
   get<T>(key: string): CachedResponse<T> | null {
     const cached = this.cache.get(key);
-    
-    if (!cached) {
-      return null;
-    }
-
-    // Check expiration
+    if (!cached) return null;
     if (Date.now() > cached.expiresAt) {
       this.cache.delete(key);
       return null;
     }
-
     return cached as CachedResponse<T>;
   }
 
-  /**
-   * Set cache entry
-   */
-  set<T>(key: string, data: T, metadata?: CachedResponse<T>['metadata'], customTtl?: number): void {
-    const ttl = customTtl || this.config.ttl;
-    const now = Date.now();
-    
-    const entry: CachedResponse<T> = {
+  set<T>(
+    key: string,
+    data: T,
+    metadata?: CachedResponse<T>['metadata'],
+    customTtl?: number
+  ): void {
+    const ttl = customTtl ?? this.config.ttl;
+    const maxEntries = this.config.maxEntries ?? 1000;
+
+    if (this.cache.size >= maxEntries) {
+      const oldest = [...this.cache.entries()]
+        .sort(([, a], [, b]) => a.timestamp - b.timestamp)[0];
+      if (oldest) this.cache.delete(oldest[0]);
+    }
+
+    this.cache.set(key, {
       data,
-      timestamp: now,
-      expiresAt: now + ttl,
+      timestamp: Date.now(),
+      expiresAt: Date.now() + ttl,
       key,
       metadata,
-    };
-
-    // Enforce max entries
-    if (this.config.maxEntries && this.cache.size >= this.config.maxEntries) {
-      // Remove oldest entry
-      const firstKey = this.cache.keys().next().value;
-      if (firstKey) {
-        this.cache.delete(firstKey);
-      }
-    }
-
-    this.cache.set(key, entry);
-    
-    // Persist to localStorage if available
-    if (this.storageAvailable) {
-      this.saveToStorage();
-    }
+    });
   }
 
-  /**
-   * Invalidate cache entries matching pattern
-   */
-  invalidate(pattern: string): void {
+  delete(key: string): void {
+    this.cache.delete(key);
+  }
+
+  /** Invalidate all cache entries whose key starts with `prefix`. */
+  invalidatePrefix(prefix: string): number {
+    let count = 0;
     for (const key of this.cache.keys()) {
-      if (key.startsWith(pattern)) {
-        this.cache.delete(key);
-      }
+      if (key.startsWith(prefix)) { this.cache.delete(key); count++; }
     }
-    
-    if (this.storageAvailable) {
-      this.saveToStorage();
-    }
+    return count;
   }
 
-  /**
-   * Clear all cache
-   */
-  clear(): void {
-    this.cache.clear();
-    if (this.storageAvailable) {
-      localStorage.removeItem('gemini_api_cache');
-    }
-  }
-
-  /**
-   * Get cache statistics
-   */
-  getStats(): { size: number; hits: number; misses: number } {
-    return {
-      size: this.cache.size,
-      hits: 0, // Would need tracking
-      misses: 0,
-    };
-  }
-
-  /**
-   * Cleanup expired entries
-   */
-  private cleanup(): void {
+  cleanup(): void {
     const now = Date.now();
     for (const [key, entry] of this.cache.entries()) {
-      if (now > entry.expiresAt) {
-        this.cache.delete(key);
-      }
-    }
-    
-    if (this.storageAvailable) {
-      this.saveToStorage();
+      if (now > entry.expiresAt) this.cache.delete(key);
     }
   }
 
-  /**
-   * Save cache to localStorage
-   */
-  private saveToStorage(): void {
-    try {
-      const serializable = Array.from(this.cache.entries()).map(([key, entry]) => ({
-        key,
-        ...entry,
-      }));
-      localStorage.setItem('gemini_api_cache', JSON.stringify(serializable));
-    } catch (error) {
-      console.warn('Failed to save cache to localStorage:', error);
-    }
-  }
-
-  /**
-   * Load cache from localStorage
-   */
-  private loadFromStorage(): void {
-    try {
-      const stored = localStorage.getItem('gemini_api_cache');
-      if (stored) {
-        const parsed = JSON.parse(stored);
-        const now = Date.now();
-        
-        for (const item of parsed) {
-          // Only load non-expired entries
-          if (item.expiresAt && now <= item.expiresAt) {
-            this.cache.set(item.key, item);
-          }
-        }
-      }
-    } catch (error) {
-      console.warn('Failed to load cache from localStorage:', error);
-    }
+  stats() {
+    return { size: this.cache.size, maxEntries: this.config.maxEntries, ttlMs: this.config.ttl };
   }
 }
 
-/**
- * Circular API Key Manager
- * Rotates through analysis keys (GEMINI_API_KEY + GEMINI_API_KEY_1..7)
- * to distribute load and avoid rate limits.
- */
+// ─── API Key Manager ──────────────────────────────────────────────────────────
 class ApiKeyManager {
-  private keys: string[] = [];
+  private keys: string[];
   private currentIndex = 0;
-  private keyHealth: Map<number, { failures: number; lastFailure: number; cooldownUntil: number }> = new Map();
-  
+  private failedKeys: Set<number> = new Set();
+  private lastResetTime = Date.now();
+  private readonly RESET_INTERVAL = 10 * 60 * 1000;
+
   constructor() {
-    this.initializeKeys();
+    this.keys = this.loadKeys();
   }
 
-  /**
-   * Initialize analysis API keys from environment variables.
-   */
-  private initializeKeys(): void {
-    // Analysis / football workloads (primary heavy-token usage pool)
-    const potentialKeys = [
-      process.env.GEMINI_API_KEY,
-      process.env.GEMINI_API_KEY_1,
-      process.env.GEMINI_API_KEY_2,
-      process.env.GEMINI_API_KEY_3,
-      process.env.GEMINI_API_KEY_4,
-      process.env.GEMINI_API_KEY_5,
-      process.env.GEMINI_API_KEY_6,
-      process.env.GEMINI_API_KEY_7,
-    ].filter(Boolean) as string[];
-
-    // Deduplicate while preserving order
-    const uniqueKeys = [...new Set(potentialKeys)];
-    this.keys = uniqueKeys.slice(0, 8); // GEMINI_API_KEY + _1.._7
-    
-    // Initialize health tracking for each key
-    this.keys.forEach((_, index) => {
-      this.keyHealth.set(index, {
-        failures: 0,
-        lastFailure: 0,
-        cooldownUntil: 0,
-      });
-    });
-
-    if (this.keys.length > 0) {
-      console.log(`✅ Initialized ${this.keys.length} analysis Gemini API keys for circular rotation`);
-    } else if (typeof window !== 'undefined') {
-      console.warn("⚠️ No Gemini API keys found in frontend. This is expected for production security.");
-    } else {
-      console.error("❌ CRITICAL: No Gemini API keys found in backend environment.");
+  private loadKeys(): string[] {
+    const keys: string[] = [];
+    const base = process.env.GEMINI_API_KEY || process.env.GOOGLE_AI_API_KEY;
+    if (base) keys.push(base);
+    for (let i = 1; i <= 9; i++) {
+      const k = process.env[`GEMINI_API_KEY_${i}`];
+      if (k) keys.push(k);
     }
+    if (keys.length === 0) {
+      console.warn('[ApiKeyManager] No Gemini API keys found in environment.');
+    }
+    return keys;
   }
 
-  /**
-   * Get next healthy API key using circular rotation
-   */
   getNextKey(): { key: string; index: number } | null {
-    if (this.keys.length === 0) {
-      console.error('❌ No API keys configured');
-      return null;
+    if (this.keys.length === 0) return null;
+
+    if (Date.now() - this.lastResetTime > this.RESET_INTERVAL) {
+      this.failedKeys.clear();
+      this.lastResetTime = Date.now();
     }
 
-    const now = Date.now();
+    const startIndex = this.currentIndex;
     let attempts = 0;
-    const maxAttempts = this.keys.length;
-
-    while (attempts < maxAttempts) {
+    do {
       const index = this.currentIndex;
       this.currentIndex = (this.currentIndex + 1) % this.keys.length;
-      
-      const health = this.keyHealth.get(index);
-      
-      // Skip keys in cooldown
-      if (health && now < health.cooldownUntil) {
-        attempts++;
-        continue;
-      }
+      if (!this.failedKeys.has(index)) return { key: this.keys[index], index };
+      attempts++;
+    } while (attempts < this.keys.length);
 
-      return {
-        key: this.keys[index],
-        index,
-      };
-    }
-
-    // All keys in cooldown, return least recently failed
-    let bestIndex = 0;
-    let minCooldown = Infinity;
-    
-    for (let i = 0; i < this.keys.length; i++) {
-      const health = this.keyHealth.get(i);
-      if (health && health.cooldownUntil < minCooldown) {
-        minCooldown = health.cooldownUntil;
-        bestIndex = i;
-      }
-    }
-
-    return {
-      key: this.keys[bestIndex],
-      index: bestIndex,
-    };
+    this.failedKeys.clear();
+    return { key: this.keys[startIndex], index: startIndex };
   }
 
-  /**
-   * Report successful API call
-   */
-  reportSuccess(index: number): void {
-    const health = this.keyHealth.get(index);
-    if (health) {
-      // Reduce failure count on success
-      health.failures = Math.max(0, health.failures - 1);
-      health.lastFailure = 0;
-    }
+  markKeyFailed(index: number): void {
+    this.failedKeys.add(index);
+    console.warn(
+      `[ApiKeyManager] Key ${index} marked failed (${this.failedKeys.size}/${this.keys.length} failed)`
+    );
   }
 
-  /**
-   * Report failed API call
-   */
-  reportFailure(index: number, isRateLimit: boolean): void {
-    const health = this.keyHealth.get(index);
-    if (health) {
-      health.failures += 1;
-      health.lastFailure = Date.now();
-      
-      // Set cooldown based on failure type and count - Professional Rate Limiting
-      const baseCooldown = isRateLimit ? 30 * 1000 : 5 * 1000; // 30s for rate limit, 5s for other errors
-      const exponentialCooldown = baseCooldown * Math.pow(1.5, Math.min(health.failures - 1, 8));
-      health.cooldownUntil = Date.now() + Math.min(exponentialCooldown, 2 * 60 * 1000); // Max 2 min cooldown for professional tier
-      
-      console.warn(`⚠️ API key ${index + 1} marked unhealthy. Failures: ${health.failures}, Cooldown until: ${new Date(health.cooldownUntil).toISOString()}`);
-    }
-  }
-
-  /**
-   * Get key statistics
-   */
-  getStats(): { total: number; healthy: number; inCooldown: number } {
-    const now = Date.now();
-    return {
-      total: this.keys.length,
-      healthy: this.keys.filter((_, i) => {
-        const h = this.keyHealth.get(i);
-        return h && now >= h.cooldownUntil && h.failures < 3;
-      }).length,
-      inCooldown: this.keys.filter((_, i) => {
-        const h = this.keyHealth.get(i);
-        return h && now < h.cooldownUntil;
-      }).length,
-    };
+  get availableCount(): number {
+    return this.keys.length - this.failedKeys.size;
   }
 }
 
-// Singleton instances
-const globalCache = new ApiCacheManager(DEFAULT_CACHE_CONFIG);
-const analysisCache = new ApiCacheManager(ANALYSIS_CACHE_CONFIG);
-const predictionCache = new ApiCacheManager(PREDICTION_CACHE_CONFIG);
-const apiKeyManager = new ApiKeyManager();
-const inFlightRequests = new Map<string, Promise<any>>();
+// ─── Gemini client factory ────────────────────────────────────────────────────
+export function createGeminiClient(apiKey: string): GoogleGenAI {
+  return new GoogleGenAI({ apiKey });
+}
 
-// Export singleton instances
-export { globalCache, analysisCache, predictionCache, apiKeyManager };
-
-/**
- * Helper function to check if error is retryable
- */
+// ─── Error classifier ─────────────────────────────────────────────────────────
 export function isRetryableGeminiError(error: any): boolean {
-  const msg = String(error?.message || "").toLowerCase();
-  const status = error?.status;
-  
-  return Boolean(
-    status === 429 ||
-    status === 500 ||
-    status === 503 ||
-    msg.includes("resource_exhausted") ||
-    msg.includes("quota") ||
-    msg.includes("rate") ||
-    msg.includes("unavailable") ||
-    msg.includes("overloaded") ||
-    msg.includes("429") ||
-    msg.includes("failed to parse json from gemini response")
-  );
+  if (!error) return false;
+  const msg = (error.message || '').toLowerCase();
+  const status = error.status || error.code || 0;
+
+  if (status === 429 || status === 503 || status === 502) return true;
+  if (msg.includes('quota') || msg.includes('rate limit') || msg.includes('overloaded')) return true;
+  if (msg.includes('resource_exhausted') || msg.includes('service unavailable')) return true;
+
+  if (status === 400 || status === 401 || status === 403) return false;
+  if (msg.includes('invalid') || msg.includes('unauthorized') || msg.includes('permission')) return false;
+
+  return true;
 }
 
-function extractErrorMessage(error: any): string {
-  if (!error) return "Unknown error";
-  if (typeof error?.message === "string" && error.message.trim()) {
-    return error.message;
-  }
-  if (typeof error?.error?.message === "string" && error.error.message.trim()) {
-    return error.error.message;
-  }
-  try {
-    return JSON.stringify(error);
-  } catch {
-    return String(error);
-  }
+// ─── Universal execute-with-retry ────────────────────────────────────────────
+export interface RetryOptions<T> {
+  cache?: ApiCacheManager;
+  cacheKey?: string;
+  customTtl?: number;
+  maxRetries?: number;
+  metadata?: CachedResponse<T>['metadata'];
 }
 
-/**
- * Execute API call with automatic retry and key rotation
- */
 export async function executeWithRetry<T>(
-  operation: (apiKey: string, index: number) => Promise<T>,
-  options: {
-    maxRetries?: number;
-    cache?: ApiCacheManager;
-    cacheKey?: string;
-    customTtl?: number;
-    metadata?: any;
-  } = {}
+  fn: (apiKey: string, keyIndex: number) => Promise<T>,
+  options: RetryOptions<T> = {}
 ): Promise<T> {
-  const {
-    maxRetries = 3,
-    cache,
-    cacheKey,
-    customTtl,
-    metadata,
-  } = options;
+  const { cache, cacheKey, customTtl, maxRetries = 3, metadata } = options;
 
-  const inFlightKey = cacheKey ? `retry:${cacheKey}` : null;
-
-  // Check cache first
   if (cache && cacheKey) {
     const cached = cache.get<T>(cacheKey);
     if (cached) {
-      console.log(`✅ Cache hit for key: ${cacheKey}`);
+      console.log(`✅ Cache hit: ${cacheKey}`);
       return cached.data;
     }
   }
 
-  // De-duplicate concurrent identical requests to save API quota.
-  if (inFlightKey && inFlightRequests.has(inFlightKey)) {
-    return inFlightRequests.get(inFlightKey) as Promise<T>;
-  }
+  let lastError: any;
 
-  const runner = (async () => {
-    let lastError: any = null;
-    let attempt = 0;
+  for (let attempt = 0; attempt < maxRetries; attempt++) {
+    const keyData = apiKeyManager.getNextKey();
+    if (!keyData) throw new Error('No Gemini API keys configured.');
 
-    while (attempt < maxRetries) {
-      const keyInfo = apiKeyManager.getNextKey();
-      
-      if (!keyInfo) {
-        throw new Error('No API keys available');
+    try {
+      const result = await fn(keyData.key, keyData.index);
+      if (cache && cacheKey) {
+        cache.set(cacheKey, result, metadata, customTtl);
       }
+      return result;
+    } catch (error: any) {
+      lastError = error;
+      console.warn(
+        `[executeWithRetry] Attempt ${attempt + 1}/${maxRetries} failed:`,
+        error?.message ?? error
+      );
 
-      // Optimized Jitter: Reduced for faster recovery
-      if (attempt > 0) {
-        const jitter = Math.random() * 500;
-        await new Promise(resolve => setTimeout(resolve, jitter));
-      }
+      if (!isRetryableGeminiError(error)) throw error;
+      apiKeyManager.markKeyFailed(keyData.index);
 
-      try {
-        const result = await operation(keyInfo.key, keyInfo.index);
-        
-        // Report success
-        apiKeyManager.reportSuccess(keyInfo.index);
-        
-        // Cache result if cache provided
-        if (cache && cacheKey) {
-          cache.set(cacheKey, result, {
-            ...metadata,
-            apiKeyIndex: keyInfo.index,
-          }, customTtl);
-        }
-        
-        return result;
-      } catch (error: any) {
-        lastError = error;
-        attempt++;
-        
-        const isRateLimit = isRetryableGeminiError(error);
-        
-        // Report failure
-        apiKeyManager.reportFailure(keyInfo.index, isRateLimit);
-        
-        // Fast key rotation for rate limits without exponential backoff
-        if (isRateLimit && attempt < maxRetries) {
-          console.log(`🔄 Rate limit hit, fast rotating to next key (attempt ${attempt}/${maxRetries})`);
-          // Skip delay and try next key immediately
-          continue;
-        }
-        
-        if (!isRetryableGeminiError(error)) {
-          console.error('❌ Non-retryable error:', error.message);
-          throw error;
-        }
-        
-        // Reduced backoff for other retryable errors
-        const delay = Math.min(500 * Math.pow(1.5, attempt), 2000);
-        await new Promise(resolve => setTimeout(resolve, delay));
+      if (attempt < maxRetries - 1) {
+        const delay = Math.min(1000 * Math.pow(2, attempt), 8000);
+        await new Promise(r => setTimeout(r, delay));
       }
     }
-
-    throw new Error(`All retries failed. Last error: ${extractErrorMessage(lastError)}`);
-  })();
-
-  if (inFlightKey) {
-    inFlightRequests.set(inFlightKey, runner);
-    runner.finally(() => inFlightRequests.delete(inFlightKey));
   }
 
-  return runner;
+  throw lastError ?? new Error('executeWithRetry: all attempts exhausted');
 }
 
-/**
- * Create a Gemini client with the next available API key
- */
-export function createGeminiClient(): { ai: GoogleGenAI; index: number } | null {
-  const keyInfo = apiKeyManager.getNextKey();
-  
-  if (!keyInfo) {
-    return null;
-  }
-
-  return {
-    ai: new GoogleGenAI({ apiKey: keyInfo.key }),
-    index: keyInfo.index,
-  };
-}
-
-export default ApiCacheManager;
+// ─── Singleton instances ──────────────────────────────────────────────────────
+export const apiKeyManager   = new ApiKeyManager();
+export const analysisCache   = new ApiCacheManager(ANALYSIS_CACHE_CONFIG);
+export const predictionCache = new ApiCacheManager(PREDICTION_CACHE_CONFIG);
+export const globalCache     = new ApiCacheManager(GLOBAL_CACHE_CONFIG);
