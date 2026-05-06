@@ -33,6 +33,7 @@ import { useTelegram } from '../hooks/useTelegram';
 import { SignUpSheet } from '../components/SignUpSheet';
 import { ModernMatchCard } from '../components/ModernMatchCard';
 import { FeaturedMatchCard } from '../components/FeaturedMatchCard';
+import { formatMatch } from '../lib/matchUtils';
 
 const CountdownBadge: React.FC<{ expiresAt: string, color: string }> = ({ expiresAt, color }) => {
   const [timeLeft, setTimeLeft] = useState('');
@@ -226,52 +227,15 @@ export const Home: React.FC<HomeProps> = ({ onTabChange }) => {
         }
         
         const mappedUpcoming = upcoming.map((m: any, i: number) => {
-          const leagueName = m.league?.name || m.league?.displayName || m.competition?.name || 'Unknown League';
+          const formatted = formatMatch(m);
           return {
-            ...m,
-            id: m.fixture.id,
-            home: m.teams.home.name,
-            away: m.teams.away.name,
-            homeShort: m.teams.home.name.substring(0, 3).toUpperCase(),
-            awayShort: m.teams.away.name.substring(0, 3).toUpperCase(),
-            homeLogo: m.teams.home.logo,
-            awayLogo: m.teams.away.logo,
-            league: leagueName,
+            ...formatted,
             confidence: m.confidence || null,
-            time: new Date(m.fixture.date).toLocaleTimeString('en-GB', { hour: '2-digit', minute: '2-digit' }),
-            date: (() => {
-              const matchDate = new Date(m.fixture.date);
-              const today = new Date();
-              const tomorrow = new Date();
-              tomorrow.setDate(today.getDate() + 1);
-              
-              if (matchDate.toDateString() === today.toDateString()) return 'Today';
-              if (matchDate.toDateString() === tomorrow.toDateString()) return 'Tomorrow';
-              return matchDate.toLocaleDateString('en-GB', { day: '2-digit', month: 'short' });
-            })(),
             gradient: i % 2 === 0 ? 'from-white/10 via-zinc-900 to-sky-500/20' : 'from-red-500/20 via-zinc-900 to-red-600/10'
           };
         });
 
-        const mappedLive = (Array.isArray(live) ? live : []).map((m: any, i: number) => ({
-          ...m,
-          id: m.fixture?.id || `live_${i}`,
-          home: m.teams?.home?.name || 'Home',
-          away: m.teams?.away?.name || 'Away',
-          homeShort: (m.teams?.home?.name || 'H').substring(0, 3).toUpperCase(),
-          awayShort: (m.teams?.away?.name || 'A').substring(0, 3).toUpperCase(),
-          homeLogo: m.teams?.home?.logo,
-          awayLogo: m.teams?.away?.logo,
-          league: m.league?.name || 'Live Football',
-          score: `${m.goals?.home ?? 0}-${m.goals?.away ?? 0}`,
-          minute: (() => {
-            const elapsed = Number(m.fixture?.status?.elapsed || 0);
-            const minutes = Math.floor(elapsed / 60);
-            const seconds = Math.floor(elapsed % 60);
-            return elapsed > 0 ? `${minutes}:${String(seconds).padStart(2, '0')}` : 'LIVE';
-          })(),
-          status: 'Live'
-        }));
+        const mappedLive = (Array.isArray(live) ? live : []).map((m: any) => formatMatch(m));
         setLiveMatches(mappedLive.slice(0, 20));
 
         if (trending && trending.length > 0) {

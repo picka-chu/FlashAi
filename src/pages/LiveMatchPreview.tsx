@@ -3,6 +3,7 @@ import { ArrowLeft, BarChart3, Loader2, RefreshCw, Sparkles, Zap, AlertTriangle 
 import { analyzeLiveMatch, getLiveMatchPreview } from '../services/footballService';
 import { useTelegram } from '../hooks/useTelegram';
 import { useUserStore } from '../store/useUserStore';
+import { formatMatch } from '../lib/matchUtils';
 
 const statPercent = (value: string | number | undefined | null, fallback = 0) => {
   if (value == null || value === '') return fallback;
@@ -33,7 +34,11 @@ export const LiveMatchPreview: React.FC<{ onBack: () => void; onGoAnalyze: () =>
       setLoading(true);
       try {
         const data = await getLiveMatchPreview(String(fixtureId), initData || '');
-        if (mounted) setLivePreviewMatch({ ...livePreviewMatch, ...data });
+        if (mounted && data) {
+          // Format the raw backend data before merging into state
+          const formatted = formatMatch(data);
+          setLivePreviewMatch({ ...livePreviewMatch, ...formatted });
+        }
       } catch {
         // keep last snapshot — don't show error for background refresh failures
       } finally {
