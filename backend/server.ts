@@ -1056,10 +1056,30 @@ async function startServer() {
 
       // 2. Perform Analysis
       const { analyzeMatchWithSearch } = await import("./services/geminiService.js");
-      let result = await Promise.race([
+      const runTimedAnalysis = () => Promise.race([
         analyzeMatchWithSearch(matchString),
-        new Promise((_, reject) => setTimeout(() => reject(new Error("AI analysis timeout")), 30_000))
-      ]) as any;
+        new Promise((_, reject) => setTimeout(() => reject(new Error("AI analysis timeout")), 45_000))
+      ]) as Promise<any>;
+
+      let result: any = null;
+      let lastAnalysisError: any = null;
+      for (let attempt = 1; attempt <= 2; attempt += 1) {
+        try {
+          result = await runTimedAnalysis();
+          break;
+        } catch (attemptError: any) {
+          lastAnalysisError = attemptError;
+          const message = String(attemptError?.message || "");
+          const isTransient = message.includes("timeout") || message.includes("UNAVAILABLE") || message.includes("RESOURCE_EXHAUSTED") || attemptError?.status === 429 || attemptError?.status === 503;
+          if (!isTransient || attempt === 2) {
+            throw attemptError;
+          }
+          await new Promise((resolve) => setTimeout(resolve, 800));
+        }
+      }
+      if (!result && lastAnalysisError) {
+        throw lastAnalysisError;
+      }
 
       // 2.5. Shape result based on plan
       // Free: 1 prediction
@@ -1141,6 +1161,9 @@ async function startServer() {
       }
       if (message.includes("UNAVAILABLE") || e?.status === 503) {
         return c.json({ error: "AI model temporarily unavailable. Please retry shortly." }, 503);
+      }
+      if (message.includes("timeout")) {
+        return c.json({ error: "Analysis is taking longer than expected. Please retry." }, 504);
       }
       return c.json({ error: "Failed to perform analysis" }, 500);
     }
