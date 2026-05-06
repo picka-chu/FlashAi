@@ -828,13 +828,33 @@ async function startServer() {
       }
 
       const fixtureId = c.req.param("fixtureId");
+
+      // 1. Try BSD direct lookup (works for bsd_ prefixed IDs)
       let preview: any = await getLiveMatchPreview(fixtureId);
+
+      // 2. Scan live match list — works for any ID format (espn_, bsd_, sportsapi_)
       if (!preview) {
         const liveMatches = await getLiveMatches();
-        preview = liveMatches.find((m: any) => String(m?.fixture?.id || "") === String(fixtureId || ""));
+        preview = liveMatches.find((m: any) => {
+          const mId = String(m?.fixture?.id || m?.id || "");
+          const fId = String(fixtureId || "");
+          return mId === fId || mId.endsWith(fId) || fId.endsWith(mId);
+        });
       }
+
+      // 3. Last resort: return a minimal valid shell so the page still opens
+      //    (the frontend will refresh every 20s and fill in real data)
       if (!preview) {
-        return c.json({ error: "Live match preview is unavailable right now." }, 404);
+        console.warn(`[live/preview] No data found for fixtureId=${fixtureId}. Returning shell.`);
+        return c.json({
+          fixture: { id: fixtureId, date: new Date().toISOString(), status: { short: "LIVE", elapsed: 0, state: "in" } },
+          teams: { home: { name: "Home", id: 0, logo: null }, away: { name: "Away", id: 0, logo: null } },
+          goals: { home: 0, away: 0 },
+          stats: { possession: { home: "50", away: "50" }, shotsOnTarget: { home: "0", away: "0" }, shots: { home: "0", away: "0" }, corners: { home: "0", away: "0" } },
+          league: { name: "Live Football" },
+          xG: { home: 0, away: 0 },
+          _shell: true,
+        });
       }
       return c.json(preview);
     } catch (error: any) {
@@ -1284,12 +1304,34 @@ async function startServer() {
         }, 402);
       }
 
-      const liveData = (await getLiveMatchPreview(normalizedFixtureId)) || liveSnapshot || null;
-      if (!liveData?.teams?.home?.name || !liveData?.teams?.away?.name) {
-        return c.json({ error: "Live match data unavailable. Try again in a few moments." }, 503);
+      // Merge live API data with the client-side snapshot — whichever has more detail wins
+      const apiLive = await getLiveMatchPreview(normalizedFixtureId).catch(() => null);
+      const liveData: any = apiLive || liveSnapshot || null;
+
+      // Extract team names from various data shapes (BSD, ESPN, formatted snapshot)
+      const homeName =
+        liveData?.teams?.home?.name ||
+        liveData?.home ||
+        liveSnapshot?.teams?.home?.name ||
+        liveSnapshot?.home ||
+        null;
+      const awayName =
+        liveData?.teams?.away?.name ||
+        liveData?.away ||
+        liveSnapshot?.teams?.away?.name ||
+        liveSnapshot?.away ||
+        null;
+
+      if (!homeName || !awayName) {
+        return c.json({ error: "Could not identify teams for this fixture. Please go back and reopen the match." }, 503);
       }
 
-      const matchString = `${liveData.teams.home.name} vs ${liveData.teams.away.name}`;
+      // Normalise liveData so downstream code always sees teams.home.name / teams.away.name
+      if (liveData && !liveData.teams) {
+        liveData.teams = { home: { name: homeName }, away: { name: awayName } };
+      }
+
+      const matchString = `${homeName} vs ${awayName}`;
       const structuredContext = JSON.stringify({
         fixtureId: liveData.fixture?.id || normalizedFixtureId,
         score: liveData.goals,
