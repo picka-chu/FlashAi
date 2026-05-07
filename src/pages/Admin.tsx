@@ -683,6 +683,10 @@ export const Admin: React.FC = () => {
     analyze: 'Analyze',
     history: 'History',
     profile: 'Profile',
+    subscriptions: 'Subscription Plans',
+    paymentmethods: 'Payment Methods',
+    referralearn: 'Referral & Earn',
+    support: 'Support',
     livePreview: 'Live Preview'
   } as Record<string,string>)[v] || v;
 
@@ -1188,7 +1192,7 @@ export const Admin: React.FC = () => {
                             <input value={newAd.link} onChange={e => setNewAd({ ...newAd, link: e.target.value })} placeholder="External URL (https://...)" className="w-full bg-zinc-800 border-none rounded-2xl p-4 text-white text-sm font-bold placeholder:text-zinc-600 focus:ring-2 ring-blue-500/50" />
                            ) : (
                             <select value={newAd.internal_target} onChange={e => setNewAd({ ...newAd, internal_target: e.target.value })} className="w-full bg-zinc-800 rounded-2xl p-4 text-white text-sm font-bold focus:outline-none focus:ring-2 ring-blue-500/50">
-                              <option value="home">Home page</option><option value="matches">Matches page</option><option value="analyze">Analyze page</option><option value="history">History page</option><option value="profile">Profile page</option><option value="livePreview">Live Preview page</option>
+                              <option value="home">Home page</option><option value="matches">Matches page</option><option value="analyze">Analyze page</option><option value="history">History page</option><option value="profile">Profile page</option><option value="subscriptions">Subscription Plans</option><option value="paymentMethods">Payment Methods</option><option value="referralEarn">Referral & Earn</option><option value="support">Support</option><option value="livePreview">Live Preview page</option>
                             </select>
                            )}
                            <label className="flex items-center gap-2 text-xs text-zinc-400 font-bold ml-1 mt-1"><input type="checkbox" checked={newAd.is_internal} onChange={(e) => setNewAd({ ...newAd, is_internal: e.target.checked, link: e.target.checked ? '' : newAd.link })} className="accent-blue-500" />Use internal redirect page selection</label>
