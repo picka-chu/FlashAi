@@ -100,7 +100,9 @@ const toNanoTonString = (tonAmount: number): string => {
 };
 
 
-export const Profile: React.FC = () => {
+type ProfileSection = "subscriptions" | "payment" | "referral" | "support";
+
+export const Profile: React.FC<{ initialSection?: ProfileSection }> = ({ initialSection }) => {
   const [isSignUpOpen, setIsSignUpOpen] = useState(false);
   const { user, setUser } = useUserStore();
   const { tg, hapticFeedback, showAlert, showConfirm, initData } = useTelegram();
@@ -226,6 +228,17 @@ export const Profile: React.FC = () => {
   useEffect(() => {
     chatEndRef.current?.scrollIntoView({ behavior: 'smooth' });
   }, [chatHistory]);
+
+  useEffect(() => {
+    if (!initialSection) return;
+    setIsEditing(false);
+    setIsViewingLegal(false);
+    setIsReportingIssue(false);
+    setIsViewingSubscriptions(initialSection === 'subscriptions' || initialSection === 'payment');
+    setIsViewingPaymentMethods(initialSection === 'payment');
+    setIsViewingReferral(initialSection === 'referral');
+    setIsViewingSupport(initialSection === 'support');
+  }, [initialSection]);
 
   useEffect(() => {
     if (tg?.BackButton) {
