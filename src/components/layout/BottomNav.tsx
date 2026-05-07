@@ -3,7 +3,7 @@ import { Home, History, User, Goal, Zap, ShieldAlert } from 'lucide-react';
 import { motion } from 'motion/react';
 import { useUserStore } from '../../store/useUserStore';
 
-export type TabType = 'home' | 'matches' | 'analyze' | 'history' | 'profile' | 'admin' | 'livePreview';
+export type TabType = 'home' | 'matches' | 'analyze' | 'history' | 'profile' | 'admin' | 'livePreview' | 'subscriptions' | 'paymentMethods' | 'referralEarn' | 'support';
 
 interface BottomNavProps {
   activeTab: TabType;

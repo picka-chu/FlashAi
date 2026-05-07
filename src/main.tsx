@@ -10,7 +10,7 @@ const manifestUrl = `${window.location.origin}/api/tonconnect-manifest.json`;
 createRoot(document.getElementById('root')!).render(
   <StrictMode>
     <ErrorBoundary>
-      <TonConnectUIProvider manifestUrl={manifestUrl}>
+      <TonConnectUIProvider manifestUrl={manifestUrl} restoreConnection>
         <App />
       </TonConnectUIProvider>
     </ErrorBoundary>

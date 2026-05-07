@@ -207,7 +207,7 @@ Return ONLY a valid JSON object (no markdown, no explanation outside the JSON):
   }, {
     cache: predictionCache,
     cacheKey,
-    metadata: { model: PREDICTION_MODELS[0] }
+    metadata: { model: PREDICTION_MODELS[0], apiKeyIndex: 0 }
   });
 }
 

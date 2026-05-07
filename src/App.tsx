@@ -8,6 +8,10 @@ import { History } from "./pages/History";
 import { Profile } from "./pages/Profile";
 import { Admin } from "./pages/Admin";
 import { LiveMatchPreview } from "./pages/LiveMatchPreview";
+import { SubscriptionPlansPage } from "./pages/SubscriptionPlansPage";
+import { PaymentMethodsPage } from "./pages/PaymentMethodsPage";
+import { ReferralEarnPage } from "./pages/ReferralEarnPage";
+import { SupportPage } from "./pages/SupportPage";
 import { useTelegram } from "./hooks/useTelegram";
 import { useUserStore } from "./store/useUserStore";
 import { supabase } from "./lib/supabase";
@@ -139,6 +143,12 @@ export default function App() {
         livepreview: "livePreview",
         livematchpreview: "livePreview",
         live: "livePreview",
+        subscriptions: "subscriptions",
+        paymentmethods: "paymentMethods",
+        payment: "paymentMethods",
+        referralearn: "referralEarn",
+        referral: "referralEarn",
+        support: "support",
       };
       return map[compact] || null;
     };
@@ -172,6 +182,18 @@ export default function App() {
         </div>
         <div className={activeTab === "livePreview" ? "h-full" : "hidden"}>
           <LiveMatchPreview onBack={() => setActiveTab("matches")} onGoAnalyze={() => setActiveTab("analyze")} />
+        </div>
+        <div className={activeTab === "subscriptions" ? "h-full" : "hidden"}>
+          <SubscriptionPlansPage />
+        </div>
+        <div className={activeTab === "paymentMethods" ? "h-full" : "hidden"}>
+          <PaymentMethodsPage />
+        </div>
+        <div className={activeTab === "referralEarn" ? "h-full" : "hidden"}>
+          <ReferralEarnPage />
+        </div>
+        <div className={activeTab === "support" ? "h-full" : "hidden"}>
+          <SupportPage />
         </div>
       </>
     );
