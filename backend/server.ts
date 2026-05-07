@@ -529,6 +529,22 @@ async function startServer() {
     Boolean(initData && validateTelegramInitData(initData, botToken));
 
   const ADMIN_TASKS_KEY = "admin_tasks_v1";
+
+function extractTelegramChannelFromTaskUrl(taskUrl: string): string | null {
+  const raw = String(taskUrl || '').trim();
+  if (!raw) return null;
+
+  const direct = raw.match(/^@([a-zA-Z0-9_]{5,})$/);
+  if (direct) return `@${direct[1]}`;
+
+  const tme = raw.match(/t\.me\/([a-zA-Z0-9_]{5,})/i);
+  if (tme) return `@${tme[1]}`;
+
+  const tgResolve = raw.match(/tg:\/\/resolve\?domain=([a-zA-Z0-9_]{5,})/i);
+  if (tgResolve) return `@${tgResolve[1]}`;
+
+  return null;
+}
   const ADMIN_ADS_KEY = "admin_ads_v1";
   registerLeaderboardRoutes(app, supabase);
   const RATES_TTL_MS = 15 * 60 * 1000;
@@ -2508,7 +2524,7 @@ async function startServer() {
       // 2. Perform verification for specific tasks
       const { data: taskData } = await supabase
         .from('tasks')
-        .select('id,reward,url,active')
+        .select('id,reward,url,active,title')
         .eq('id', normalizedTaskId)
         .maybeSingle();
       if (!taskData || taskData.active === false) {
@@ -2517,31 +2533,29 @@ async function startServer() {
       const taskReward = Math.max(0, Math.floor(Number(taskData.reward || 0)));
       
       if (taskData && bot) {
-        // Check if task URL points to a Telegram channel/group
-        const tgUrlPattern = /t\.me\/([a-zA-Z0-9_]{5,})/;
-        const match = taskData.url?.match(tgUrlPattern);
-        
-        if (match && match[1]) {
-          const channelUsername = `@${match[1]}`;
+        const channelUsername = extractTelegramChannelFromTaskUrl(taskData.url || '');
+
+        if (channelUsername) {
           try {
             const member = await bot.telegram.getChatMember(channelUsername, normalizedTelegramId);
             const validStatuses = ['member', 'administrator', 'creator'];
-            
+
             if (!validStatuses.includes(member.status)) {
-              return c.json({ 
-                error: "Verification failed. Please join the channel before claiming!",
-                details: "You are not a member of the required channel." 
+              return c.json({
+                error: `Please join ${channelUsername} before claiming this reward.`,
+                code: 'NOT_JOINED_CHANNEL',
               }, 400);
             }
           } catch (e: any) {
             console.error(`Task verification error for ${channelUsername}:`, e.message);
-            // If bot is not admin, it might fail with "Chat not found" or "Member not found"
-            // We only block if we are SURE they are not in it, or if the bot has access and says no.
-            if (e.message?.includes('member not found') || e.message?.includes('user not found')) {
-              return c.json({ error: "Please join the channel first!" }, 400);
+            const msg = String(e?.message || '').toLowerCase();
+            if (msg.includes('member not found') || msg.includes('user not found') || msg.includes('participant not found')) {
+              return c.json({ error: `Please join ${channelUsername} before claiming this reward.`, code: 'NOT_JOINED_CHANNEL' }, 400);
             }
-            // If it's a different error (like bot not in chat), we might allow it or log it
-            console.warn("Could not verify membership due to bot permissions or chat settings.");
+            return c.json({
+              error: `Unable to verify channel membership for ${channelUsername}. Ask admin to add the Flash AI bot as channel admin and retry.`,
+              code: 'CHANNEL_VERIFICATION_UNAVAILABLE',
+            }, 400);
           }
         }
       }
@@ -2864,6 +2878,7 @@ async function startServer() {
       title: String(body.title || "").trim(),
       description: String(body.description || "").trim(),
       reward: Number(body.reward || 10),
+      channel_username: String(body.channel_username || "").trim(),
       url: String(body.url || "").trim(),
       buttonLabel: String(body.buttonLabel || "Claim").trim(),
       image_url: String(body.image_url || "").trim(),
@@ -2872,6 +2887,13 @@ async function startServer() {
     };
 
     if (!task.title || !task.description) return c.json({ error: "Title and description are required" }, 400);
+    if (task.channel_username && !/^@?[a-zA-Z0-9_]{5,}$/.test(task.channel_username)) {
+      return c.json({ error: "Invalid Telegram channel username format" }, 400);
+    }
+    if (task.channel_username) {
+      const normalized = task.channel_username.startsWith('@') ? task.channel_username.slice(1) : task.channel_username;
+      task.url = `https://t.me/${normalized}`;
+    }
 
     await setCachedCollection(ADMIN_TASKS_KEY, [task, ...tasks]);
     try {

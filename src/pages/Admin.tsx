@@ -83,7 +83,7 @@ export const Admin: React.FC = () => {
   const [isAddingTask, setIsAddingTask] = useState(false);
   const [isAddingAd, setIsAddingAd] = useState(false);
   const [editingAdId, setEditingAdId] = useState<string | null>(null);
-  const [newTask, setNewTask] = useState({ title: '', description: '', reward: 10, url: '', buttonLabel: 'Start Task', image_url: '', active: true });
+  const [newTask, setNewTask] = useState({ title: '', description: '', reward: 10, url: '', channel_username: '', buttonLabel: 'Start Task', image_url: '', active: true });
   const [newAd, setNewAd] = useState({ ...DEFAULT_AD });
   // Separate string state for the 6 number fields so the user can type freely
   // without React clamping/replacing the value on every keystroke.
@@ -327,7 +327,7 @@ export const Admin: React.FC = () => {
       if (res.ok) {
         fetchTasks();
         setIsAddingTask(false);
-        setNewTask({ title: '', description: '', reward: 10, url: '', buttonLabel: 'Start Task', image_url: '', active: true });
+        setNewTask({ title: '', description: '', reward: 10, url: '', channel_username: '', buttonLabel: 'Start Task', image_url: '', active: true });
         showAlert('Task added successfully!');
       } else {
         showAlert(data.error || 'Failed to add task');
@@ -986,7 +986,8 @@ export const Admin: React.FC = () => {
                         <textarea value={newTask.description} onChange={e => setNewTask({...newTask, description: e.target.value})} placeholder="Task Description" className="w-full bg-zinc-800 border-none rounded-2xl p-4 text-white text-sm font-bold placeholder:text-zinc-600 h-24 focus:ring-2 ring-[#ccff00]/50" />
                         <div className="flex gap-4">
                            <input type="number" value={newTask.reward} onChange={e => setNewTask({...newTask, reward: Number(e.target.value)})} placeholder="Reward" className="flex-1 bg-zinc-800 border-none rounded-2xl p-4 text-white text-sm font-bold placeholder:text-zinc-600 focus:ring-2 ring-[#ccff00]/50" />
-                           <input value={newTask.url} onChange={e => setNewTask({...newTask, url: e.target.value})} placeholder="Task redirect URL (optional)" className="flex-[2] bg-zinc-800 border-none rounded-2xl p-4 text-white text-sm font-bold placeholder:text-zinc-600 focus:ring-2 ring-[#ccff00]/50" />
+                           <input value={newTask.url} onChange={e => setNewTask({...newTask, url: e.target.value})} placeholder="Task redirect URL (optional)" className="flex-1 bg-zinc-800 border-none rounded-2xl p-4 text-white text-sm font-bold placeholder:text-zinc-600 focus:ring-2 ring-[#ccff00]/50" />
+                           <input value={newTask.channel_username} onChange={e => setNewTask({...newTask, channel_username: e.target.value})} placeholder="Channel username (e.g. @flashai)" className="flex-1 bg-zinc-800 border-none rounded-2xl p-4 text-white text-sm font-bold placeholder:text-zinc-600 focus:ring-2 ring-[#ccff00]/50" />
                         </div>
                         <div className="flex gap-4">
                           <input value={newTask.buttonLabel} onChange={e => setNewTask({...newTask, buttonLabel: e.target.value})} placeholder="Button text (e.g. Join now)" className="flex-1 bg-zinc-800 border-none rounded-2xl p-4 text-white text-sm font-bold placeholder:text-zinc-600 focus:ring-2 ring-[#ccff00]/50" />
