@@ -2587,6 +2587,56 @@ function extractTelegramChannelFromTaskUrl(taskUrl: string): string | null {
     }
   });
 
+
+  app.post("/api/user/wallet", async (c) => {
+    const initData = c.req.header("X-TG-Init-Data");
+    if (!hasValidTelegramAuth(initData)) {
+      return c.json({ error: "Invalid Telegram authentication" }, 401);
+    }
+
+    try {
+      const tgUser = initData ? getTelegramUserFromInitData(initData) : null;
+      if (!tgUser?.id) return c.json({ error: "User not identified" }, 401);
+
+      const { address, chain, walletName } = await c.req.json().catch(() => ({} as any));
+      const normalizedAddress = String(address || '').trim();
+      if (!normalizedAddress) {
+        return c.json({ error: "Wallet address is required" }, 400);
+      }
+
+      const payload = {
+        telegram_id: tgUser.id,
+        wallet_address: normalizedAddress,
+        chain: String(chain || '').trim() || null,
+        wallet_name: String(walletName || '').trim() || null,
+        is_active: true,
+        updated_at: new Date().toISOString(),
+      };
+
+      const { error } = await supabase
+        .from('user_wallets')
+        .upsert(payload, { onConflict: 'telegram_id,wallet_address' });
+
+      if (error) {
+        console.error('Failed to persist wallet:', error.message);
+        return c.json({ error: 'Failed to store wallet' }, 500);
+      }
+
+      // Deactivate other wallets for this user (single active wallet policy)
+      await supabase
+        .from('user_wallets')
+        .update({ is_active: false, updated_at: new Date().toISOString() })
+        .eq('telegram_id', tgUser.id)
+        .neq('wallet_address', normalizedAddress)
+        .eq('is_active', true);
+
+      return c.json({ success: true });
+    } catch (e: any) {
+      console.error('Wallet save API error:', e.message);
+      return c.json({ error: 'Failed to store wallet' }, 500);
+    }
+  });
+
   app.get("/api/support/faqs", async (c) => {
     try {
       const { data, error } = await supabase
