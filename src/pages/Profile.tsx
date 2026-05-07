@@ -100,7 +100,9 @@ const toNanoTonString = (tonAmount: number): string => {
 };
 
 
-export const Profile: React.FC = () => {
+type ProfileSection = "subscriptions" | "payment" | "referral" | "support";
+
+export const Profile: React.FC<{ initialSection?: ProfileSection }> = ({ initialSection }) => {
   const [isSignUpOpen, setIsSignUpOpen] = useState(false);
   const { user, setUser } = useUserStore();
   const { tg, hapticFeedback, showAlert, showConfirm, initData } = useTelegram();
@@ -205,6 +207,25 @@ export const Profile: React.FC = () => {
   }, [isViewingLegal]);
 
   useEffect(() => {
+    if (!tonConnectUI.connected || !tonConnectUI.account?.address || !initData) return;
+
+    fetch('/api/user/wallet', {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        'X-TG-Init-Data': initData,
+      },
+      body: JSON.stringify({
+        address: tonConnectUI.account.address,
+        chain: tonConnectUI.account.chain,
+        walletName: tonConnectUI.wallet?.device?.appName || (tonConnectUI.wallet as any)?.name || null,
+      }),
+    }).catch((err) => {
+      console.warn('Failed to sync wallet to backend:', err);
+    });
+  }, [tonConnectUI.connected, tonConnectUI.account?.address, tonConnectUI.account?.chain, tonConnectUI.wallet, initData]);
+
+  useEffect(() => {
     if (!user?.telegram_id || !tonConnectUI.connected || !tonConnectUI.account?.address) return;
 
     const storageKey = 'flashai_ton_wallet_owner';
@@ -226,6 +247,17 @@ export const Profile: React.FC = () => {
   useEffect(() => {
     chatEndRef.current?.scrollIntoView({ behavior: 'smooth' });
   }, [chatHistory]);
+
+  useEffect(() => {
+    if (!initialSection) return;
+    setIsEditing(false);
+    setIsViewingLegal(false);
+    setIsReportingIssue(false);
+    setIsViewingSubscriptions(initialSection === 'subscriptions' || initialSection === 'payment');
+    setIsViewingPaymentMethods(initialSection === 'payment');
+    setIsViewingReferral(initialSection === 'referral');
+    setIsViewingSupport(initialSection === 'support');
+  }, [initialSection]);
 
   useEffect(() => {
     if (tg?.BackButton) {

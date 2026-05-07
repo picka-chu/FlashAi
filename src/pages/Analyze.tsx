@@ -91,19 +91,28 @@ export const Analyze: React.FC<{ onTabChange?: (tab: string) => void }> = ({ onT
         try {
           const matchString = `${selectedMatch.home} vs ${selectedMatch.away}`;
           
-          const response = await fetch('/api/analyze', {
+          const requestBody = JSON.stringify({ 
+            matchString, 
+            matchId: selectedMatch.id 
+          });
+
+          const runRequest = () => fetch('/api/analyze', {
             method: 'POST',
             headers: { 
               'Content-Type': 'application/json',
               'X-TG-Init-Data': initData || ''
             },
-            body: JSON.stringify({ 
-              matchString, 
-              matchId: selectedMatch.id 
-            })
+            body: requestBody
           });
 
-          const data = await response.json();
+          let response = await runRequest();
+          let data = await response.json();
+
+          if ([429, 503, 504].includes(response.status)) {
+            await new Promise((resolve) => setTimeout(resolve, 800));
+            response = await runRequest();
+            data = await response.json();
+          }
 
           if (!response.ok) {
             if (response.status === 402) {
@@ -113,6 +122,8 @@ export const Analyze: React.FC<{ onTabChange?: (tab: string) => void }> = ({ onT
             } else if (response.status === 403) {
               setError(data.error || 'Please complete signup first.');
               setIsSignUpOpen(true);
+            } else if (response.status === 504) {
+              setError(data.error || 'Analysis timed out. Please try again.');
             } else {
               setError(data.error || "Analysis failed.");
             }
