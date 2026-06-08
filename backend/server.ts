@@ -1566,6 +1566,16 @@ function extractTelegramChannelFromTaskUrl(taskUrl: string): string | null {
 
   const botUsername = process.env.TELEGRAM_BOT_USERNAME || "Deepflashaibot";
   const appUrl = process.env.APP_URL || `http://localhost:${PORT}`;
+  const signupContactMessage = "To unlock AI analysis and features, please complete your registration by sharing your contact:";
+  const signupContactKeyboard = {
+    reply_markup: {
+      keyboard: [[{ text: "📲 Share Contact to Sign Up", request_contact: true }]],
+      one_time_keyboard: true,
+      resize_keyboard: true
+    }
+  };
+  const buildSignupUrl = (telegramId?: number | string) =>
+    `https://t.me/${botUsername.replace('@', '')}${telegramId ? `?start=signup_${telegramId}` : ''}`;
 
   let bot: Telegraf | null = null;
 
@@ -1613,6 +1623,11 @@ function extractTelegramChannelFromTaskUrl(taskUrl: string): string | null {
         await ctx.replyWithMarkdown(adminWelcomeMsg, Markup.inlineKeyboard([
           [Markup.button.webApp("🛡️ Open Admin Dashboard", `${appUrl}?tab=admin`)]
         ]));
+        return;
+      }
+
+      if (String(startPayload || '').startsWith('signup')) {
+        await ctx.reply(signupContactMessage, signupContactKeyboard);
         return;
       }
 
@@ -2101,18 +2116,19 @@ function extractTelegramChannelFromTaskUrl(taskUrl: string): string | null {
       const telegramId = authUser?.id || Number(body?.telegramId || 0);
       if (!bot || !telegramId) return c.json({ error: "Missing bot or telegramId" }, 400);
 
-      await bot.telegram.sendMessage(telegramId, "To unlock AI analysis and features, please complete your registration by sharing your contact:", {
-        reply_markup: {
-          keyboard: [[{ text: "📲 Share Contact to Sign Up", request_contact: true }]],
-          one_time_keyboard: true,
-          resize_keyboard: true
-        }
-      });
-
-      return c.json({ success: true });
+      const signupUrl = buildSignupUrl(telegramId);
+      try {
+        await bot.telegram.sendMessage(telegramId, signupContactMessage, signupContactKeyboard);
+        return c.json({ success: true, signupUrl });
+      } catch (sendError: any) {
+        // Telegram cannot DM users who have not started the bot yet. Let the app open
+        // the bot with a signup payload so /start can show the contact keyboard.
+        console.warn("Signup DM failed; returning bot deep link:", sendError?.message || sendError);
+        return c.json({ success: true, signupUrl, requiresBotStart: true });
+      }
     } catch (e: any) {
       console.error("Request signup error:", e.message);
-      return c.json({ error: "Failed to send request" }, 500);
+      return c.json({ error: "Failed to prepare signup request", signupUrl: buildSignupUrl() }, 500);
     }
   });
 

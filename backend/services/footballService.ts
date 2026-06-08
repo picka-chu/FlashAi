@@ -1,7 +1,7 @@
 import axios from 'axios';
 import { MatchData, TeamStats } from '../../src/types/prediction';
 
-const API_KEY = process.env.SPORTS_API_KEY || '';
+const API_KEY = process.env.SPORTS_API_KEY || process.env.FOOTBALL_API_KEY || '';
 const API_BASE = 'https://v2.football.sportsapipro.com/api';
 const HEADERS = API_KEY ? { 'x-api-key': API_KEY } : {};
 const BSD_API_KEY = process.env.BSD_API_KEY || process.env.BSD_FOOTBALL_API_KEY || '';
@@ -132,13 +132,32 @@ function mapESPNEvent(e: any, leagueSlug: string) {
   };
 }
 
+function safeIsoDate(value: any) {
+  if (!value) return new Date().toISOString();
+  const date = typeof value === 'number'
+    ? new Date(value > 9999999999 ? value : value * 1000)
+    : new Date(value);
+  return Number.isNaN(date.getTime()) ? new Date().toISOString() : date.toISOString();
+}
+
 function mapSportsApiEvent(e: any) {
+  const status = String(e?.status || e?.fixture?.status?.short || '').toLowerCase();
+  const isPre = status.includes('not started') || status === 'ns' || status === 'pre' || status === 'scheduled';
+  const start = e?.startTimestamp || e?.startTime || e?.date || e?.fixture?.date || e?.timestamp;
+  const homeName = e?.homeTeam?.name || e?.homeTeam || e?.teams?.home?.name || 'Home';
+  const awayName = e?.awayTeam?.name || e?.awayTeam || e?.teams?.away?.name || 'Away';
+
   return {
-    fixture: { id: `sportsapi_${e.id}`, date: new Date(e.startTimestamp * 1000).toISOString(), status: { short: e.status, elapsed: 0, state: e.status === 'Not started' ? 'pre' : 'in' } },
-    teams: { home: { name: e.homeTeam, id: e.homeTeam, logo: null }, away: { name: e.awayTeam, id: e.awayTeam, logo: null } },
-    league: { name: e.tournament || 'Leagues', id: e.tournament, slug: e.tournament },
-    goals: { home: e.homeScore, away: e.awayScore },
+    fixture: {
+      id: `sportsapi_${e?.id || e?.eventId || e?.matchId || `${homeName}-${awayName}-${start || Date.now()}`}`,
+      date: safeIsoDate(start),
+      status: { short: e?.status || (isPre ? 'NS' : 'LIVE'), elapsed: 0, state: isPre ? 'pre' : 'in' }
+    },
+    teams: { home: { name: homeName, id: e?.homeTeam?.id || homeName, logo: e?.homeTeam?.logo || null }, away: { name: awayName, id: e?.awayTeam?.id || awayName, logo: e?.awayTeam?.logo || null } },
+    league: { name: e?.tournament?.name || e?.tournament || e?.league?.name || 'Leagues', id: e?.tournament?.id || e?.tournament || e?.league?.id, slug: e?.tournament?.slug || e?.league?.slug },
+    goals: { home: Number(e?.homeScore ?? e?.goals?.home ?? 0), away: Number(e?.awayScore ?? e?.goals?.away ?? 0) },
     stats: { possession: { home: '50%', away: '50%' }, shotsOnTarget: { home: '0', away: '0' }, shots: { home: '0', away: '0' }, corners: { home: '0', away: '0' } },
+    provider: 'sportsapi',
   };
 }
 
@@ -157,9 +176,7 @@ function mapBSDEvent(e: any) {
   const cornersHome = String(e?.stats?.corners?.home ?? e?.statistics?.corners?.home ?? '0');
   const cornersAway = String(e?.stats?.corners?.away ?? e?.statistics?.corners?.away ?? '0');
   const startAt = e?.startTime || e?.date || e?.kickoff || e?.timestamp || Date.now();
-  const startIso = typeof startAt === 'number'
-    ? new Date(startAt > 9999999999 ? startAt : startAt * 1000).toISOString()
-    : new Date(startAt).toISOString();
+  const startIso = safeIsoDate(startAt);
   const id = e?.id || e?.eventId || e?.matchId || `${homeName}-${awayName}-${startIso}`;
   const leagueName = e?.league?.name || e?.competition?.name || e?.tournament?.name || e?.league || 'Live Football';
   const state = String(e?.status?.state || e?.status?.short || e?.status || 'in').toLowerCase().includes('pre') ? 'pre' : 'in';
@@ -208,6 +225,57 @@ async function fetchBsdLiveEvents() {
     }
   }
   return [];
+}
+
+async function fetchBsdUpcomingEvents() {
+  if (!BSD_API_KEY) return [];
+  const urls = [`${BSD_API_BASE}/upcoming/`, `${BSD_API_BASE}/upcoming`, `${BSD_API_BASE}/fixtures`, `${BSD_API_BASE}/matches`];
+  for (const url of urls) {
+    try {
+      const res = await axios.get(url, { headers: BSD_HEADERS, timeout: 8000 });
+      const events = res.data?.events || res.data?.matches || res.data?.data || [];
+      if (Array.isArray(events) && events.length > 0) return events;
+    } catch {
+      // try next url
+    }
+  }
+  return [];
+}
+
+async function fetchSportsApiEvents(path: 'live' | 'matches') {
+  if (!API_KEY) return [];
+  try {
+    const res = await axios.get(`${API_BASE}/${path}`, { headers: HEADERS, timeout: 8000 });
+    return res.data?.events || res.data?.matches || res.data?.data || [];
+  } catch {
+    return [];
+  }
+}
+
+function normalizeMatchName(value: any) {
+  return String(value || '').toLowerCase().replace(/[^a-z0-9]+/g, ' ').trim();
+}
+
+function matchDedupeKey(match: any) {
+  const home = normalizeMatchName(match?.teams?.home?.name);
+  const away = normalizeMatchName(match?.teams?.away?.name);
+  const date = match?.fixture?.date ? new Date(match.fixture.date).toISOString().slice(0, 10) : getTodayDateString();
+  return `${home}|${away}|${date}`;
+}
+
+function mergeMatches(...groups: any[][]) {
+  const seen = new Set<string>();
+  const merged: any[] = [];
+  for (const group of groups) {
+    for (const match of group.filter(Boolean)) {
+      const key = matchDedupeKey(match);
+      if (!seen.has(key)) {
+        seen.add(key);
+        merged.push(match);
+      }
+    }
+  }
+  return merged;
 }
 
 export async function getLiveMatchPreview(fixtureId: string) {
@@ -369,32 +437,25 @@ export async function getMatchDetails(fixtureId: number | string, match?: any): 
 }
 
 export async function getLiveMatches() {
-  if (BSD_API_KEY) {
-    const bsdEvents = await fetchBsdLiveEvents();
-    if (bsdEvents.length > 0) {
-      return bsdEvents.map(mapBSDEvent).filter(Boolean);
-    }
-  }
-
   const today = getTodayDateString();
-  const promises = POPULAR_LEAGUES.map((league) =>
-    axios.get(`${ESPN_BASE}/${league}/scoreboard?dates=${today}`).then((res) => (res.data.events || []).map((e: any) => ({ ...e, _leagueSlug: league }))).catch(() => []),
-  );
-  const events = (await Promise.all(promises)).flat();
-  const liveEvents = events.filter((e: any) => (e.status?.type?.state || e.competitions?.[0]?.status?.type?.state) === 'in');
-  const mapped = liveEvents.map((e: any) => mapESPNEvent(e, e._leagueSlug || 'soccer')).filter(Boolean);
+  const [bsdEvents, espnEvents, sportsEvents] = await Promise.all([
+    fetchBsdLiveEvents(),
+    Promise.all(POPULAR_LEAGUES.map((league) =>
+      axios.get(`${ESPN_BASE}/${league}/scoreboard?dates=${today}`, { timeout: 5000 })
+        .then((res) => (res.data.events || []).map((e: any) => ({ ...e, _leagueSlug: league })))
+        .catch(() => []),
+    )).then((groups) => groups.flat()),
+    fetchSportsApiEvents('live'),
+  ]);
 
-  if (mapped.length < 5 && API_KEY) {
-    const sportsApiRes = await axios.get(`${API_BASE}/live`, { headers: HEADERS }).catch(() => ({ data: { events: [] } }));
-    const mappedSports = (sportsApiRes.data.events || []).map(mapSportsApiEvent);
-    const existingTeams = new Set(mapped.map((m: any) => `${m.teams.home.name}-${m.teams.away.name}`));
-    for (const item of mappedSports) {
-      const key = `${item.teams.home.name}-${item.teams.away.name}`;
-      if (!existingTeams.has(key)) mapped.push(item);
-    }
-  }
+  const bsdMapped = bsdEvents.map(mapBSDEvent).filter(Boolean);
+  const espnMapped = espnEvents
+    .filter((e: any) => (e.status?.type?.state || e.competitions?.[0]?.status?.type?.state) === 'in')
+    .map((e: any) => mapESPNEvent(e, e._leagueSlug || 'soccer'))
+    .filter(Boolean);
+  const sportsMapped = sportsEvents.map(mapSportsApiEvent).filter((m: any) => m?.fixture?.status?.state === 'in');
 
-  return mapped;
+  return mergeMatches(bsdMapped, espnMapped, sportsMapped);
 }
 
 const UPCOMING_CACHE: Record<string, { data: any[]; timestamp: number }> = {};
@@ -406,11 +467,8 @@ export async function getUpcomingMatches(topFixtures: string[] = []) {
   
   const cached = UPCOMING_CACHE[cacheKey];
   if (cached && Date.now() - cached.timestamp < UPCOMING_CACHE_TTL) {
-    return sortAndFilterUpcoming(cached.data, topFixtures);
+    return cached.data;
   }
-
-  const priorityLeagues = POPULAR_LEAGUES.slice(0, 15);
-  const remainingLeagues = POPULAR_LEAGUES.slice(15);
 
   const fetchLeagues = async (leagues: string[]) => {
     const promises = leagues.map((league) =>
@@ -421,16 +479,28 @@ export async function getUpcomingMatches(topFixtures: string[] = []) {
     return (await Promise.all(promises)).flat();
   };
 
-  const priorityEvents = await fetchLeagues(priorityLeagues);
-  UPCOMING_CACHE[cacheKey] = { data: priorityEvents, timestamp: Date.now() };
+  const [espnEvents, bsdEvents, sportsEvents] = await Promise.all([
+    fetchLeagues(POPULAR_LEAGUES),
+    fetchBsdUpcomingEvents(),
+    fetchSportsApiEvents('matches'),
+  ]);
 
-  fetchLeagues(remainingLeagues).then(remainingEvents => {
-    if (remainingEvents.length > 0) {
-      UPCOMING_CACHE[cacheKey].data = [...UPCOMING_CACHE[cacheKey].data, ...remainingEvents];
-    }
+  const espnMapped = sortAndFilterUpcoming(espnEvents, topFixtures);
+  const bsdMapped = bsdEvents
+    .map(mapBSDEvent)
+    .filter((m: any) => m?.fixture?.status?.state === 'pre');
+  const sportsMapped = sportsEvents
+    .map(mapSportsApiEvent)
+    .filter((m: any) => m?.fixture?.status?.state === 'pre');
+
+  const merged = mergeMatches(espnMapped, bsdMapped, sportsMapped).sort((a, b) => {
+    const dateA = new Date(a?.fixture?.date || 0).getTime();
+    const dateB = new Date(b?.fixture?.date || 0).getTime();
+    return dateA - dateB;
   });
+  UPCOMING_CACHE[cacheKey] = { data: merged, timestamp: Date.now() };
 
-  return sortAndFilterUpcoming(priorityEvents, topFixtures);
+  return merged;
 }
 
 function sortAndFilterUpcoming(events: any[], topFixtures: string[]) {
