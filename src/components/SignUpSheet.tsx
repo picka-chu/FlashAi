@@ -24,6 +24,7 @@ export const SignUpSheet: React.FC<SignUpSheetProps> = ({ isOpen, onClose }) => 
     
     if (!tg?.initDataUnsafe?.user?.id) {
        console.error("No Telegram user ID found");
+       showAlert('Telegram user was not detected. Please open Flash AI from inside Telegram.');
        return;
     }
 
@@ -38,20 +39,24 @@ export const SignUpSheet: React.FC<SignUpSheetProps> = ({ isOpen, onClose }) => 
         body: JSON.stringify({ telegramId: tg.initDataUnsafe.user.id })
       });
 
+      const payload = await response.json().catch(() => ({}));
+      const botUsername = (import.meta.env.VITE_TELEGRAM_BOT_USERNAME || 'Deepflashaibot').replace('@', '');
+      const fallbackSignupLink = `https://t.me/${botUsername}?start=signup_${tg.initDataUnsafe.user.id}`;
+      const signupLink = payload?.signupUrl || fallbackSignupLink;
+
       if (response.ok) {
-        const botUsername = (import.meta.env.VITE_TELEGRAM_BOT_USERNAME || 'Deepflashaibot').replace('@', '');
-        const signupLink = `https://t.me/${botUsername}`;
-        
-        // Use tg.close() to close the mini app as requested
-        if (tg?.close) {
-          // Optional: briefly show a success message or just close
-          tg.close();
+        if (payload?.requiresBotStart) {
+          showAlert('Please tap Start in the bot, then share your contact to finish signup.');
+        }
+
+        if (tg?.openTelegramLink) {
+          tg.openTelegramLink(signupLink);
         } else {
           window.location.href = signupLink;
         }
       } else {
-        console.error("Failed to request signup");
-        showAlert('Unable to start signup. Please try again.');
+        console.error("Failed to request signup", payload);
+        showAlert(payload?.error || 'Unable to start signup. Please try again.');
       }
     } catch (err) {
       console.error("Sign up request error:", err);
