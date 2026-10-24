@@ -1,10 +1,13 @@
+import "dotenv/config";
 import { Hono } from "hono";
+import { bodyLimit } from "hono/body-limit";
 import { serve } from "@hono/node-server";
 import { serveStatic } from "@hono/node-server/serve-static";
 import { createServer as createViteServer } from "vite";
 import { Telegraf, Markup } from "telegraf";
 import { createClient } from "@supabase/supabase-js";
 import axios from "axios";
+import { Cell } from "@ton/core";
 import path from "path";
 import { fileURLToPath } from "url";
 import fs from "fs";
@@ -14,7 +17,7 @@ import { generateSupportReply, getDefaultFaqs } from "./services/supportService"
 import CreditResetScheduler from "./tasks/creditResetScheduler.js";
 import { InMemoryRateLimiter } from "./middleware/rateLimit";
 import { registerLeaderboardRoutes } from "./routes/leaderboard";
-import { getTelegramUserFromInitData, validateTelegramInitData } from "./middleware/auth";
+import { getTelegramUserFromInitData, validateTelegramInitData, getVerifiedTelegramUser } from "./middleware/auth";
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
@@ -43,32 +46,44 @@ const PLAN_CREDITS: Record<string, number> = {
   admin: 0,
 };
 
-const PLAN_DAILY_LIMITS: Record<string, { credits: number; betSlipAnalysis: number }> = {
-  free: { credits: 3, betSlipAnalysis: 1 },
-  monthly_basic: { credits: 10, betSlipAnalysis: 2 },
-  monthly_pro: { credits: 16, betSlipAnalysis: 6 },
-  admin: { credits: 999, betSlipAnalysis: 999 },
-};
-
 const PLAN_PRICE_USD: Record<string, number> = {
   monthly_basic: 8.99,
   monthly_pro: 14.99,
 };
 const USD_TO_STARS_RATE = 50;
+const PAID_PLANS = new Set(["monthly_basic", "monthly_pro"]);
+const ALLOWED_PLANS = new Set(["free", "monthly_basic", "monthly_pro", "admin"]);
+const MAX_MATCH_STRING_LENGTH = 200;
+const MAX_SUPPORT_HISTORY = 10;
+const MAX_SUPPORT_MESSAGE_LENGTH = 2_000;
 const PLAN_PRICE_STARS: Record<string, number> = {
   monthly_basic: 500,
   monthly_pro: 800,
 };
-const PLAN_PRICE_TON: Record<string, number> = {
-  monthly_basic: 6.86,
-  monthly_pro: 11.5,
-};
+// Fallback TON-per-USD rate used only when the live price feed is unavailable.
+const DEFAULT_TON_PER_USD = 0.23;
 
 const signupCreditsRaw = Number(process.env.SIGNUP_CREDITS ?? 3);
 const signupCredits = Number.isFinite(signupCreditsRaw) && signupCreditsRaw >= 0 ? Math.floor(signupCreditsRaw) : 3;
 const referralRewardRaw = Number(process.env.REFERRAL_REWARD_CREDITS ?? 2);
 const referralRewardCredits = Number.isFinite(referralRewardRaw) && referralRewardRaw >= 0 ? Math.floor(referralRewardRaw) : 2;
 const DEFAULT_APP_URL = process.env.DEFAULT_APP_URL || "https://flashai-siuj.onrender.com";
+
+const CREDIT_TIMEZONE = process.env.TIMEZONE || "UTC";
+
+/** Calendar date (YYYY-MM-DD) in the configured credit-reset timezone. */
+function getCreditDateKey(date: Date): string {
+  try {
+    return new Intl.DateTimeFormat("en-CA", {
+      timeZone: CREDIT_TIMEZONE,
+      year: "numeric",
+      month: "2-digit",
+      day: "2-digit",
+    }).format(date);
+  } catch {
+    return date.toISOString().slice(0, 10);
+  }
+}
 
 function getPlanCreditAllocation(planId: string) {
   return PLAN_CREDITS[planId] ?? 0;
@@ -80,46 +95,26 @@ function getPlanDurationDays(planId: string): number {
 }
 
 async function applyPlanCredits(telegramId: number, planId: string) {
-  const { data: existingUser, error: fetchError } = await supabase
-    .from("users")
-    .select("credits,plan_expires_at")
-    .eq("telegram_id", telegramId)
-    .single();
-
-  if (fetchError) throw fetchError;
+  if (!ALLOWED_PLANS.has(planId)) {
+    throw new Error(`Unsupported plan: ${planId}`);
+  }
 
   const creditsToAdd = getPlanCreditAllocation(planId);
-  const nextCredits = (existingUser?.credits || 0) + creditsToAdd;
   const durationDays = getPlanDurationDays(planId);
-  const now = new Date();
-  const currentExpiry = existingUser?.plan_expires_at ? new Date(existingUser.plan_expires_at) : null;
-  const baseDate = currentExpiry && currentExpiry > now ? currentExpiry : now;
-  const planExpiryAt = durationDays > 0
-    ? new Date(baseDate.getTime() + durationDays * 24 * 60 * 60 * 1000).toISOString()
-    : null;
 
-  const basePayload: any = {
-    plan: planId,
-    credits: nextCredits,
-    last_active: now.toISOString(),
-    last_credit_reset: now.toISOString(),
-  };
+  // Single atomic statement: creates the user if they paid before /start,
+  // otherwise increments credits and extends the plan in one transaction.
+  // This avoids the read-modify-write race between concurrent payments.
+  const { error } = await supabase.rpc("apply_plan_purchase", {
+    p_telegram_id: telegramId,
+    p_plan: planId,
+    p_credits: creditsToAdd,
+    p_duration_days: durationDays,
+  });
 
-  try {
-    const payload = { ...basePayload, plan_expires_at: planExpiryAt };
-    const { error: updateError } = await supabase
-      .from("users")
-      .update(payload)
-      .eq("telegram_id", telegramId);
-    if (updateError) throw updateError;
-  } catch (updateError: any) {
-    // Legacy schema fallback (plan_expires_at column missing).
-    if (updateError?.code !== "42703") throw updateError;
-    const { error: fallbackError } = await supabase
-      .from("users")
-      .update(basePayload)
-      .eq("telegram_id", telegramId);
-    if (fallbackError) throw fallbackError;
+  if (error) {
+    console.error("apply_plan_purchase failed:", error.message);
+    throw error;
   }
 
   return creditsToAdd;
@@ -238,55 +233,73 @@ async function getUserHistory(telegramId: number): Promise<UserHistoryItem[]> {
   }));
 }
 
-async function setUserHistory(telegramId: number, history: UserHistoryItem[]) {
-  const trimmed = history.slice(0, 100);
-  
-  // Delete old history for this user
-  const { error: deleteError } = await supabase.from("user_history").delete().eq("telegram_id", telegramId);
-  if (deleteError) {
-    console.error("Failed to delete old user history:", deleteError.message);
-  }
-
-  if (trimmed.length > 0) {
-    const rows = trimmed.map((item) => ({
-      id: item.id,
-      telegram_id: telegramId,
-      fixture_id: item.fixtureId || null,
-      match: item.match,
-      home: item.home,
-      away: item.away,
-      prediction_market: item.predictionMarket,
-      confidence: Number(item.confidence || 0),
-      reasoning: item.reasoning || "",
-      analysis_payload: item.analysisPayload || null,
-      status: item.status || "pending",
-      created_at: item.created_at || new Date().toISOString(),
-      resolved_at: item.resolved_at || null,
-    }));
-
-    let { error: insertError } = await supabase.from("user_history").insert(rows);
-    if (insertError && String(insertError.message || "").toLowerCase().includes("analysis_payload")) {
-      const legacyRows = rows.map(({ analysis_payload, ...row }) => row);
-      const legacyInsert = await supabase.from("user_history").insert(legacyRows);
-      insertError = legacyInsert.error;
-    }
-
-    if (insertError) {
-      console.error("Failed to insert user history:", insertError.message);
-    }
-  }
+function toHistoryRow(telegramId: number, item: UserHistoryItem) {
+  return {
+    id: item.id,
+    telegram_id: telegramId,
+    fixture_id: item.fixtureId || null,
+    match: item.match,
+    home: item.home,
+    away: item.away,
+    prediction_market: item.predictionMarket,
+    confidence: Number(item.confidence || 0),
+    reasoning: item.reasoning || "",
+    analysis_payload: item.analysisPayload || null,
+    status: item.status || "pending",
+    created_at: item.created_at || new Date().toISOString(),
+    resolved_at: item.resolved_at || null,
+  };
 }
 
-async function getCachedRegistration(telegramId: number): Promise<{ phone?: string; name?: string } | null> {
-  try {
-    const { data } = await supabase
-      .from("api_cache")
-      .select("data")
-      .eq("endpoint", `registration_${telegramId}`)
-      .maybeSingle();
-    return data?.data || null;
-  } catch {
-    return null;
+/**
+ * Inserts a single history item without ever deleting existing rows.
+ * A failed write can no longer wipe a user's prediction history.
+ */
+async function insertHistoryItem(telegramId: number, item: UserHistoryItem) {
+  const row = toHistoryRow(telegramId, item);
+  let { error } = await supabase.from("user_history").upsert(row, { onConflict: "id" });
+  if (error && String(error.message || "").toLowerCase().includes("analysis_payload")) {
+    const { analysis_payload, ...legacyRow } = row;
+    error = (await supabase.from("user_history").upsert(legacyRow, { onConflict: "id" })).error;
+  }
+  if (error) throw error;
+}
+
+/**
+ * Updates only the mutable fields of an existing history row.
+ */
+async function updateHistoryItem(
+  telegramId: number,
+  item: Pick<UserHistoryItem, "id" | "status" | "resolved_at">,
+) {
+  const { error } = await supabase
+    .from("user_history")
+    .update({ status: item.status, resolved_at: item.resolved_at || null })
+    .eq("id", item.id)
+    .eq("telegram_id", telegramId);
+  if (error) throw error;
+}
+
+/**
+ * Keeps at most 100 rows per user by deleting only rows outside the newest
+ * window. Never touches the newest rows.
+ */
+async function pruneHistory(telegramId: number) {
+  const { data, error } = await supabase
+    .from("user_history")
+    .select("id")
+    .eq("telegram_id", telegramId)
+    .order("created_at", { ascending: false })
+    .range(100, 500);
+  if (error || !data?.length) return;
+  const ids = data.map((row: any) => row.id);
+  const { error: deleteError } = await supabase
+    .from("user_history")
+    .delete()
+    .eq("telegram_id", telegramId)
+    .in("id", ids);
+  if (deleteError) {
+    console.error("Failed to prune user history:", deleteError.message);
   }
 }
 
@@ -414,6 +427,78 @@ function evaluatePredictionMarket(market: string, homeGoals: number, awayGoals: 
   return "pending";
 }
 
+/** Run async work with bounded concurrency (prevents outbound request bursts). */
+async function mapWithConcurrency<T, R>(
+  items: T[],
+  limit: number,
+  mapper: (item: T) => Promise<R>,
+): Promise<R[]> {
+  const results: R[] = new Array(items.length);
+  let cursor = 0;
+  const workers = Array.from({ length: Math.min(limit, items.length) }, async () => {
+    while (cursor < items.length) {
+      const index = cursor++;
+      results[index] = await mapper(items[index]);
+    }
+  });
+  await Promise.all(workers);
+  return results;
+}
+
+// Scoreboards are large and shared by every history resolution in a request
+// (and across users). Cache briefly and de-duplicate in-flight fetches.
+const SCOREBOARD_CACHE_TTL_MS = 60_000;
+let recentScoreboardEvents: any[] | null = null;
+let recentScoreboardFetchedAt = 0;
+let recentScoreboardInFlight: Promise<any[]> | null = null;
+
+async function getRecentScoreboardEvents(): Promise<any[]> {
+  if (recentScoreboardEvents && Date.now() - recentScoreboardFetchedAt < SCOREBOARD_CACHE_TTL_MS) {
+    return recentScoreboardEvents;
+  }
+  if (recentScoreboardInFlight) return recentScoreboardInFlight;
+
+  recentScoreboardInFlight = (async () => {
+    const dates = [getUtcDateString(-1), getUtcDateString(0)];
+    const responses = await Promise.all(
+      dates.map((date) =>
+        axios.get(
+          `https://site.api.espn.com/apis/site/v2/sports/soccer/all/scoreboard?dates=${date}`,
+          { timeout: 10_000 },
+        ),
+      ),
+    );
+    const events = responses.flatMap((res) =>
+      Array.isArray(res.data?.events) ? res.data.events : [],
+    );
+    recentScoreboardEvents = events;
+    recentScoreboardFetchedAt = Date.now();
+    return events;
+  })()
+    .catch(() => recentScoreboardEvents || [])
+    .finally(() => {
+      recentScoreboardInFlight = null;
+    });
+
+  return recentScoreboardInFlight;
+}
+
+/** Extract the UTF-8 comment from a TON text-comment payload (opcode 0). */
+function extractTonComment(payload: unknown): string | null {
+  const raw = String(payload || "").trim();
+  if (!raw) return null;
+  try {
+    const [cell] = Cell.fromBoc(Buffer.from(raw, "base64"));
+    if (!cell) return null;
+    const slice = cell.beginParse();
+    if (slice.remainingBits < 32) return null;
+    if (slice.loadUint(32) !== 0) return null;
+    return slice.loadStringTail();
+  } catch {
+    return null;
+  }
+}
+
 async function resolveHistoryItemResult(item: UserHistoryItem): Promise<UserHistoryItem> {
   if (item.status !== "pending") {
     return item;
@@ -424,43 +509,38 @@ async function resolveHistoryItemResult(item: UserHistoryItem): Promise<UserHist
 
   const tryResolveFromAllScoreboard = async (): Promise<UserHistoryItem | null> => {
     try {
-      const dates = [getUtcDateString(-1), getUtcDateString(0)];
-      for (const date of dates) {
-        const url = `https://site.api.espn.com/apis/site/v2/sports/soccer/all/scoreboard?dates=${date}`;
-        const res = await axios.get(url);
-        const events = Array.isArray(res.data?.events) ? res.data.events : [];
+      const events = await getRecentScoreboardEvents();
 
-        for (const event of events) {
-          const comp = event?.competitions?.[0];
-          const state = comp?.status?.type?.state;
-          if (state !== "post") continue;
+      for (const event of events) {
+        const comp = event?.competitions?.[0];
+        const state = comp?.status?.type?.state;
+        if (state !== "post") continue;
 
-          const competitors = comp?.competitors || [];
-          const home = competitors.find((c: any) => c.homeAway === "home");
-          const away = competitors.find((c: any) => c.homeAway === "away");
-          const homeName = String(home?.team?.displayName || home?.team?.name || "").toLowerCase().trim();
-          const awayName = String(away?.team?.displayName || away?.team?.name || "").toLowerCase().trim();
-          const expectedHome = String(item.home || "").toLowerCase().trim();
-          const expectedAway = String(item.away || "").toLowerCase().trim();
+        const competitors = comp?.competitors || [];
+        const home = competitors.find((c: any) => c.homeAway === "home");
+        const away = competitors.find((c: any) => c.homeAway === "away");
+        const homeName = String(home?.team?.displayName || home?.team?.name || "").toLowerCase().trim();
+        const awayName = String(away?.team?.displayName || away?.team?.name || "").toLowerCase().trim();
+        const expectedHome = String(item.home || "").toLowerCase().trim();
+        const expectedAway = String(item.away || "").toLowerCase().trim();
 
-          if (!homeName || !awayName || !expectedHome || !expectedAway) continue;
+        if (!homeName || !awayName || !expectedHome || !expectedAway) continue;
 
-          // Bidirectional fuzzy match: ESPN name contains stored name OR stored name contains ESPN name
-          const nameMatches = (a: string, b: string) => a.includes(b) || b.includes(a);
-          const sameOrder = nameMatches(homeName, expectedHome) && nameMatches(awayName, expectedAway);
-          const reverseOrder = nameMatches(homeName, expectedAway) && nameMatches(awayName, expectedHome);
-          if (!sameOrder && !reverseOrder) continue;
+        // Bidirectional fuzzy match: ESPN name contains stored name OR stored name contains ESPN name
+        const nameMatches = (a: string, b: string) => a.includes(b) || b.includes(a);
+        const sameOrder = nameMatches(homeName, expectedHome) && nameMatches(awayName, expectedAway);
+        const reverseOrder = nameMatches(homeName, expectedAway) && nameMatches(awayName, expectedHome);
+        if (!sameOrder && !reverseOrder) continue;
 
-          const espnHomeGoals = Number(home?.score ?? 0);
-          const espnAwayGoals = Number(away?.score ?? 0);
-          // If teams are stored in reverse order vs ESPN, swap goals so home/away align with the prediction
-          const homeGoals = reverseOrder ? espnAwayGoals : espnHomeGoals;
-          const awayGoals = reverseOrder ? espnHomeGoals : espnAwayGoals;
-          const result = evaluatePredictionMarket(item.predictionMarket, homeGoals, awayGoals);
-          if (result === "pending") return null;
+        const espnHomeGoals = Number(home?.score ?? 0);
+        const espnAwayGoals = Number(away?.score ?? 0);
+        // If teams are stored in reverse order vs ESPN, swap goals so home/away align with the prediction
+        const homeGoals = reverseOrder ? espnAwayGoals : espnHomeGoals;
+        const awayGoals = reverseOrder ? espnHomeGoals : espnAwayGoals;
+        const result = evaluatePredictionMarket(item.predictionMarket, homeGoals, awayGoals);
+        if (result === "pending") return null;
 
-          return { ...item, status: result, resolved_at: new Date().toISOString() };
-        }
+        return { ...item, status: result, resolved_at: new Date().toISOString() };
       }
     } catch {
       return null;
@@ -473,8 +553,11 @@ async function resolveHistoryItemResult(item: UserHistoryItem): Promise<UserHist
       const parts = item.fixtureId.split("_");
       const eventId = parts[1];
       const leagueSlug = parts[2] || "eng.1";
+      if (!/^\d+$/.test(eventId) || !/^[a-z0-9.]+$/i.test(leagueSlug)) {
+        return item;
+      }
       const summaryUrl = `https://site.api.espn.com/apis/site/v2/sports/soccer/${leagueSlug}/summary?event=${eventId}`;
-      const summary = await axios.get(summaryUrl);
+      const summary = await axios.get(summaryUrl, { timeout: 10_000 });
 
       const competition = summary.data?.header?.competitions?.[0];
       const state = competition?.status?.type?.state;
@@ -515,20 +598,94 @@ async function startServer() {
   }
 
   const RATE_LIMIT_WINDOW_MS = 60 * 1000;
-  const RATE_LIMIT_MAX = 25;
+  const RATE_LIMIT_MAX = Number(process.env.API_RATE_LIMIT_MAX || 120);
+  const EXPENSIVE_RATE_LIMIT_MAX = Number(process.env.EXPENSIVE_RATE_LIMIT_MAX || 20);
   const rateLimiter = new InMemoryRateLimiter(RATE_LIMIT_WINDOW_MS, RATE_LIMIT_MAX);
+  const expensiveRateLimiter = new InMemoryRateLimiter(RATE_LIMIT_WINDOW_MS, EXPENSIVE_RATE_LIMIT_MAX);
 
-  const getRequestIp = (c: any) =>
-    c.req.header("x-forwarded-for")?.split(",")[0]?.trim() ||
-    c.req.header("x-real-ip") ||
-    "unknown";
+  /**
+   * Resolve the client IP. Forwarded headers are only trusted when the app is
+   * explicitly deployed behind a trusted proxy (TRUST_PROXY=true), otherwise a
+   * client could spoof X-Forwarded-For and bypass rate limits.
+   */
+  const getRequestIp = (c: any) => {
+    if (String(process.env.TRUST_PROXY || "").toLowerCase() === "true") {
+      const forwarded = c.req.header("x-forwarded-for")?.split(",")[0]?.trim();
+      if (forwarded) return forwarded;
+      const realIp = c.req.header("x-real-ip")?.trim();
+      if (realIp) return realIp;
+    }
+    return (
+      c.env?.incoming?.socket?.remoteAddress ||
+      c.env?.incoming?.connection?.remoteAddress ||
+      "unknown"
+    );
+  };
 
   const isRateLimited = (identifier: string) => rateLimiter.isRateLimited(identifier);
+  const isExpensiveRateLimited = (identifier: string) =>
+    expensiveRateLimiter.isRateLimited(identifier);
 
   const hasValidTelegramAuth = (initData?: string | null) =>
     Boolean(initData && validateTelegramInitData(initData, botToken));
 
-  const ADMIN_TASKS_KEY = "admin_tasks_v1";
+  /** Validate initData and return the trusted Telegram user (or null). */
+  const getAuthedTelegramUser = (c: any) =>
+    getVerifiedTelegramUser(c.req.header("X-TG-Init-Data"), botToken);
+
+  /** Expensive third-party/AI endpoints are limited per user (or IP). */
+  const guardExpensiveEndpoint = (c: any) => {
+    const tgUser = getAuthedTelegramUser(c);
+    return isExpensiveRateLimited(`expensive:${tgUser?.id || getRequestIp(c)}`);
+  };
+
+  // Suspension state is cached briefly to avoid a DB round-trip per request.
+  const suspensionCache = new Map<number, { suspended: boolean; role: string; checkedAt: number }>();
+  const SUSPENSION_CACHE_TTL = 60 * 1000;
+  const isSuspendedUser = async (telegramId: number) => {
+    const cached = suspensionCache.get(telegramId);
+    if (cached && Date.now() - cached.checkedAt < SUSPENSION_CACHE_TTL) {
+      return cached.suspended && cached.role !== "admin";
+    }
+    const { data } = await supabase
+      .from("users")
+      .select("is_suspended,role")
+      .eq("telegram_id", telegramId)
+      .maybeSingle();
+    const suspended = Boolean(data?.is_suspended);
+    const role = String(data?.role || "user");
+    if (suspensionCache.size >= 10_000) {
+      const oldestKey = suspensionCache.keys().next().value;
+      if (oldestKey !== undefined) suspensionCache.delete(oldestKey);
+    }
+    suspensionCache.set(telegramId, { suspended, role, checkedAt: Date.now() });
+    return suspended && role !== "admin";
+  };
+
+  // Reject oversized bodies before buffering them in memory.
+  app.use(
+    "/api/*",
+    bodyLimit({
+      maxSize: 64 * 1024 * 1024,
+      onError: (c) => c.json({ error: "Payload too large" }, 413),
+    }),
+  );
+
+  // Global API abuse protection (runs before all routes). Key by user when
+  // authenticated so users behind the same NAT/proxy do not share a bucket.
+  app.use("/api/*", async (c, next) => {
+    const tgUser = getAuthedTelegramUser(c);
+    const rateKey = tgUser?.id ? `api:user:${tgUser.id}` : `api:ip:${getRequestIp(c)}`;
+    // Signed payment webhooks must not be dropped by generic rate limiting.
+    const isWebhook = c.req.path === "/api/payments/lemonsqueezy-webhook";
+    if (!isWebhook && isRateLimited(rateKey)) {
+      return c.json({ error: "Too many requests. Please try again shortly." }, 429);
+    }
+    if (tgUser?.id && (await isSuspendedUser(tgUser.id))) {
+      return c.json({ error: "Your account has been suspended. Please contact support." }, 403);
+    }
+    await next();
+  });
 
 function extractTelegramChannelFromTaskUrl(taskUrl: string): string | null {
   const raw = String(taskUrl || '').trim();
@@ -592,30 +749,38 @@ function extractTelegramChannelFromTaskUrl(taskUrl: string): string | null {
   const getExpectedStarsAmount = (planId: string): number => PLAN_PRICE_STARS[String(planId || "").trim()] || Math.ceil(getPlanUsdPrice(planId) * USD_TO_STARS_RATE);
   const getExpectedTonAmount = (planId: string, tonPerUsdRate: number): number => {
     const normalizedPlanId = String(planId || "").trim();
-    if (PLAN_PRICE_TON[normalizedPlanId]) return PLAN_PRICE_TON[normalizedPlanId];
     const usd = getPlanUsdPrice(normalizedPlanId);
-    if (!usd || !Number.isFinite(tonPerUsdRate) || tonPerUsdRate <= 0) return 0;
-    return Number((usd * tonPerUsdRate).toFixed(2));
+    if (usd && Number.isFinite(tonPerUsdRate) && tonPerUsdRate > 0) {
+      return Number((usd * tonPerUsdRate).toFixed(2));
+    }
+    return 0;
   };
   const getTonPerUsdRate = async (): Promise<number> => {
-    const envRate = Number(process.env.USD_TO_TON_RATE || 0);
-    if (Number.isFinite(envRate) && envRate > 0) return envRate;
-
+    const envRateRaw = Number(process.env.USD_TO_TON_RATE || 0);
+    let fallbackRate = Number.isFinite(envRateRaw) && envRateRaw > 0 ? envRateRaw : DEFAULT_TON_PER_USD;
+    // Accept the legacy "USD per TON" convention (e.g. 6.86) as well.
+    if (fallbackRate > 1) fallbackRate = 1 / fallbackRate;
     const now = Date.now();
     if (cachedRates && now - cachedRates.updatedAt < RATES_TTL_MS && cachedRates.tonUsd > 0) {
       return 1 / cachedRates.tonUsd;
     }
 
-    const response = await axios.get(
-      "https://api.coingecko.com/api/v3/simple/price?ids=the-open-network&vs_currencies=usd",
-      { timeout: 10_000 },
-    );
-    const tonUsd = Number(response?.data?.["the-open-network"]?.usd || 0);
-    if (!Number.isFinite(tonUsd) || tonUsd <= 0) {
-      throw new Error("Invalid TON/USD rate response");
+    try {
+      const response = await axios.get(
+        "https://api.coingecko.com/api/v3/simple/price?ids=the-open-network&vs_currencies=usd",
+        { timeout: 10_000 },
+      );
+      const tonUsd = Number(response?.data?.["the-open-network"]?.usd || 0);
+      if (!Number.isFinite(tonUsd) || tonUsd <= 0) {
+        throw new Error("Invalid TON/USD rate response");
+      }
+      cachedRates = { tonUsd, updatedAt: now };
+      return 1 / tonUsd;
+    } catch (error) {
+      // The env value is a fallback, not an override, so pricing stays live.
+      if (Number.isFinite(fallbackRate) && fallbackRate > 0) return fallbackRate;
+      throw error;
     }
-    cachedRates = { tonUsd, updatedAt: now };
-    return 1 / tonUsd;
   };
 
   const getCachedCollection = async <T = any>(key: string): Promise<T[]> => {
@@ -652,32 +817,64 @@ function extractTelegramChannelFromTaskUrl(taskUrl: string): string | null {
     await next();
     const ms = Date.now() - start;
     
-    // Log API calls and page loads (exclude assets)
+    // Log API calls only. Page loads are not billable activity and would add a
+    // database write per navigation. Identity is derived from validated
+    // initData so callers cannot poison another user's activity log.
     const url = new URL(c.req.url);
-    if (url.pathname.startsWith("/api") || (c.req.method === "GET" && !url.pathname.includes("."))) {
+    if (url.pathname.startsWith("/api") && url.pathname !== "/api/health") {
       try {
-        const initData = c.req.header("X-TG-Init-Data");
-        const tgUser = initData ? getTelegramUserFromInitData(initData) : null;
-        
-        await supabase.from("usage_logs").insert({
-          telegram_id: tgUser?.id || null,
-          endpoint: url.pathname,
-          method: c.req.method,
-          duration_ms: ms,
-          status: c.res.status
-        });
-      } catch (err) {
-        // Silent fail for logging
+        const tgUser = getVerifiedTelegramUser(c.req.header("X-TG-Init-Data"), botToken);
+        if (tgUser?.id) {
+          void Promise.resolve(
+            supabase.from("usage_logs").insert({
+              telegram_id: tgUser.id,
+              endpoint: url.pathname,
+              method: c.req.method,
+              duration_ms: ms,
+              status: c.res.status,
+            }),
+          ).catch(() => undefined);
+        }
+      } catch {
+        // Logging must never affect the request.
       }
     }
   });
 
   // Security Headers Middleware
   app.use("*", async (c, next) => {
-    c.header("X-Frame-Options", "DENY");
+    // NOTE: no X-Frame-Options. Telegram Mini Apps run inside an iframe on
+    // web.telegram.org, so framing must be allowed for Telegram origins only.
     c.header("X-Content-Type-Options", "nosniff");
     c.header("Referrer-Policy", "strict-origin-when-cross-origin");
     c.header("Permissions-Policy", "geolocation=(), microphone=(), camera=()");
+    c.header("Strict-Transport-Security", "max-age=31536000; includeSubDomains");
+    c.header(
+      "Content-Security-Policy",
+      [
+        "default-src 'self'",
+        "script-src 'self' 'unsafe-inline' https://*.telegram.org https://telegram.org",
+        "style-src 'self' 'unsafe-inline' https://fonts.googleapis.com",
+        "img-src 'self' data: blob: https:",
+        [
+          "connect-src 'self'",
+          "https://*.supabase.co",
+          "https://api.telegram.org",
+          "https://api.coingecko.com",
+          "https://toncenter.com",
+          "https://*.tonconnect.io wss://*.tonconnect.io",
+          "https://*.tonapi.io wss://*.tonapi.io",
+          "https://*.ton.org wss://*.ton.org",
+          "https://site.api.espn.com",
+        ].join(" "),
+        "frame-src https://*.telegram.org https://telegram.org https://t.me",
+        "frame-ancestors 'self' https://*.telegram.org https://telegram.org https://t.me https://web.telegram.org",
+        "font-src 'self' data: https://fonts.gstatic.com",
+        "object-src 'none'",
+        "base-uri 'self'",
+        "form-action 'self'",
+      ].join("; "),
+    );
     await next();
   });
 
@@ -705,84 +902,106 @@ function extractTelegramChannelFromTaskUrl(taskUrl: string): string | null {
   });
 
   // Lemon Squeezy Webhook Endpoint
+  // Fail closed: without a configured secret, forged webhooks are impossible to
+  // distinguish from real ones, so the endpoint refuses to run at all.
   app.post("/api/payments/lemonsqueezy-webhook", async (c) => {
+    const webhookSecret = process.env.LEMONSQUEEZY_WEBHOOK_SECRET;
+    if (!webhookSecret) {
+      console.error("Lemon Squeezy webhook rejected: LEMONSQUEEZY_WEBHOOK_SECRET is not configured.");
+      return c.json({ error: "Webhook is not configured" }, 503);
+    }
+
+    const rawBody = await c.req.raw.text();
+    const signature = c.req.header("X-Signature");
+    if (!signature) {
+      return c.json({ error: "Missing signature" }, 401);
+    }
+
+    const expectedSignature = crypto
+      .createHmac("sha256", webhookSecret)
+      .update(rawBody)
+      .digest("hex");
+    const signatureValid =
+      signature.length === expectedSignature.length &&
+      crypto.timingSafeEqual(Buffer.from(signature), Buffer.from(expectedSignature));
+    if (!signatureValid) {
+      return c.json({ error: "Invalid signature" }, 401);
+    }
+
+    let body: any;
     try {
-      const rawBody = await c.req.raw.text();
-      const body = JSON.parse(rawBody);
-      const eventName = body.meta?.event_name;
-      
-      if (!eventName) {
-        return c.json({ error: "Invalid webhook payload" }, 400);
-      }
+      body = JSON.parse(rawBody);
+    } catch {
+      return c.json({ error: "Invalid JSON payload" }, 400);
+    }
 
-      // Verify webhook signature
-      const LEMONSQUEEZY_WEBHOOK_SECRET = process.env.LEMONSQUEEZY_WEBHOOK_SECRET;
-      if (LEMONSQUEEZY_WEBHOOK_SECRET) {
-        const signature = c.req.header("X-Signature");
-        if (!signature) {
-          return c.json({ error: "Missing signature" }, 401);
-        }
-        
-        const crypto = await import('crypto');
-        const hmac = crypto.createHmac('sha256', LEMONSQUEEZY_WEBHOOK_SECRET);
-        const digest = hmac.update(rawBody).digest('hex');
-        
-        const provided = Buffer.from(signature, 'utf8');
-        const expected = Buffer.from(digest, 'utf8');
-        const isValidSignature = provided.length === expected.length && crypto.timingSafeEqual(provided, expected);
+    const eventName = String(body?.meta?.event_name || "");
+    if (!eventName) {
+      return c.json({ error: "Invalid webhook payload" }, 400);
+    }
 
-        if (!isValidSignature) {
-          return c.json({ error: "Invalid signature" }, 401);
-        }
-      }
-
-      // Handle order completed event
-      if (['order_created', 'order_paid', 'subscription_payment_success'].includes(eventName)) {
+    try {
+      if (["order_created", "order_paid", "subscription_payment_success"].includes(eventName)) {
         const orderData = body.data?.attributes;
-        const customData = orderData?.custom;
-        
-        if (!customData?.telegram_id || !customData?.plan_id) {
-          console.error("Lemon Squeezy webhook: Missing telegram_id or plan_id in custom data");
-          return c.json({ received: true });
+        // Lemon Squeezy returns checkout custom data under meta.custom_data;
+        // older payloads may also include it on the order attributes.
+        const customData = body.meta?.custom_data || orderData?.custom || {};
+        const telegramId = Number(customData?.telegram_id);
+        const planId = String(customData?.plan_id || "").trim();
+        const paymentRef = String(
+          orderData?.identifier || orderData?.order_number || body.data?.id || "",
+        ).slice(0, 200);
+
+        if (!Number.isFinite(telegramId) || telegramId <= 0 || !PAID_PLANS.has(planId)) {
+          console.error("Lemon Squeezy webhook: invalid telegram_id or plan_id", {
+            telegramId,
+            planId,
+          });
+          return c.json({ error: "Invalid order metadata" }, 400);
         }
-
-        const telegramId = Number(customData.telegram_id);
-        const planId = customData.plan_id;
-        const paymentRef = String(orderData?.identifier || orderData?.order_number || body.data?.id || '');
-
         if (!paymentRef) {
           console.error("Lemon Squeezy webhook: Missing payment reference");
-          return c.json({ received: true });
+          return c.json({ error: "Missing payment reference" }, 400);
         }
 
-        // Idempotency guard: skip already-processed events
-        const { data: existingTx } = await supabase
-          .from('transactions')
-          .select('id')
-          .eq('provider_payment_charge_id', paymentRef)
-          .eq('type', 'lemonsqueezy')
-          .maybeSingle();
+        // Idempotency is enforced by a UNIQUE index on
+        // (provider_payment_charge_id, type). Insert first so two concurrent
+        // deliveries cannot both grant credits.
+        const { data: insertedTx, error: insertTxError } = await supabase
+          .from("transactions")
+          .insert({
+            telegram_id: telegramId,
+            // Lemon Squeezy reports totals in the currency's smallest unit.
+            amount: Number(orderData?.total || 0) / 100,
+            currency: "USD",
+            status: "completed",
+            provider_payment_charge_id: paymentRef,
+            type: "lemonsqueezy",
+          })
+          .select("id")
+          .single();
 
-        if (existingTx?.id) {
-          return c.json({ received: true, duplicate: true });
+        if (insertTxError) {
+          if (insertTxError.code === "23505") {
+            return c.json({ received: true, duplicate: true });
+          }
+          throw insertTxError;
         }
 
-        // Apply plan credits
-        await applyPlanCredits(telegramId, planId);
+        try {
+          await applyPlanCredits(telegramId, planId);
+        } catch (grantError) {
+          // Release the idempotency key so Lemon Squeezy can retry.
+          if (insertedTx?.id) {
+            await supabase.from("transactions").delete().eq("id", insertedTx.id);
+          }
+          throw grantError;
+        }
 
-        // Log transaction
-        await supabase.from('transactions').insert({
-          telegram_id: telegramId,
-          amount: orderData?.total || 0,
-          currency: 'USD',
-          status: 'completed',
-          provider_payment_charge_id: paymentRef,
-          type: 'lemonsqueezy'
-        });
-
-        // Notify user via bot
         if (bot) {
-          await bot.telegram.sendMessage(telegramId, `✅ Payment received! Your account has been upgraded to ${planId.toUpperCase()} plan.`);
+          bot.telegram
+            .sendMessage(telegramId, `✅ Payment received! Your account has been upgraded to ${planId.toUpperCase()} plan.`)
+            .catch(() => undefined);
         }
 
         console.log(`Lemon Squeezy payment processed for user ${telegramId}, plan ${planId}`);
@@ -880,6 +1099,9 @@ function extractTelegramChannelFromTaskUrl(taskUrl: string): string | null {
   });
 
   app.get("/api/football/upcoming", async (c) => {
+    const tgUser = getAuthedTelegramUser(c);
+    if (!tgUser?.id) return c.json({ error: "Invalid Telegram authentication" }, 401);
+    if (guardExpensiveEndpoint(c)) return c.json({ error: "Too many requests. Please try again shortly." }, 429);
     try {
       const { getTopFixturesFromSearch } = await import("./services/geminiService.js");
       const topFixtures = await getTopFixturesFromSearch().catch(() => []);
@@ -892,9 +1114,12 @@ function extractTelegramChannelFromTaskUrl(taskUrl: string): string | null {
   });
 
   app.get("/api/football/search", async (c) => {
+    const tgUser = getAuthedTelegramUser(c);
+    if (!tgUser?.id) return c.json({ error: "Invalid Telegram authentication" }, 401);
+    if (guardExpensiveEndpoint(c)) return c.json({ error: "Too many requests. Please try again shortly." }, 429);
     try {
-      const q = (c.req.query("q") || "").trim();
-      if (!q) return c.json([]);
+      const q = (c.req.query("q") || "").trim().slice(0, 100);
+      if (q.length < 2) return c.json([]);
       const matches = await searchMatches(q);
       return c.json(matches);
     } catch (error: any) {
@@ -904,6 +1129,9 @@ function extractTelegramChannelFromTaskUrl(taskUrl: string): string | null {
   });
 
   app.post("/api/football/details/:fixtureId", async (c) => {
+    const tgUser = getAuthedTelegramUser(c);
+    if (!tgUser?.id) return c.json({ error: "Invalid Telegram authentication" }, 401);
+    if (guardExpensiveEndpoint(c)) return c.json({ error: "Too many requests. Please try again shortly." }, 429);
     try {
       const fixtureId = c.req.param("fixtureId");
       const body = await c.req.json().catch(() => ({} as any));
@@ -916,6 +1144,9 @@ function extractTelegramChannelFromTaskUrl(taskUrl: string): string | null {
   });
 
   app.get("/api/football/h2h", async (c) => {
+    const tgUser = getAuthedTelegramUser(c);
+    if (!tgUser?.id) return c.json({ error: "Invalid Telegram authentication" }, 401);
+    if (guardExpensiveEndpoint(c)) return c.json({ error: "Too many requests. Please try again shortly." }, 429);
     try {
       const home = c.req.query("home");
       const away = c.req.query("away");
@@ -949,10 +1180,11 @@ function extractTelegramChannelFromTaskUrl(taskUrl: string): string | null {
     const planExpiresAt = userData.plan_expires_at ? new Date(userData.plan_expires_at) : null;
     let effectivePlan = userData.plan || "free";
 
-    // Auto-downgrade expired subscriptions.
+    // Auto-downgrade expired subscriptions (all paid tiers, not just the
+    // current monthly names).
     if (
-      (effectivePlan === "monthly_basic" ||
-        effectivePlan === "monthly_pro") &&
+      effectivePlan !== "free" &&
+      effectivePlan !== "admin" &&
       planExpiresAt &&
       planExpiresAt.getTime() <= now.getTime()
     ) {
@@ -968,10 +1200,11 @@ function extractTelegramChannelFromTaskUrl(taskUrl: string): string | null {
     }
 
     const lastCreditReset = userData.last_credit_reset ? new Date(userData.last_credit_reset) : null;
-    
-    // Check if 24 hours have passed since last reset
-    const shouldReset = !lastCreditReset || 
-      (now.getTime() - lastCreditReset.getTime()) >= (24 * 60 * 60 * 1000);
+
+    // Reset once per calendar day in the configured timezone (matches the
+    // scheduled reset service instead of using a rolling 24h window).
+    const shouldReset =
+      !lastCreditReset || getCreditDateKey(lastCreditReset) < getCreditDateKey(now);
 
     let currentCredits = Number(userData.credits || 0);
     const plan = effectivePlan;
@@ -1028,13 +1261,20 @@ function extractTelegramChannelFromTaskUrl(taskUrl: string): string | null {
     if (!hasValidTelegramAuth(initData)) {
       return c.json({ error: "Invalid Telegram authentication" }, 401);
     }
+    if (guardExpensiveEndpoint(c)) {
+      return c.json({ error: "Too many analysis requests. Please try again shortly." }, 429);
+    }
 
     try {
       const { matchString: rawMatchString, matchId } = await c.req.json();
       if (typeof rawMatchString !== "string" || !rawMatchString.trim() || rawMatchString.length > 200) {
         return c.json({ error: "Invalid match string" }, 400);
       }
-      const matchString = rawMatchString.replace(/[^\w\s\-\.]/g, "").trim();
+      const matchString = rawMatchString
+        .replace(/[^\p{L}\p{N}\s\-.'&/]/gu, "")
+        .replace(/\s+/g, " ")
+        .trim()
+        .slice(0, MAX_MATCH_STRING_LENGTH);
       if (!matchString) {
         return c.json({ error: "Invalid match string" }, 400);
       }
@@ -1051,8 +1291,7 @@ function extractTelegramChannelFromTaskUrl(taskUrl: string): string | null {
         .single();
 
       if (userError || !user) return c.json({ error: "User profile not found" }, 404);
-      const registration = user.phone ? null : await getCachedRegistration(telegramId);
-      if (!user.phone && !registration?.phone) {
+      if (!user.phone) {
         return c.json({ error: "Complete signup first by sharing your contact." }, 403);
       }
 
@@ -1138,8 +1377,8 @@ function extractTelegramChannelFromTaskUrl(taskUrl: string): string | null {
       };
 
       try {
-        const history = await getUserHistory(telegramId);
-        await setUserHistory(telegramId, [newHistoryItem, ...history]);
+        await insertHistoryItem(telegramId, newHistoryItem);
+        await pruneHistory(telegramId);
       } catch (historyError) {
         console.error("Failed to persist analysis history:", historyError);
       }
@@ -1196,6 +1435,9 @@ function extractTelegramChannelFromTaskUrl(taskUrl: string): string | null {
     if (!hasValidTelegramAuth(initData)) {
       return c.json({ error: "Invalid Telegram authentication" }, 401);
     }
+    if (guardExpensiveEndpoint(c)) {
+      return c.json({ error: "Too many analysis requests. Please try again shortly." }, 429);
+    }
 
     try {
       const { images } = await c.req.json();
@@ -1203,6 +1445,24 @@ function extractTelegramChannelFromTaskUrl(taskUrl: string): string | null {
       if (!tgUser) return c.json({ error: "User not identified" }, 401);
       if (!Array.isArray(images) || images.length === 0) {
         return c.json({ error: "At least one image is required." }, 400);
+      }
+      if (images.length > 10) {
+        return c.json({ error: "Too many images." }, 400);
+      }
+      const dataUrlPattern = /^data:image\/(png|jpe?g|webp);base64,[A-Za-z0-9+/=]+$/;
+      const MAX_IMAGE_DATA_URL_LENGTH = 6 * 1024 * 1024;
+      if (
+        images.some(
+          (image: any) =>
+            typeof image !== "string" ||
+            image.length > MAX_IMAGE_DATA_URL_LENGTH ||
+            !dataUrlPattern.test(image),
+        )
+      ) {
+        return c.json(
+          { error: "Each image must be a PNG, JPEG, or WebP under 4 MB." },
+          400,
+        );
       }
 
       const telegramId = tgUser.id;
@@ -1215,8 +1475,7 @@ function extractTelegramChannelFromTaskUrl(taskUrl: string): string | null {
         .single();
 
       if (userError || !user) return c.json({ error: "User not found" }, 404);
-      const registration = user.phone ? null : await getCachedRegistration(telegramId);
-      if (!user.phone && !registration?.phone) {
+      if (!user.phone) {
         return c.json({ error: "Complete signup first by sharing your contact." }, 403);
       }
 
@@ -1312,6 +1571,9 @@ function extractTelegramChannelFromTaskUrl(taskUrl: string): string | null {
     }
     if (!hasValidTelegramAuth(initData)) {
       return c.json({ error: "Invalid Telegram authentication" }, 401);
+    }
+    if (guardExpensiveEndpoint(c)) {
+      return c.json({ error: "Too many analysis requests. Please try again shortly." }, 429);
     }
 
     try {
@@ -1453,11 +1715,21 @@ function extractTelegramChannelFromTaskUrl(taskUrl: string): string | null {
   });
 
   app.get("/api/espn", async (c) => {
+    const tgUser = getAuthedTelegramUser(c);
+    if (!tgUser?.id) return c.json({ error: "Invalid Telegram authentication" }, 401);
+    if (guardExpensiveEndpoint(c)) return c.json({ error: "Too many requests. Please try again shortly." }, 429);
     const urlObj = new URL(c.req.url);
-    const league = urlObj.searchParams.get("league") || "eng.1";
-    const endpoint = urlObj.searchParams.get("endpoint") || "scoreboard";
-    const ttl = urlObj.searchParams.get("ttl") || "300";
-    
+    const league = (urlObj.searchParams.get("league") || "eng.1").slice(0, 40);
+    const endpoint = (urlObj.searchParams.get("endpoint") || "scoreboard").slice(0, 80);
+    const rawTtl = parseInt(urlObj.searchParams.get("ttl") || "300", 10);
+    const ttl = Number.isFinite(rawTtl) ? Math.min(Math.max(rawTtl, 30), 86_400) : 300;
+
+    // Only allow simple ESPN path segments. This keeps the proxy pinned to the
+    // ESPN API and prevents path tricks / cache-key pollution.
+    if (!/^[a-z0-9.]+$/i.test(league) || !/^[a-z0-9/_-]+$/i.test(endpoint)) {
+      return c.json({ error: "Invalid league or endpoint" }, 400);
+    }
+
     // Support for team details: endpoint=teams/:id
     const espnUrl = new URL(`https://site.api.espn.com/apis/site/v2/sports/soccer/${league}/${endpoint}`);
     urlObj.searchParams.forEach((value, key) => {
@@ -1475,13 +1747,13 @@ function extractTelegramChannelFromTaskUrl(taskUrl: string): string | null {
 
     if (cached) {
       const updatedAt = new Date(cached.updated_at).getTime();
-      if (Date.now() - updatedAt < parseInt(ttl) * 1000) {
+      if (Date.now() - updatedAt < ttl * 1000) {
         return c.json(cached.data);
       }
     }
 
     try {
-      const response = await axios.get(espnUrl.toString());
+      const response = await axios.get(espnUrl.toString(), { timeout: 10_000 });
       if (response.data) {
         await supabase.from("api_cache").upsert({
           endpoint: cacheKey,
@@ -1503,9 +1775,12 @@ function extractTelegramChannelFromTaskUrl(taskUrl: string): string | null {
 
   // Trending Picks Mechanism
   app.post("/api/trending/click", async (c) => {
+    const tgUser = getAuthedTelegramUser(c);
+    if (!tgUser?.id) return c.json({ error: "Invalid Telegram authentication" }, 401);
     try {
-      const { matchId, teams } = await c.req.json();
-      if (!matchId) return c.json({ error: "Missing matchId" }, 400);
+      const { matchId, teams } = await c.req.json().catch(() => ({} as any));
+      const normalizedMatchId = String(matchId || "").trim().slice(0, 100);
+      if (!normalizedMatchId) return c.json({ error: "Missing matchId" }, 400);
 
       const { data: cached } = await supabase
         .from("api_cache")
@@ -1515,14 +1790,21 @@ function extractTelegramChannelFromTaskUrl(taskUrl: string): string | null {
 
       let trendingData = cached?.data || {};
       
-      if (!trendingData[matchId]) {
-        trendingData[matchId] = { clicks: 0, teams };
+      if (!trendingData[normalizedMatchId]) {
+        trendingData[normalizedMatchId] = {
+          clicks: 0,
+          teams: typeof teams === "object" && teams ? teams : null,
+        };
       }
-      
-      // Add a small random multiplier to make it look like users are active
-      const randomBoost = Math.floor(Math.random() * 3) + 1;
-      trendingData[matchId].clicks += randomBoost;
-      trendingData[matchId].last_clicked = new Date().toISOString();
+
+      trendingData[normalizedMatchId].clicks += 1;
+      trendingData[normalizedMatchId].last_clicked = new Date().toISOString();
+
+      // Bound the JSON document so it cannot grow without limit.
+      const entries = Object.entries(trendingData)
+        .sort(([, a]: [string, any], [, b]: [string, any]) => Number(b?.clicks || 0) - Number(a?.clicks || 0))
+        .slice(0, 200);
+      trendingData = Object.fromEntries(entries);
 
       await supabase.from("api_cache").upsert({
         endpoint: "trending_picks",
@@ -1595,19 +1877,26 @@ function extractTelegramChannelFromTaskUrl(taskUrl: string): string | null {
         const isBootstrapAdmin = bootstrapAdminId && telegramId === bootstrapAdminId;
         const { data: existingUser } = await supabase
           .from("users")
-          .select("role")
+          .select("role,referrer_id")
           .eq("telegram_id", telegramId)
           .maybeSingle();
 
         isAdminUser = Boolean(isBootstrapAdmin || existingUser?.role === "admin");
-        
+
+        const payloadReferrer =
+          startPayload && !isNaN(Number(startPayload)) && Number(startPayload) !== telegramId
+            ? Number(startPayload)
+            : null;
+
         const profilePhoto = await getTelegramProfilePhotoUrl(telegramId, bot);
         await supabase.from("users").upsert({
           telegram_id: telegramId,
           name: ctx.from.first_name + (ctx.from.last_name ? ` ${ctx.from.last_name}` : ""),
           username: ctx.from.username || "",
           photo_url: profilePhoto || null,
-          referrer_id: startPayload && !isNaN(Number(startPayload)) && Number(startPayload) !== telegramId ? Number(startPayload) : null,
+          // Never clear or replace an existing referrer (a plain /start has no
+          // payload; an old referral link must not be re-attributed later).
+          referrer_id: existingUser?.referrer_id ?? payloadReferrer,
           role: isAdminUser ? 'admin' : 'user',
           last_active: new Date().toISOString()
         }, { onConflict: 'telegram_id' });
@@ -1671,18 +1960,22 @@ function extractTelegramChannelFromTaskUrl(taskUrl: string): string | null {
           ? (hasValidReferrer ? referralRewardCredits : signupCredits)
           : (existingUser?.credits || 0);
 
-        // 2. Perform registration/update with atomic credit handling
+        // 2. Perform registration/update. For an existing user we must NOT
+        // write credits/plan back from a stale read, otherwise a concurrent
+        // purchase or task claim can be overwritten.
         const profilePhoto = await getTelegramProfilePhotoUrl(telegramId, bot);
-        const registrationPayload = {
+        const registrationPayload: Record<string, any> = {
           telegram_id: telegramId,
           name: fullName,
           username: ctx.from.username || "",
           photo_url: profilePhoto || null,
           phone,
-          credits: signupCreditsToApply,
-          plan: existingUser?.plan || 'free',
           last_active: new Date().toISOString()
         };
+        if (!existingUser) {
+          registrationPayload.credits = signupCreditsToApply;
+          registrationPayload.plan = 'free';
+        }
 
         let { data: user, error } = await supabase
           .from("users")
@@ -1692,44 +1985,8 @@ function extractTelegramChannelFromTaskUrl(taskUrl: string): string | null {
 
         if (error) {
           console.error("Registration error:", error);
-
-          // Fallback for legacy schema where users.phone does not exist yet.
-          // Keep user reachable by caching the registration contact so app can verify signup.
           if (error.code === "42703" && String(error.message || "").toLowerCase().includes("phone")) {
-            const { data: fallbackUser, error: fallbackError } = await supabase
-              .from("users")
-              .upsert({
-                telegram_id: telegramId,
-                name: fullName,
-                username: ctx.from.username || "",
-                photo_url: profilePhoto || null,
-                credits: signupCreditsToApply,
-                plan: existingUser?.plan || 'free',
-                last_active: new Date().toISOString()
-              }, { onConflict: 'telegram_id' })
-              .select()
-              .single();
-
-            if (fallbackError) {
-              console.error("Registration fallback error:", fallbackError);
-              return ctx.reply("❌ Registration failed. Please try again later.");
-            }
-
-            await supabase.from("api_cache").upsert({
-              endpoint: `registration_${telegramId}`,
-              data: {
-                telegram_id: telegramId,
-                name: fullName,
-                username: ctx.from.username || "",
-                phone,
-                registered_at: new Date().toISOString(),
-              },
-              updated_at: new Date().toISOString(),
-            }, { onConflict: "endpoint" });
-
-            user = fallbackUser;
-            await ctx.reply("✅ Registration successful. Your account is now active.");
-            return;
+            console.error("CRITICAL: users.phone column is missing. Run the consolidated schema migration.");
           }
           return ctx.reply("❌ Registration failed. Please try again later.");
         }
@@ -1761,16 +2018,12 @@ function extractTelegramChannelFromTaskUrl(taskUrl: string): string | null {
                });
                rewardApplied = !rewardError;
 
-               if (!rewardApplied) {
-                 const { error: incrementError } = await supabase.rpc('increment_user_credits', {
-                   target_telegram_id: existingUser.referrer_id,
-                   amount: rewardAmount
-                 });
-                 rewardApplied = !incrementError;
-               }
-
-               if (!rewardApplied) {
-                 const { data: referrerUser, error: referrerFetchError } = await supabase
+                if (!rewardApplied) {
+                  // Fallback for deployments that have not applied the schema
+                  // migration yet. Reads and writes are not atomic, so the RPC
+                  // above is always preferred.
+                  console.warn("add_credits_to_user RPC unavailable; using non-atomic credit fallback.");
+                  const { data: referrerUser, error: referrerFetchError } = await supabase
                    .from("users")
                    .select("credits")
                    .eq("telegram_id", existingUser.referrer_id)
@@ -1877,18 +2130,41 @@ function extractTelegramChannelFromTaskUrl(taskUrl: string): string | null {
         return;
       }
 
-      try {
-        const creditsToAdd = await applyPlanCredits(telegramId, planId);
+      const providerChargeId = ctx.message.successful_payment.provider_payment_charge_id;
 
-        // Log transaction
-        await supabase.from('transactions').insert({
-          telegram_id: telegramId,
-          amount: amount,
-          currency: 'XTR',
-          status: 'completed',
-          provider_payment_charge_id: ctx.message.successful_payment.provider_payment_charge_id,
-          type: 'stars'
-        });
+      try {
+        // Insert the transaction first: the UNIQUE(provider_payment_charge_id,
+        // type) constraint makes this idempotent if Telegram redelivers.
+        const { data: insertedTx, error: txError } = await supabase
+          .from("transactions")
+          .insert({
+            telegram_id: telegramId,
+            amount,
+            currency: "XTR",
+            status: "completed",
+            provider_payment_charge_id: providerChargeId,
+            type: "stars",
+          })
+          .select("id")
+          .single();
+
+        if (txError) {
+          if (txError.code === "23505") {
+            console.log(`Duplicate Stars payment ignored for ${telegramId}: ${providerChargeId}`);
+            return;
+          }
+          throw txError;
+        }
+
+        let creditsToAdd: number;
+        try {
+          creditsToAdd = await applyPlanCredits(telegramId, planId);
+        } catch (grantError) {
+          if (insertedTx?.id) {
+            await supabase.from("transactions").delete().eq("id", insertedTx.id);
+          }
+          throw grantError;
+        }
 
         await ctx.reply(`🎉 Payment Successful! Your account has been upgraded to ${planId.toUpperCase()} plan. Enjoy your ${creditsToAdd} daily credits!`);
       } catch (err: any) {
@@ -2028,7 +2304,7 @@ function extractTelegramChannelFromTaskUrl(taskUrl: string): string | null {
     setInterval(() => {
       maybeSendMatchdayReminders().catch(() => undefined);
       maybeSendDailyAccumulator().catch(() => undefined);
-    }, 60 * 60 * 1000);
+    }, 60 * 60 * 1000).unref?.();
     maybeSendMatchdayReminders().catch(() => undefined);
     maybeSendDailyAccumulator().catch(() => undefined);
   }
@@ -2041,12 +2317,10 @@ function extractTelegramChannelFromTaskUrl(taskUrl: string): string | null {
     }
 
     try {
-      const params = new URLSearchParams(initData || "");
-      const userParam = params.get("user");
-      if (!userParam) return c.json({ error: "Missing Telegram user payload" }, 400);
+      const tgUser = getTelegramUserFromInitData(initData || "");
+      if (!tgUser?.id) return c.json({ error: "Missing Telegram user payload" }, 400);
 
-      const tgUser = JSON.parse(decodeURIComponent(userParam));
-      const isBootstrapAdmin = Boolean(bootstrapAdminId && tgUser?.id === bootstrapAdminId);
+      const isBootstrapAdmin = Boolean(bootstrapAdminId && tgUser.id === bootstrapAdminId);
 
       const { data: existing, error: fetchError } = await supabase
         .from("users")
@@ -2063,7 +2337,7 @@ function extractTelegramChannelFromTaskUrl(taskUrl: string): string | null {
           photo_url: tgUser.photo_url || null,
           role: isBootstrapAdmin ? "admin" : "user",
           plan: isBootstrapAdmin ? "admin" : "free",
-          credits: isBootstrapAdmin ? 999 : 3,
+          credits: isBootstrapAdmin ? 999 : signupCredits,
           last_active: new Date().toISOString(),
         });
         if (insertError) throw insertError;
@@ -2088,12 +2362,10 @@ function extractTelegramChannelFromTaskUrl(taskUrl: string): string | null {
         .single();
       if (userError || !user) return c.json({ error: "User profile not found" }, 404);
 
-      const registration = !user.phone ? await getCachedRegistration(tgUser.id) : null;
-
       return c.json({
         user: {
           ...user,
-          phone: user.phone || registration?.phone || null,
+          phone: user.phone || null,
           role: isBootstrapAdmin ? "admin" : (user.role || "user")
         }
       });
@@ -2181,23 +2453,45 @@ function extractTelegramChannelFromTaskUrl(taskUrl: string): string | null {
     if (!hasValidTelegramAuth(initData)) {
       return c.json({ error: "Invalid Telegram authentication" }, 401);
     }
+    if (guardExpensiveEndpoint(c)) {
+      return c.json({ error: "Too many requests. Please try again shortly." }, 429);
+    }
 
     try {
       const tgUser = initData ? getTelegramUserFromInitData(initData) : null;
       if (!tgUser?.id) return c.json({ error: "User not identified" }, 401);
 
       const history = await getUserHistory(tgUser.id);
-      const settled = await Promise.allSettled(history.map((item) => resolveHistoryItemResult(item)));
-      const resolved = settled.map((result, index) => {
-        if (result.status === "fulfilled") return result.value;
-        console.warn("History item resolve fallback:", result.reason);
-        return history[index];
-      });
 
-      const hasChanges = resolved.some((item, index) => item.status !== history[index]?.status || item.resolved_at !== history[index]?.resolved_at);
-      if (hasChanges) {
-        await setUserHistory(tgUser.id, resolved);
-      }
+      // Resolving hits external APIs. Bound both the number of items per
+      // request and the outbound concurrency so one client cannot fan out
+      // hundreds of requests.
+      const pendingItems = history.filter((item) => item.status === "pending").slice(0, 10);
+      const resolvedPending = await mapWithConcurrency(pendingItems, 3, async (item) => {
+        try {
+          return await resolveHistoryItemResult(item);
+        } catch (error: any) {
+          console.warn("History item resolve fallback:", error?.message || error);
+          return item;
+        }
+      });
+      const resolvedById = new Map(resolvedPending.map((item) => [item.id, item]));
+      const resolved = history.map((item) => resolvedById.get(item.id) || item);
+
+      const changedItems = resolved.filter(
+        (item, index) =>
+          item.status !== history[index]?.status ||
+          item.resolved_at !== history[index]?.resolved_at,
+      );
+      await Promise.all(
+        changedItems.map((item) =>
+          updateHistoryItem(tgUser.id, {
+            id: item.id,
+            status: item.status,
+            resolved_at: item.resolved_at,
+          }).catch((error) => console.error("Failed to update history item:", error?.message || error)),
+        ),
+      );
 
       return c.json(resolved);
     } catch (e: any) {
@@ -2246,32 +2540,29 @@ function extractTelegramChannelFromTaskUrl(taskUrl: string): string | null {
   });
 
   app.put("/api/user/profile", async (c) => {
-    const initData = c.req.header("X-TG-Init-Data");
+    // Identity may ONLY come from validated initData. Never trust a body ID.
+    const tgUser = getAuthedTelegramUser(c);
+    if (!tgUser?.id) {
+      return c.json({ error: "Invalid Telegram authentication" }, 401);
+    }
+
     try {
       const body = await c.req.json().catch(() => ({} as any));
-      const isValidTelegramAuth = hasValidTelegramAuth(initData);
-      const tgUser = initData ? getTelegramUserFromInitData(initData) : null;
-      const bodyTelegramId = Number(body?.telegramId || 0);
-      const telegramId = tgUser?.id || bodyTelegramId;
-      if (!telegramId || (!isValidTelegramAuth && !bodyTelegramId)) {
-        return c.json({ error: "Invalid Telegram authentication" }, 401);
-      }
-      if (tgUser?.id && bodyTelegramId && tgUser.id !== bodyTelegramId) {
-        return c.json({ error: "Telegram identity mismatch" }, 403);
-      }
-
-      const name = String(body?.name || "").trim();
-      const username = String(body?.username || "").trim();
-      const photo_url = body?.photo_url ? String(body.photo_url).trim() : null;
+      const name = String(body?.name || "").trim().slice(0, 120);
+      const username = String(body?.username || "").trim().slice(0, 64);
+      let photo_url = body?.photo_url ? String(body.photo_url).trim().slice(0, 2048) : null;
+      if (photo_url && !/^https?:\/\//i.test(photo_url)) photo_url = null;
       if (!name) return c.json({ error: "Name is required" }, 400);
 
       const { data, error } = await supabase
         .from("users")
-        .upsert({ telegram_id: telegramId, name, username, photo_url, last_active: new Date().toISOString() }, { onConflict: "telegram_id" })
+        .update({ name, username, photo_url, last_active: new Date().toISOString() })
+        .eq("telegram_id", tgUser.id)
         .select("id,telegram_id,name,username,phone,credits,plan,role,photo_url")
-        .single();
+        .maybeSingle();
 
       if (error) throw error;
+      if (!data) return c.json({ error: "User profile not found" }, 404);
       return c.json({ user: data });
     } catch (e: any) {
       console.error("Profile update error:", e?.message || e);
@@ -2290,55 +2581,11 @@ function extractTelegramChannelFromTaskUrl(taskUrl: string): string | null {
       if (!tgUser?.id) return c.json({ error: "User not identified" }, 401);
 
       const body = await c.req.json().catch(() => ({} as any));
-      const subject = String(body?.subject || "").trim();
-      const details = String(body?.details || "").trim();
-      const category = String(body?.category || "general").trim().toLowerCase();
-
-      if (!subject || !details) {
-        return c.json({ error: "Subject and details are required." }, 400);
-      }
-
-      const { data: user } = await supabase
-        .from("users")
-        .select("name,username")
-        .eq("telegram_id", tgUser.id)
-        .maybeSingle();
-
-      const payload = {
-        telegram_id: tgUser.id,
-        name: user?.name || `${tgUser.first_name || ""}${tgUser.last_name ? ` ${tgUser.last_name}` : ""}`.trim() || "User",
-        username: user?.username || tgUser.username || "",
-        category,
-        subject,
-        details,
-        status: "open",
-        created_at: new Date().toISOString(),
-      };
-
-      const { error } = await supabase.from("reports").insert(payload);
-      if (error) throw error;
-
-      return c.json({ success: true });
-    } catch (e: any) {
-      console.error("User report submit error:", e?.message || e);
-      return c.json({ error: "Failed to submit report" }, 500);
-    }
-  });
-
-  app.post("/api/user/report", async (c) => {
-    const initData = c.req.header("X-TG-Init-Data");
-    if (!hasValidTelegramAuth(initData)) {
-      return c.json({ error: "Invalid Telegram authentication" }, 401);
-    }
-
-    try {
-      const tgUser = initData ? getTelegramUserFromInitData(initData) : null;
-      if (!tgUser?.id) return c.json({ error: "User not identified" }, 401);
-
-      const body = await c.req.json().catch(() => ({} as any));
-      const subject = String(body?.subject || "").trim();
-      const details = String(body?.details || "").trim();
-      const category = String(body?.category || "general").trim().toLowerCase();
+      const subject = String(body?.subject || "").trim().slice(0, 200);
+      const details = String(body?.details || "").trim().slice(0, 5000);
+      const rawCategory = String(body?.category || "general").trim().toLowerCase();
+      const allowedCategories = new Set(["general", "bug", "payment", "account", "prediction", "other"]);
+      const category = allowedCategories.has(rawCategory) ? rawCategory : "general";
 
       if (!subject || !details) {
         return c.json({ error: "Subject and details are required." }, 400);
@@ -2413,16 +2660,22 @@ function extractTelegramChannelFromTaskUrl(taskUrl: string): string | null {
 
   // Lemon Squeezy Checkout Endpoint
   app.post("/api/payments/create-lemonsqueezy-checkout", async (c) => {
-    const initData = c.req.header("X-TG-Init-Data");
-    if (!hasValidTelegramAuth(initData)) {
+    const tgUser = getAuthedTelegramUser(c);
+    if (!tgUser?.id) {
       return c.json({ error: "Invalid Telegram authentication" }, 401);
     }
 
     try {
-      const { telegramId, planId, planName, price } = await c.req.json();
-      
-      if (!telegramId || !planId) {
-        return c.json({ error: "Missing required parameters" }, 400);
+      const body = await c.req.json().catch(() => ({} as any));
+      const planId = String(body?.planId || "").trim();
+      const planName = String(body?.planName || "").trim().slice(0, 100);
+      const bodyTelegramId = Number(body?.telegramId || 0);
+
+      if (bodyTelegramId && bodyTelegramId !== tgUser.id) {
+        return c.json({ error: "Telegram identity mismatch" }, 403);
+      }
+      if (!PAID_PLANS.has(planId)) {
+        return c.json({ error: "Unsupported plan" }, 400);
       }
 
       // Map plan IDs to Lemon Squeezy variant IDs
@@ -2436,13 +2689,16 @@ function extractTelegramChannelFromTaskUrl(taskUrl: string): string | null {
         }, 503);
       }
 
-      // Map plan IDs to product/variant IDs in Lemon Squeezy
       const VARIANT_MAP: Record<string, string> = {
-        'monthly_basic': process.env.LEMONSQUEEZY_VARIANT_MONTHLY_BASIC || 'monthly-basic',
-        'monthly_pro': process.env.LEMONSQUEEZY_VARIANT_MONTHLY_PRO || 'monthly-pro',
+        monthly_basic: process.env.LEMONSQUEEZY_VARIANT_MONTHLY_BASIC || "",
+        monthly_pro: process.env.LEMONSQUEEZY_VARIANT_MONTHLY_PRO || "",
       };
 
-      const variantId = VARIANT_MAP[planId] || planId;
+      const variantId = VARIANT_MAP[planId];
+      if (!variantId) {
+        console.error(`Lemon Squeezy variant is not configured for plan ${planId}`);
+        return c.json({ error: "This plan is not available for card checkout." }, 503);
+      }
 
       // Create Lemon Squeezy checkout
       const response = await fetch(`https://api.lemonsqueezy.com/v1/checkouts`, {
@@ -2464,7 +2720,7 @@ function extractTelegramChannelFromTaskUrl(taskUrl: string): string | null {
               checkout_data: {
                 name: planName ? `Flash AI — ${planName}` : undefined,
                 custom: {
-                  telegram_id: String(telegramId),
+                  telegram_id: String(tgUser.id),
                   plan_id: planId,
                 },
               },
@@ -2525,19 +2781,7 @@ function extractTelegramChannelFromTaskUrl(taskUrl: string): string | null {
         return c.json({ error: "Telegram identity mismatch" }, 403);
       }
 
-      // 1. Check if user already completed the task
-      const { data: taskLog } = await supabase
-        .from('user_tasks')
-        .select('*')
-        .eq('telegram_id', normalizedTelegramId)
-        .eq('task_id', normalizedTaskId)
-        .single();
-
-      if (taskLog) {
-        return c.json({ error: "Task already completed" }, 400);
-      }
-
-      // 2. Perform verification for specific tasks
+      // 1. Perform verification for specific tasks
       const { data: taskData } = await supabase
         .from('tasks')
         .select('id,reward,url,active,title')
@@ -2576,27 +2820,43 @@ function extractTelegramChannelFromTaskUrl(taskUrl: string): string | null {
         }
       }
 
-      // 3. Log completion and award reward
+      // 3. Atomically claim the task. The UNIQUE(telegram_id, task_id)
+      // constraint guarantees a task can only ever be rewarded once, even if
+      // two requests race past the verification step.
       const { error: logError } = await supabase.from('user_tasks').insert({
         telegram_id: normalizedTelegramId,
         task_id: normalizedTaskId,
         completed_at: new Date().toISOString()
       });
 
-      if (logError) throw logError;
+      if (logError) {
+        if (logError.code === '23505') {
+          return c.json({ error: "Task already completed" }, 409);
+        }
+        throw logError;
+      }
+
+      const { error: creditError } = await supabase.rpc('add_credits_to_user', {
+        user_telegram_id: normalizedTelegramId,
+        credits_amount: taskReward,
+      });
+      if (creditError) {
+        // Release the claim so the user can retry without losing the reward.
+        await supabase
+          .from('user_tasks')
+          .delete()
+          .eq('telegram_id', normalizedTelegramId)
+          .eq('task_id', normalizedTaskId);
+        throw creditError;
+      }
 
       const { data: user } = await supabase
         .from('users')
         .select('credits')
         .eq('telegram_id', normalizedTelegramId)
         .single();
-      const newCredits = (user?.credits || 0) + taskReward;
-      await supabase
-        .from('users')
-        .update({ credits: newCredits })
-        .eq('telegram_id', normalizedTelegramId);
 
-      return c.json({ success: true, newCredits, rewardedCredits: taskReward });
+      return c.json({ success: true, newCredits: user?.credits ?? null, rewardedCredits: taskReward });
     } catch (e: any) {
       console.error("Task claim error:", e.message);
       return c.json({ error: "Failed to claim task reward" }, 500);
@@ -2619,12 +2879,38 @@ function extractTelegramChannelFromTaskUrl(taskUrl: string): string | null {
       if (!normalizedAddress) {
         return c.json({ error: "Wallet address is required" }, 400);
       }
+      if (
+        normalizedAddress.length < 10 ||
+        normalizedAddress.length > 128 ||
+        !/^[A-Za-z0-9_\-:]+$/.test(normalizedAddress)
+      ) {
+        return c.json({ error: "Invalid wallet address" }, 400);
+      }
+
+      // Keep the wallet list bounded so a user cannot grow it without limit.
+      const { data: existingWallets } = await supabase
+        .from("user_wallets")
+        .select("wallet_address")
+        .eq("telegram_id", tgUser.id)
+        .order("updated_at", { ascending: true });
+      const wallets = existingWallets || [];
+      const isKnown = wallets.some((w: any) => w.wallet_address === normalizedAddress);
+      if (!isKnown && wallets.length >= 10) {
+        const stale = wallets.slice(0, wallets.length - 9).map((w: any) => w.wallet_address);
+        if (stale.length) {
+          await supabase
+            .from("user_wallets")
+            .delete()
+            .eq("telegram_id", tgUser.id)
+            .in("wallet_address", stale);
+        }
+      }
 
       const payload = {
         telegram_id: tgUser.id,
         wallet_address: normalizedAddress,
-        chain: String(chain || '').trim() || null,
-        wallet_name: String(walletName || '').trim() || null,
+        chain: String(chain || '').trim().slice(0, 32) || null,
+        wallet_name: String(walletName || '').trim().slice(0, 64) || null,
         is_active: true,
         updated_at: new Date().toISOString(),
       };
@@ -2678,6 +2964,9 @@ function extractTelegramChannelFromTaskUrl(taskUrl: string): string | null {
     if (!hasValidTelegramAuth(initData)) {
       return c.json({ error: "Invalid Telegram authentication" }, 401);
     }
+    if (guardExpensiveEndpoint(c)) {
+      return c.json({ error: "Too many support requests. Please try again shortly." }, 429);
+    }
 
     try {
       const body = await c.req.json();
@@ -2712,122 +3001,255 @@ function extractTelegramChannelFromTaskUrl(taskUrl: string): string | null {
     }
   });
 
-  // Verify TON Payment Endpoint
-  app.post("/api/payments/verify-ton-payment", async (c) => {
-    // Validate Telegram Init Data
-    const initData = c.req.header("X-TG-Init-Data");
-    if (!hasValidTelegramAuth(initData)) {
-      return c.json({ error: "Invalid Telegram authentication" }, 401);
+  // ── TON payments ───────────────────────────────────────────────────────────
+  // Security model:
+  //   1. The server creates a single-use intent with a unique nanoton amount.
+  //   2. The client pays that exact amount to the server-configured receiver.
+  //   3. Verification only accepts a transaction whose sender is one of the
+  //      authenticated user's saved wallets, whose value matches the intent
+  //      exactly, and which happened after the intent was created.
+  //   4. The tx hash is reserved atomically before the plan is granted.
+  const sleep = (ms: number) => new Promise((resolve) => setTimeout(resolve, ms));
+
+  const tonAddressToRaw = (address: string): string | null => {
+    const value = String(address || "").trim();
+    if (!value) return null;
+    const rawMatch = value.match(/^(-?\d+):([0-9a-fA-F]{64})$/);
+    if (rawMatch) return `${rawMatch[1]}:${rawMatch[2].toLowerCase()}`;
+    try {
+      const base64 = value.replace(/-/g, "+").replace(/_/g, "/");
+      const decoded = Buffer.from(base64, "base64");
+      if (decoded.length !== 36) return null;
+      const workchain = decoded.readInt8(1);
+      const hash = decoded.subarray(2, 34).toString("hex");
+      return `${workchain}:${hash}`;
+    } catch {
+      return null;
+    }
+  };
+
+  app.post("/api/payments/ton/intent", async (c) => {
+    const tgUser = getAuthedTelegramUser(c);
+    if (!tgUser?.id) return c.json({ error: "Invalid Telegram authentication" }, 401);
+
+    const tonReceiverAddress = process.env.TON_RECEIVER_ADDRESS;
+    const toncenterApiKey = process.env.TONCENTER_API_KEY;
+    if (!tonReceiverAddress || !toncenterApiKey || !tonAddressToRaw(tonReceiverAddress)) {
+      console.error("TON payments are not configured correctly (receiver/API key).");
+      return c.json({ error: "TON payments are not configured." }, 503);
     }
 
     try {
-      const { telegramId, planId, amount, txHash: rawTxHash } = await c.req.json();
-      const tgUser = initData ? getTelegramUserFromInitData(initData) : null;
-      const effectiveTelegramId = tgUser?.id || Number(telegramId || 0);
-      const normalizedPlanId = String(planId || "").trim();
-      const txHash = String(rawTxHash || "").trim().slice(0, 256);
-      const tonReceiverAddress = process.env.TON_RECEIVER_ADDRESS;
-      const toncenterApiKey = process.env.TONCENTER_API_KEY;
-      
-      if (!effectiveTelegramId || !normalizedPlanId || !txHash) {
-        return c.json({ error: "Missing required parameters" }, 400);
-      }
-      if (!tonReceiverAddress || !toncenterApiKey) {
-        return c.json({ error: "TON payments are coming soon." }, 503);
-      }
-      if (tgUser?.id && Number(telegramId || 0) && tgUser.id !== Number(telegramId || 0)) {
-        return c.json({ error: "Telegram identity mismatch" }, 403);
+      const body = await c.req.json().catch(() => ({} as any));
+      const planId = String(body?.planId || "").trim();
+      if (!PAID_PLANS.has(planId)) {
+        return c.json({ error: "Unsupported plan" }, 400);
       }
 
       const tonPerUsdRate = await getTonPerUsdRate();
-      const expectedTonAmount = getExpectedTonAmount(normalizedPlanId, tonPerUsdRate);
-      if (!expectedTonAmount) {
-        return c.json({ error: "Unsupported or invalid plan for TON payment" }, 400);
-      }
-      const expectedNanoTon = BigInt(Math.round(expectedTonAmount * 1e9));
-
-      const txLookup = await axios.get("https://toncenter.com/api/v2/getTransactions", {
-        params: {
-          address: tonReceiverAddress,
-          limit: 100,
-        },
-        headers: {
-          "X-API-Key": toncenterApiKey,
-        },
-        timeout: 12_000,
-      });
-
-      const chainTransactions = Array.isArray(txLookup?.data?.result) ? txLookup.data.result : [];
-      const matchingTx = chainTransactions.find((chainTx: any) => {
-        const chainHash = String(chainTx?.transaction_id?.hash || "");
-        if (!chainHash || !(chainHash === txHash || chainHash.includes(txHash) || txHash.includes(chainHash))) {
-          return false;
-        }
-        const inMsg = chainTx?.in_msg || {};
-        const destination = String(inMsg?.destination || chainTx?.account || "").toLowerCase();
-        const value = BigInt(String(inMsg?.value || 0));
-        if (destination && destination !== String(tonReceiverAddress).toLowerCase()) return false;
-        return value >= expectedNanoTon;
-      });
-
-      if (!matchingTx) {
-        return c.json({ error: "TON transaction not confirmed for expected receiver/amount." }, 400);
+      const tonAmount = getExpectedTonAmount(planId, tonPerUsdRate);
+      if (!tonAmount) {
+        return c.json({ error: "Unsupported plan for TON payment" }, 400);
       }
 
-      // 1) Replay protection: reject already-processed TON tx hashes
-      const { data: existingProcessedTx, error: existingProcessedTxError } = await supabase
-        .from("processed_transactions")
-        .select("id")
-        .eq("tx_hash", txHash)
-        .maybeSingle();
-      if (existingProcessedTxError && existingProcessedTxError.code !== "PGRST116") {
-        throw existingProcessedTxError;
-      }
-      if (existingProcessedTx?.id) {
-        return c.json({ error: "Transaction already processed" }, 409);
-      }
+      // Unique nanoton suffix binds the on-chain transfer to this intent.
+      const baseNano = BigInt(Math.round(tonAmount * 1e9));
+      const nonce = BigInt(Math.floor(Math.random() * 10_000));
+      const amountNano = baseNano + nonce;
+      const expiresAt = new Date(Date.now() + 15 * 60 * 1000).toISOString();
 
-      // Reserve tx hash first to prevent concurrent replay.
-      const { error: processedTxInsertError } = await supabase
-        .from("processed_transactions")
+      // Opportunistically discard this user's stale intents.
+      await supabase
+        .from("payment_intents")
+        .delete()
+        .eq("telegram_id", tgUser.id)
+        .eq("status", "open")
+        .lt("expires_at", new Date().toISOString());
+
+      const { data: intent, error } = await supabase
+        .from("payment_intents")
         .insert({
-          tx_hash: txHash,
-          telegram_id: effectiveTelegramId,
-          plan_id: normalizedPlanId,
-          provider: "ton",
-          processed_at: new Date().toISOString(),
+          telegram_id: tgUser.id,
+          plan_id: planId,
+          amount_nano: amountNano.toString(),
+          receiver: tonReceiverAddress,
+          status: "open",
+          expires_at: expiresAt,
+        })
+        .select("id,amount_nano,receiver,expires_at")
+        .single();
+
+      if (error) throw error;
+
+      return c.json({
+        intentId: intent.id,
+        amountNano: String(intent.amount_nano),
+        receiver: intent.receiver,
+        expiresAt: intent.expires_at,
+      });
+    } catch (e: any) {
+      console.error("TON intent error:", e.message);
+      return c.json({ error: "Failed to create a TON payment intent" }, 500);
+    }
+  });
+
+  app.post("/api/payments/verify-ton-payment", async (c) => {
+    const tgUser = getAuthedTelegramUser(c);
+    if (!tgUser?.id) return c.json({ error: "Invalid Telegram authentication" }, 401);
+
+    const toncenterApiKey = process.env.TONCENTER_API_KEY;
+    if (!toncenterApiKey) {
+      return c.json({ error: "TON payments are not configured." }, 503);
+    }
+
+    let intent: any = null;
+    try {
+      const body = await c.req.json().catch(() => ({} as any));
+      const intentId = String(body?.intentId || "").trim();
+      if (!intentId) return c.json({ error: "intentId is required" }, 400);
+
+      const { data, error } = await supabase
+        .from("payment_intents")
+        .select("id,telegram_id,plan_id,amount_nano,receiver,status,created_at,expires_at")
+        .eq("id", intentId)
+        .eq("telegram_id", tgUser.id)
+        .maybeSingle();
+      if (error) throw error;
+      if (!data) return c.json({ error: "Payment intent not found" }, 404);
+      intent = data;
+
+      if (intent.status !== "open") {
+        return c.json({ error: "Payment intent is no longer open" }, 409);
+      }
+      if (new Date(intent.expires_at).getTime() < Date.now()) {
+        return c.json({ error: "Payment intent expired. Please start over." }, 400);
+      }
+      if (!PAID_PLANS.has(intent.plan_id)) {
+        return c.json({ error: "Invalid plan for this intent" }, 400);
+      }
+
+      const { data: wallets } = await supabase
+        .from("user_wallets")
+        .select("wallet_address")
+        .eq("telegram_id", tgUser.id)
+        .eq("is_active", true);
+
+      const allowedSources = new Set(
+        (wallets || [])
+          .map((wallet: any) => tonAddressToRaw(wallet.wallet_address))
+          .filter((value: string | null): value is string => Boolean(value)),
+      );
+      if (allowedSources.size === 0) {
+        return c.json(
+          {
+            error: "Connect your TON wallet before paying.",
+            code: "WALLET_REQUIRED",
+          },
+          400,
+        );
+      }
+
+      const expectedValue = BigInt(String(intent.amount_nano));
+      const receiverRaw = tonAddressToRaw(String(intent.receiver || ""));
+      const notBefore = Math.floor(new Date(intent.created_at).getTime() / 1000) - 120;
+
+      let matched: { hash: string; value: bigint } | null = null;
+      for (let attempt = 0; attempt < 6 && !matched; attempt += 1) {
+        if (attempt > 0) await sleep(2500);
+        const txLookup = await axios.get("https://toncenter.com/api/v2/getTransactions", {
+          params: { address: intent.receiver, limit: 100 },
+          headers: { "X-API-Key": toncenterApiKey },
+          timeout: 12_000,
         });
-      if (processedTxInsertError) {
-        if (processedTxInsertError.code === "23505") {
+        const chainTransactions = Array.isArray(txLookup?.data?.result) ? txLookup.data.result : [];
+        for (const chainTx of chainTransactions) {
+          const inMsg = chainTx?.in_msg || {};
+          const hash = String(chainTx?.transaction_id?.hash || "");
+          const source = tonAddressToRaw(String(inMsg?.source || ""));
+          const utime = Number(chainTx?.utime || 0);
+          if (!hash || !source || !allowedSources.has(source)) continue;
+          if (utime < notBefore) continue;
+          let value: bigint;
+          try {
+            value = BigInt(String(inMsg?.value || 0));
+          } catch {
+            continue;
+          }
+          if (value !== expectedValue) continue;
+          const destinationRaw = tonAddressToRaw(String(inMsg?.destination || ""));
+          if (receiverRaw && destinationRaw && destinationRaw !== receiverRaw) continue;
+          // The payment comment must reference this exact intent. This proves
+          // the payer saw this intent and prevents claiming another user's
+          // matching transfer by registering the sender's address.
+          if (extractTonComment(inMsg?.message) !== intent.id) continue;
+          matched = { hash, value };
+          break;
+        }
+      }
+
+      if (!matched) {
+        return c.json(
+          { error: "Payment not found on-chain yet. Wait a few seconds and retry.", code: "NOT_FOUND" },
+          400,
+        );
+      }
+
+      // Reserve the hash globally before granting anything.
+      const { error: reserveError } = await supabase.from("processed_transactions").insert({
+        tx_hash: matched.hash,
+        telegram_id: tgUser.id,
+        plan_id: intent.plan_id,
+        provider: "ton",
+        processed_at: new Date().toISOString(),
+      });
+      if (reserveError) {
+        if (reserveError.code === "23505") {
           return c.json({ error: "Transaction already processed" }, 409);
         }
-        throw processedTxInsertError;
+        throw reserveError;
       }
 
+      // Atomically claim this intent.
+      const { data: claimedIntent, error: claimError } = await supabase
+        .from("payment_intents")
+        .update({ status: "paid", tx_hash: matched.hash, paid_at: new Date().toISOString() })
+        .eq("id", intent.id)
+        .eq("status", "open")
+        .select("id")
+        .maybeSingle();
+      if (claimError || !claimedIntent) {
+        await supabase.from("processed_transactions").delete().eq("tx_hash", matched.hash);
+        if (claimError) throw claimError;
+        return c.json({ error: "Payment intent already used" }, 409);
+      }
+
+      const tonAmount = Number(matched.value) / 1e9;
       try {
-        // 2. Log the transaction in the database
-        const { error: txError } = await supabase.from('transactions').insert({
-          telegram_id: effectiveTelegramId,
-          amount: Number(amount || expectedTonAmount || 0),
-          currency: 'TON',
-          status: 'completed',
-          provider_payment_charge_id: txHash.substring(0, 100),
-          type: 'ton'
+        const { error: txError } = await supabase.from("transactions").insert({
+          telegram_id: tgUser.id,
+          amount: tonAmount,
+          currency: "TON",
+          status: "completed",
+          provider_payment_charge_id: matched.hash,
+          type: "ton",
         });
+        if (txError && txError.code !== "23505") throw txError;
 
-        if (txError) throw txError;
-
-        // 3. Apply plan + credits consistently
-        await applyPlanCredits(effectiveTelegramId, normalizedPlanId);
-
-        // 4. Notify the user via Bot
-        if (bot) {
-          await bot.telegram.sendMessage(effectiveTelegramId, `✅ TON payment received! Your account is now on ${normalizedPlanId.toUpperCase()} plan.`);
-        }
+        await applyPlanCredits(tgUser.id, intent.plan_id);
       } catch (processingError) {
-        // Compensating action: release tx hash reservation so user can retry safely.
-        await supabase.from("processed_transactions").delete().eq("tx_hash", txHash);
+        // Roll back the intent + reservation so the user can retry safely.
+        await supabase
+          .from("payment_intents")
+          .update({ status: "open", tx_hash: null, paid_at: null })
+          .eq("id", intent.id);
+        await supabase.from("processed_transactions").delete().eq("tx_hash", matched.hash);
         throw processingError;
+      }
+
+      if (bot) {
+        bot.telegram
+          .sendMessage(tgUser.id, `✅ TON payment received! Your account is now on ${intent.plan_id.toUpperCase()} plan.`)
+          .catch(() => undefined);
       }
 
       return c.json({ success: true });
@@ -2926,18 +3348,17 @@ function extractTelegramChannelFromTaskUrl(taskUrl: string): string | null {
 
   // Task Management
   app.get("/api/admin/tasks", adminOnly, async (c) => {
-    let tasks = await getCachedCollection<any>(ADMIN_TASKS_KEY);
-    if (!tasks.length) {
-      const { data } = await supabase.from("tasks").select("*").order("created_at", { ascending: false }).limit(200);
-      tasks = data || [];
-    }
-    tasks.sort((a, b) => new Date(b.created_at || 0).getTime() - new Date(a.created_at || 0).getTime());
-    return c.json(tasks);
+    const { data, error } = await supabase
+      .from("tasks")
+      .select("*")
+      .order("created_at", { ascending: false })
+      .limit(200);
+    if (error) return c.json({ error: "Failed to load tasks" }, 500);
+    return c.json(data || []);
   });
 
   app.post("/api/admin/tasks", adminOnly, async (c) => {
     const body = await c.req.json();
-    const tasks = await getCachedCollection<any>(ADMIN_TASKS_KEY);
 
     const task = {
       id: crypto.randomUUID(),
@@ -2961,29 +3382,38 @@ function extractTelegramChannelFromTaskUrl(taskUrl: string): string | null {
       task.url = `https://t.me/${normalized}`;
     }
 
-    await setCachedCollection(ADMIN_TASKS_KEY, [task, ...tasks]);
     try {
-      const { error: dbError } = await supabase.from("tasks").insert({
-        title: task.title,
-        description: task.description,
-        reward: task.reward,
-        url: task.url,
-        active: task.active,
-      });
+      const { data: inserted, error: dbError } = await supabase
+        .from("tasks")
+        .insert({
+          id: task.id,
+          title: task.title,
+          description: task.description,
+          reward: task.reward,
+          url: task.url || null,
+          button_label: task.buttonLabel,
+          image_url: task.image_url || null,
+          active: task.active,
+        })
+        .select()
+        .single();
+
       if (dbError) {
         console.error("DB insert failed for tasks:", dbError);
+        return c.json({ error: "Failed to create task" }, 500);
       }
-    } catch {}
-    return c.json(task);
+
+      return c.json(inserted);
+    } catch (error: any) {
+      console.error("Task creation error:", error?.message || error);
+      return c.json({ error: "Failed to create task" }, 500);
+    }
   });
 
   app.delete("/api/admin/tasks/:id", adminOnly, async (c) => {
     const id = c.req.param("id");
-    const tasks = await getCachedCollection<any>(ADMIN_TASKS_KEY);
-    await setCachedCollection(ADMIN_TASKS_KEY, tasks.filter((t) => t.id !== id));
-    try {
-      await supabase.from("tasks").delete().eq("id", id);
-    } catch {}
+    const { error } = await supabase.from("tasks").delete().eq("id", id);
+    if (error) return c.json({ error: "Failed to delete task" }, 500);
     return c.json({ success: true });
   });
 
@@ -3247,12 +3677,22 @@ ${ad.subtitle}`;
 
   // User Admin Promotion
   app.post("/api/admin/users/promote", adminOnly, async (c) => {
-    const { telegramId, role } = await c.req.json();
+    const { telegramId, role } = await c.req.json().catch(() => ({} as any));
+    const targetTelegramId = Number(telegramId);
+    if (!Number.isSafeInteger(targetTelegramId) || targetTelegramId <= 0 || (role !== "user" && role !== "admin")) {
+      return c.json({ error: "Valid telegramId and role (user|admin) are required" }, 400);
+    }
+
+    const actingUser = getTelegramUserFromInitData(c.req.header("X-TG-Init-Data") || "");
+    if (actingUser?.id === targetTelegramId && role !== "admin") {
+      return c.json({ error: "You cannot remove your own admin role" }, 400);
+    }
+
     const { error } = await supabase
       .from("users")
       .update({ role })
-      .eq("telegram_id", telegramId);
-      
+      .eq("telegram_id", targetTelegramId);
+
     if (error) return c.json({ error: error.message }, 400);
     return c.json({ success: true });
   });
@@ -3317,6 +3757,10 @@ ${ad.subtitle}`;
   app.post("/api/admin/users/suspend", adminOnly, async (c) => {
     const { telegramId } = await c.req.json().catch(() => ({} as any));
     if (!telegramId) return c.json({ error: "telegramId is required" }, 400);
+    const actingUser = getTelegramUserFromInitData(c.req.header("X-TG-Init-Data") || "");
+    if (actingUser?.id === Number(telegramId)) {
+      return c.json({ error: "You cannot suspend your own account" }, 400);
+    }
 
     try {
       const { error } = await supabase
@@ -3374,6 +3818,10 @@ ${ad.subtitle}`;
   app.post("/api/admin/users/delete", adminOnly, async (c) => {
     const { telegramId } = await c.req.json().catch(() => ({} as any));
     if (!telegramId) return c.json({ error: "telegramId is required" }, 400);
+    const actingUser = getTelegramUserFromInitData(c.req.header("X-TG-Init-Data") || "");
+    if (actingUser?.id === Number(telegramId)) {
+      return c.json({ error: "You cannot delete your own account" }, 400);
+    }
 
     try {
       const targetId = Number(telegramId);
@@ -3392,6 +3840,13 @@ ${ad.subtitle}`;
 
       // Delete notification logs
       await supabase.from("notification_logs").delete().eq("telegram_id", targetId);
+
+      // Delete task claims, wallets and payment intents so no orphaned rows
+      // keep referencing a deleted user.
+      await supabase.from("user_tasks").delete().eq("telegram_id", targetId);
+      await supabase.from("user_wallets").delete().eq("telegram_id", targetId);
+      await supabase.from("payment_intents").delete().eq("telegram_id", targetId);
+      await supabase.from("transactions").delete().eq("telegram_id", targetId);
 
       // Delete referrals (where user is either referrer or referred)
       await supabase.from("referrals").delete().or(`referrer_telegram_id.eq.${targetId},referred_telegram_id.eq.${targetId}`);
@@ -3422,7 +3877,24 @@ ${ad.subtitle}`;
       .range(from, to);
 
     if (query) {
-      dbQuery = dbQuery.or(`name.ilike.%${query}%,username.ilike.%${query}%,telegram_id.eq.${Number(query) || 0}`);
+      // Never interpolate raw user input into a PostgREST `or` filter:
+      // commas/parentheses/quotes would allow filter injection.
+      const safeQuery = query
+        .replace(/[%_\\]/g, "")
+        .replace(/[,()"']/g, " ")
+        .trim()
+        .slice(0, 100);
+      if (safeQuery) {
+        const clauses = [
+          `name.ilike.%${safeQuery}%`,
+          `username.ilike.%${safeQuery}%`,
+        ];
+        const numericQuery = Number(query);
+        if (Number.isInteger(numericQuery) && numericQuery > 0) {
+          clauses.push(`telegram_id.eq.${numericQuery}`);
+        }
+        dbQuery = dbQuery.or(clauses.join(","));
+      }
     }
 
     const { data, error, count } = await dbQuery;
@@ -3539,12 +4011,12 @@ ${ad.subtitle}`;
 
   // Public Overrides
   app.get("/api/common/tasks", async (c) => {
-    let tasks = await getCachedCollection<any>(ADMIN_TASKS_KEY);
-    if (!tasks.length) {
-      const { data } = await supabase.from("tasks").select("*").eq("active", true);
-      tasks = data || [];
-    }
-    return c.json(tasks.filter((t) => t.active !== false));
+    const { data, error } = await supabase
+      .from("tasks")
+      .select("id,title,description,reward,url,button_label,image_url,active,created_at")
+      .eq("active", true);
+    if (error) return c.json([]);
+    return c.json(data || []);
   });
 
   app.get("/api/common/ads", async (c) => {
@@ -3560,8 +4032,7 @@ ${ad.subtitle}`;
       .limit(50);
     const ads: any[] = dbAds || [];
 
-    const initData = c.req.header("X-TG-Init-Data") || "";
-    const tgUser = initData ? getTelegramUserFromInitData(initData) : null;
+    const tgUser = getAuthedTelegramUser(c);
     let userPlan = "free";
     if (tgUser?.id) {
       const { data: user } = await supabase.from("users").select("plan").eq("telegram_id", tgUser.id).maybeSingle();
@@ -3586,16 +4057,25 @@ ${ad.subtitle}`;
   });
 
   app.post("/api/common/ads/:id/track", async (c) => {
-    const id = c.req.param("id");
-    const { type } = await c.req.json().catch(() => ({ type: "view" }));
+    const tgUser = getAuthedTelegramUser(c);
+    if (!tgUser?.id) return c.json({ error: "Invalid Telegram authentication" }, 401);
 
-    const ads = await getCachedCollection<any>(ADMIN_ADS_KEY);
-    const next = ads.map((ad) => {
-      if (ad.id !== id) return ad;
-      if (type === 'click') return { ...ad, clicks: Number(ad.clicks || 0) + 1 };
-      return { ...ad, views: Number(ad.views || 0) + 1 };
+    const id = c.req.param("id");
+    if (!/^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(id)) {
+      return c.json({ error: "Invalid ad id" }, 400);
+    }
+
+    const { type } = await c.req.json().catch(() => ({ type: "view" }));
+    const isClick = type === "click";
+
+    const { error } = await supabase.rpc("increment_ad_metric", {
+      ad_id: id,
+      is_click: isClick,
     });
-    await setCachedCollection(ADMIN_ADS_KEY, next);
+    if (error) {
+      console.error("Ad metric update failed:", error.message);
+      return c.json({ error: "Failed to record metric" }, 500);
+    }
 
     return c.json({ success: true });
   });
@@ -3700,23 +4180,9 @@ ${ad.subtitle}`;
 
   // Note: Duplicate /api/automation/retention endpoint removed - see line ~1007 for the single definition
 
-  app.get("/api/common/cache", async (c) => {
-    try {
-      const key = c.req.query("key");
-      if (!key) return c.json({ data: null }, 400);
-
-      const { data } = await supabase
-        .from("api_cache")
-        .select("*")
-        .eq("endpoint", key)
-        .single();
-      
-      return c.json({ data: data?.data || null });
-    } catch (e: any) {
-      console.error(`Cache fetch failed for endpoint`, e.message);
-      return c.json({ data: null }, 500);
-    }
-  });
+  // NOTE: the former public /api/common/cache endpoint was removed.
+  // It allowed unauthenticated reads of every cache key, including phone
+  // numbers, and bypassed the paid-only live-matches gate.
 
   // Vite / Static Assets
   if (process.env.NODE_ENV !== "production") {
@@ -3770,7 +4236,7 @@ ${ad.subtitle}`;
   // Run once on startup, then on interval
   await ensureBootstrapAdminRole();
   refreshLiveCache();
-  setInterval(refreshLiveCache, CACHE_INTERVAL);
+  setInterval(refreshLiveCache, CACHE_INTERVAL).unref?.();
 
   // Initialize Credit Reset Scheduler
   console.log("Initializing Credit Reset Scheduler...");
@@ -3789,60 +4255,6 @@ ${ad.subtitle}`;
     port: PORT,
   });
 }
-
-// TON Payment Verification Polling
-const checkTonPayments = async () => {
-  try {
-    const tonReceiverAddress = process.env.TON_RECEIVER_ADDRESS;
-    const toncenterApiKey = process.env.TONCENTER_API_KEY;
-
-    if (!tonReceiverAddress || !toncenterApiKey) {
-      return;
-    }
-
-    const { data: pendingTxs } = await supabase
-      .from('transactions')
-      .select('*')
-      .eq('currency', 'TON')
-      .eq('status', 'pending_verification');
-
-    if (!pendingTxs || pendingTxs.length === 0) return;
-
-    for (const tx of pendingTxs) {
-      try {
-        const res = await axios.get("https://toncenter.com/api/v2/getTransactions", {
-          params: {
-            address: tonReceiverAddress,
-            limit: 20,
-          },
-          headers: {
-            "X-API-Key": toncenterApiKey,
-          },
-        });
-
-        const transactions = res.data?.result || [];
-        const isConfirmed = transactions.some((chainTx: any) => {
-          const hash = chainTx?.transaction_id?.hash || "";
-          return typeof tx.provider_payment_charge_id === "string" && hash.includes(tx.provider_payment_charge_id);
-        });
-
-        if (isConfirmed) {
-          await supabase.from('transactions').update({ status: 'completed' }).eq('id', tx.id);
-          
-          if (process.env.TELEGRAM_BOT_TOKEN) {
-            const bot = new Telegraf(process.env.TELEGRAM_BOT_TOKEN);
-            await bot.telegram.sendMessage(tx.telegram_id, `✅ Your TON transaction has been confirmed on the blockchain! Thank you for your purchase.`);
-          }
-        }
-      } catch (err) {
-        console.error("Error confirming tx:", tx.id, err);
-      }
-    }
-  } catch (error) {
-    console.error("TON payment polling failed:", error);
-  }
-};
-setInterval(checkTonPayments, 30000); // Check every 30 seconds
 
 process.on("unhandledRejection", (reason) => {
   console.error("⚠️ Unhandled promise rejection:", reason);

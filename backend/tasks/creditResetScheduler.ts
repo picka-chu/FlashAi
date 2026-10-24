@@ -55,8 +55,9 @@ export class CreditResetScheduler {
 
     // Then check periodically
     this.intervalId = setInterval(() => {
-      this.checkAndReset();
+      this.checkAndReset().catch(() => undefined);
     }, this.checkInterval);
+    this.intervalId.unref?.();
   }
 
   /**
@@ -79,13 +80,10 @@ export class CreditResetScheduler {
       const now = new Date();
       const today = now.toISOString().split("T")[0]; // YYYY-MM-DD
 
-      // Skip if already reset today
+      // Skip if already reset today. Per-user `last_credit_reset` checks make
+      // this safe: a startup catch-up run will only touch users whose reset is
+      // still due, and a server that was down at midnight still catches up.
       if (this.lastResetDate === today) {
-        return;
-      }
-
-      // Check if it's midnight (00:00-00:59 UTC)
-      if (now.getUTCHours() !== 0) {
         return;
       }
 

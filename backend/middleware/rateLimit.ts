@@ -8,7 +8,9 @@ export class InMemoryRateLimiter {
     private readonly maxRequests: number,
     cleanupEveryMs = 5 * 60 * 1000,
   ) {
-    setInterval(() => this.cleanup(), cleanupEveryMs);
+    const timer = setInterval(() => this.cleanup(), cleanupEveryMs);
+    // Never keep the process alive solely for cache cleanup.
+    timer.unref?.();
   }
 
   isRateLimited(identifier: string): boolean {
@@ -16,6 +18,11 @@ export class InMemoryRateLimiter {
     const current = this.buckets.get(identifier);
 
     if (!current || now > current.resetAt) {
+      // Bound memory usage if an attacker rotates identifiers/IPs.
+      if (!current && this.buckets.size >= 50_000) {
+        const oldestKey = this.buckets.keys().next().value;
+        if (oldestKey !== undefined) this.buckets.delete(oldestKey);
+      }
       this.buckets.set(identifier, { count: 1, resetAt: now + this.windowMs });
       return false;
     }

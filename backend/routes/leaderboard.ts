@@ -1,4 +1,5 @@
 import type { Hono } from "hono";
+import crypto from "crypto";
 
 type LeaderboardEntry = {
   id: string;
@@ -25,8 +26,9 @@ export function registerLeaderboardRoutes(app: Hono, supabase: any) {
 
       if (error) throw error;
 
-      const safeRows: LeaderboardEntry[] = (data || []).map((row: any) => ({
-        id: String(row.id),
+      const safeRows: LeaderboardEntry[] = (data || []).map((row: any, index: number) => ({
+        // Never expose internal user UUIDs on a public endpoint.
+        id: crypto.createHash("sha256").update(String(row.id)).digest("hex").slice(0, 16) || String(index),
         displayName: maskName(row.name),
         avatarUrl: row.photo_url ? String(row.photo_url) : null,
         credits: Number(row.credits || 0),

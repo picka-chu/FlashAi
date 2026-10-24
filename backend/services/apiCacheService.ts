@@ -12,7 +12,16 @@
  *   Fallback AI-sourced stats  → 10 min  [estimates — expire quickly]
  */
 
+import { createHash } from "crypto";
 import { GoogleGenAI } from "@google/genai";
+
+/** Deterministic JSON serialization (sorted object keys at every depth). */
+function stableStringify(value: any): string {
+  if (value === null || typeof value !== "object") return JSON.stringify(value);
+  if (Array.isArray(value)) return `[${value.map(stableStringify).join(",")}]`;
+  const keys = Object.keys(value).sort();
+  return `{${keys.map((key) => `${JSON.stringify(key)}:${stableStringify(value[key])}`).join(",")}}`;
+}
 
 export interface CacheConfig {
   ttl: number;
@@ -54,22 +63,18 @@ class ApiCacheManager {
   constructor(config: CacheConfig) {
     this.cache = new Map();
     this.config = config;
-    setInterval(() => this.cleanup(), 5 * 60 * 1000);
+    setInterval(() => this.cleanup(), 5 * 60 * 1000).unref?.();
   }
 
   generateKey(prefix: string, params: any): string {
-    const normalizedParams = JSON.stringify(params, Object.keys(params).sort());
-    return `${prefix}_${this.simpleHash(normalizedParams)}`;
+    const normalizedParams = stableStringify(params);
+    return `${prefix}_${this.hashKey(normalizedParams)}`;
   }
 
-  private simpleHash(str: string): string {
-    let hash = 0;
-    for (let i = 0; i < str.length; i++) {
-      const char = str.charCodeAt(i);
-      hash = ((hash << 5) - hash) + char;
-      hash = hash & hash;
-    }
-    return Math.abs(hash).toString(36);
+  private hashKey(str: string): string {
+    // SHA-256 avoids the collisions inherent to short 32-bit hashes, which
+    // could otherwise serve one match's analysis for a different match.
+    return createHash("sha256").update(str).digest("hex").slice(0, 32);
   }
 
   get<T>(key: string): CachedResponse<T> | null {

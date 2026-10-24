@@ -1,6 +1,7 @@
 import React, { useState, useEffect, useRef } from 'react';
 import { motion, AnimatePresence } from 'motion/react';
 import { TonConnectButton, useTonConnectUI } from '@tonconnect/ui-react';
+import { beginCell } from '@ton/core';
 import { 
   CreditCard, 
   Share2, 
@@ -53,7 +54,7 @@ const PLANS = [
     id: 'monthly_basic',
     name: 'Monthly Basic',
     usdPrice: 8.99,
-    tonPrice: 6.86,
+    tonPrice: 2.07,
     starsPrice: 500,
     price: '$8.99',
     period: 'per month',
@@ -68,7 +69,7 @@ const PLANS = [
     id: 'monthly_pro',
     name: 'Monthly Pro',
     usdPrice: 14.99,
-    tonPrice: 11.5,
+    tonPrice: 3.45,
     starsPrice: 800,
     price: '$14.99',
     period: 'per month',
@@ -84,7 +85,12 @@ const USD_TO_STARS_RATE = 50; // 1 USD ≈ 50 Telegram Stars
 const DEFAULT_USD_TO_TON_RATE = Number(import.meta.env.VITE_USD_TO_TON_RATE || 0.23);
 
 const getPriceInStars = (plan: any) => Number(plan?.starsPrice || Math.ceil(Number(plan?.usdPrice || 0) * USD_TO_STARS_RATE));
-const getPriceInTon = (plan: any, usdToTonRate: number) => Number(plan?.tonPrice || (Number(plan?.usdPrice || 0) * usdToTonRate).toFixed(2));
+const getPriceInTon = (plan: any, usdToTonRate: number) => {
+  // Accept both TON-per-USD (0.23) and legacy USD-per-TON (6.86) values.
+  const rate = usdToTonRate > 1 ? 1 / usdToTonRate : usdToTonRate;
+  const usd = Number(plan?.usdPrice || 0);
+  return Number((usd * rate).toFixed(2)) || Number(plan?.tonPrice || 0);
+};
 const toNanoTonString = (tonAmount: number): string => {
   if (!Number.isFinite(tonAmount) || tonAmount <= 0) {
     throw new Error('Invalid TON amount calculated for this payment.');
@@ -424,21 +430,8 @@ export const Profile: React.FC<{ initialSection?: ProfileSection }> = ({ initial
   const handleTonPayment = async () => {
     hapticFeedback('medium');
     if (!selectedPlanForPayment || !user) return;
-    const tonPrice = getPriceInTon(selectedPlanForPayment, usdToTonRate);
-    let nanoAmount = '';
-    try {
-      nanoAmount = toNanoTonString(tonPrice);
-    } catch (e: any) {
-      showAlert(e?.message || 'Failed to prepare TON amount.');
-      return;
-    }
-    const tonReceiver = import.meta.env.VITE_TON_RECEIVER_ADDRESS || '';
-    if (!tonReceiver) {
-      showAlert('TON payments are temporarily unavailable. Missing receiver configuration.');
-      return;
-    }
-    
-    if (!tonConnectUI.connected) {
+
+    if (!tonConnectUI.connected || !tonConnectUI.account?.address) {
       setPaymentProcessing({
         isLoading: true,
         title: 'Connecting wallet',
@@ -450,56 +443,106 @@ export const Profile: React.FC<{ initialSection?: ProfileSection }> = ({ initial
       return;
     }
 
+    const authHeaders = {
+      'Content-Type': 'application/json',
+      'X-TG-Init-Data': initData || (window as any)?.Telegram?.WebApp?.initData || '',
+    };
+
     try {
       setPaymentProcessing({
         isLoading: true,
-        title: 'Processing TON payment',
-        detail: 'Sending transaction and verifying on-chain...',
+        title: 'Preparing payment',
+        detail: 'Creating a secure payment request...',
       });
-      const transaction = {
-        validUntil: Math.floor(Date.now() / 1000) + 60, // 60 sec
+
+      // Persist the wallet first so the backend can bind the on-chain sender.
+      const walletRes = await fetch('/api/user/wallet', {
+        method: 'POST',
+        headers: authHeaders,
+        body: JSON.stringify({
+          address: tonConnectUI.account.address,
+          chain: tonConnectUI.account.chain,
+          walletName: tonConnectUI.wallet?.device?.appName || (tonConnectUI.wallet as any)?.name || null,
+        }),
+      });
+      if (!walletRes.ok) {
+        throw new Error('Could not link your wallet. Please reconnect it and try again.');
+      }
+
+      const intentRes = await fetch('/api/payments/ton/intent', {
+        method: 'POST',
+        headers: authHeaders,
+        body: JSON.stringify({ planId: selectedPlanForPayment.id }),
+      });
+      const intentData = await intentRes.json().catch(() => ({}));
+      if (!intentRes.ok || !intentData?.intentId) {
+        throw new Error(intentData?.error || 'Could not start TON payment.');
+      }
+
+      setPaymentProcessing({
+        isLoading: true,
+        title: 'Confirm in wallet',
+        detail: 'Approve the transaction in your wallet app...',
+      });
+
+      // The comment binds the on-chain transfer to this exact intent. Without
+      // it, anyone could claim another user's matching payment by saving the
+      // sender's public address as their own wallet.
+      const commentPayload = beginCell()
+        .storeUint(0, 32)
+        .storeStringTail(String(intentData.intentId))
+        .endCell()
+        .toBoc()
+        .toString('base64');
+
+      await tonConnectUI.sendTransaction({
+        validUntil: Math.floor(Date.now() / 1000) + 5 * 60,
         messages: [
           {
-            address: tonReceiver,
-            amount: nanoAmount
+            address: String(intentData.receiver),
+            amount: String(intentData.amountNano),
+            payload: commentPayload,
           },
         ],
-      };
-
-      const result = await tonConnectUI.sendTransaction(transaction);
-      const txHashCandidate = String(
-        (result as any)?.txHash ||
-        (result as any)?.transaction?.hash ||
-        (result as any)?.hash ||
-        ''
-      ).trim();
-      if (!txHashCandidate) {
-        throw new Error('Unable to read transaction hash from wallet response. Please try another wallet.');
-      }
-      
-      // Verify with backend
-      const verifyRes = await fetch('/api/payments/verify-ton-payment', {
-        method: 'POST',
-        headers: {
-          'Content-Type': 'application/json',
-          'X-TG-Init-Data': initData || (window as any)?.Telegram?.WebApp?.initData || ''
-        },
-        body: JSON.stringify({
-          telegramId: user.telegram_id,
-          planId: selectedPlanForPayment.id,
-          txHash: txHashCandidate,
-          amount: tonPrice
-        })
       });
 
-      if (verifyRes.ok) {
-        hapticFeedback('success');
-        await refreshAuthedProfile();
-        showAlert(`Congratulations! You have successfully upgraded to ${selectedPlanForPayment.name}.`);
-      } else {
+      setPaymentProcessing({
+        isLoading: true,
+        title: 'Verifying payment',
+        detail: 'Checking the blockchain for your transfer...',
+      });
+
+      let verified = false;
+      let lastError = '';
+      for (let attempt = 0; attempt < 4 && !verified; attempt += 1) {
+        if (attempt > 0) {
+          await new Promise((resolve) => setTimeout(resolve, 4000));
+        }
+        const verifyRes = await fetch('/api/payments/verify-ton-payment', {
+          method: 'POST',
+          headers: authHeaders,
+          body: JSON.stringify({ intentId: intentData.intentId }),
+        });
         const verifyData = await verifyRes.json().catch(() => ({}));
-        throw new Error(verifyData.error || 'Verification failed');
+        if (verifyRes.ok) {
+          verified = true;
+          break;
+        }
+        lastError = verifyData?.error || 'Verification failed';
+        if (verifyData?.code !== 'NOT_FOUND') {
+          throw new Error(lastError);
+        }
       }
+
+      if (!verified) {
+        throw new Error(
+          'Payment was sent but is not confirmed yet. Please wait a minute; if your plan does not update, contact support with your wallet address.',
+        );
+      }
+
+      hapticFeedback('success');
+      await refreshAuthedProfile();
+      showAlert(`Congratulations! You have successfully upgraded to ${selectedPlanForPayment.name}.`);
     } catch (e: any) {
       console.error('TON Payment error:', e);
       showAlert(`TON payment failed: ${e?.message || 'Canceled or failed.'}`);
@@ -1205,8 +1248,8 @@ export const Profile: React.FC<{ initialSection?: ProfileSection }> = ({ initial
 
   if (isViewingPaymentMethods && selectedPlanForPayment) {
     const selectedPlanUsdPrice = Number(selectedPlanForPayment.usdPrice || 0);
-    const selectedStarsPrice = getPriceInStars(selectedPlanUsdPrice);
-    const selectedTonPrice = getPriceInTon(selectedPlanUsdPrice, usdToTonRate);
+    const selectedStarsPrice = getPriceInStars(selectedPlanForPayment);
+    const selectedTonPrice = getPriceInTon(selectedPlanForPayment, usdToTonRate);
     return (
       <div className="fixed inset-0 z-[100] bg-black flex flex-col overflow-hidden">
           <div className="flex-1 overflow-y-auto no-scrollbar px-5 py-6 space-y-5">

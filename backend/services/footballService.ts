@@ -10,6 +10,27 @@ const BSD_HEADERS = BSD_API_KEY ? { 'x-api-key': BSD_API_KEY, authorization: `Be
 
 const ESPN_BASE = 'https://site.api.espn.com/apis/site/v2/sports/soccer';
 
+/**
+ * Run an async mapper over `items` with a bounded number of concurrent tasks.
+ * Prevents a single request from opening 60+ outbound sockets at once.
+ */
+async function mapWithConcurrency<T, R>(
+  items: T[],
+  limit: number,
+  mapper: (item: T) => Promise<R>,
+): Promise<R[]> {
+  const results: R[] = new Array(items.length);
+  let cursor = 0;
+  const workers = Array.from({ length: Math.min(limit, items.length) }, async () => {
+    while (cursor < items.length) {
+      const index = cursor++;
+      results[index] = await mapper(items[index]);
+    }
+  });
+  await Promise.all(workers);
+  return results;
+}
+
 const POPULAR_LEAGUES = [
   'eng.1', 'esp.1', 'ita.1', 'ger.1', 'fra.1',
   'uefa.champions', 'uefa.europa', 'uefa.europa.conf',
@@ -351,10 +372,13 @@ export async function fetchBsdMatchStatsByName(homeName: string, awayName: strin
 
 export async function searchMatches(query: string) {
   const today = getTodayDateString();
-  const promises = POPULAR_LEAGUES.map((league) =>
-    axios.get(`${ESPN_BASE}/${league}/scoreboard?dates=${today}`).then((res) => (res.data.events || []).map((e: any) => ({ ...e, _leagueSlug: league }))).catch(() => []),
+  const groups = await mapWithConcurrency(POPULAR_LEAGUES, 8, (league) =>
+    axios
+      .get(`${ESPN_BASE}/${league}/scoreboard?dates=${today}`, { timeout: 5000 })
+      .then((res) => (res.data.events || []).map((e: any) => ({ ...e, _leagueSlug: league })))
+      .catch(() => []),
   );
-  const events = (await Promise.all(promises)).flat();
+  const events = groups.flat();
   return events
     .filter((e: any) => e?.name?.toLowerCase().includes(query.toLowerCase()) || e?.competitions?.[0]?.competitors?.some((c: any) => c.team.displayName.toLowerCase().includes(query.toLowerCase())))
     .map((e: any) => mapESPNEvent(e, e._leagueSlug || 'eng.1'))
@@ -440,11 +464,11 @@ export async function getLiveMatches() {
   const today = getTodayDateString();
   const [bsdEvents, espnEvents, sportsEvents] = await Promise.all([
     fetchBsdLiveEvents(),
-    Promise.all(POPULAR_LEAGUES.map((league) =>
+    mapWithConcurrency(POPULAR_LEAGUES, 8, (league) =>
       axios.get(`${ESPN_BASE}/${league}/scoreboard?dates=${today}`, { timeout: 5000 })
         .then((res) => (res.data.events || []).map((e: any) => ({ ...e, _leagueSlug: league })))
         .catch(() => []),
-    )).then((groups) => groups.flat()),
+    ).then((groups) => groups.flat()),
     fetchSportsApiEvents('live'),
   ]);
 
@@ -471,12 +495,12 @@ export async function getUpcomingMatches(topFixtures: string[] = []) {
   }
 
   const fetchLeagues = async (leagues: string[]) => {
-    const promises = leagues.map((league) =>
+    const groups = await mapWithConcurrency(leagues, 8, (league) =>
       axios.get(`${ESPN_BASE}/${league}/scoreboard?dates=${startDate}`, { timeout: 5000 })
         .then((res) => (res.data.events || []).map((e: any) => ({ ...e, _leagueSlug: league })))
-        .catch(() => [])
+        .catch(() => []),
     );
-    return (await Promise.all(promises)).flat();
+    return groups.flat();
   };
 
   const [espnEvents, bsdEvents, sportsEvents] = await Promise.all([

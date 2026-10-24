@@ -1,33 +1,34 @@
--- Stores user connected wallets (TON and future chains)
-create table if not exists public.user_wallets (
-  id uuid primary key default gen_random_uuid(),
-  telegram_id bigint not null,
-  wallet_address text not null,
-  chain text,
-  wallet_name text,
-  is_active boolean not null default true,
-  created_at timestamptz not null default now(),
-  updated_at timestamptz not null default now()
+-- User connected wallets (TON and future chains).
+-- Superseded by CONSOLIDATED_PRODUCTION_SCHEMA.sql, but kept as a standalone,
+-- idempotent migration for existing deployments.
+
+BEGIN;
+
+CREATE TABLE IF NOT EXISTS public.user_wallets (
+  id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+  telegram_id BIGINT NOT NULL,
+  wallet_address TEXT NOT NULL,
+  chain TEXT,
+  wallet_name TEXT,
+  is_active BOOLEAN NOT NULL DEFAULT TRUE,
+  created_at TIMESTAMPTZ NOT NULL DEFAULT now(),
+  updated_at TIMESTAMPTZ NOT NULL DEFAULT now()
 );
 
-create unique index if not exists user_wallets_telegram_wallet_uq
-  on public.user_wallets (telegram_id, wallet_address);
+CREATE UNIQUE INDEX IF NOT EXISTS user_wallets_telegram_wallet_uq
+  ON public.user_wallets (telegram_id, wallet_address);
 
-create index if not exists user_wallets_telegram_id_idx
-  on public.user_wallets (telegram_id);
+CREATE INDEX IF NOT EXISTS user_wallets_telegram_id_idx
+  ON public.user_wallets (telegram_id);
 
-create index if not exists user_wallets_active_idx
-  on public.user_wallets (telegram_id, is_active);
+CREATE INDEX IF NOT EXISTS user_wallets_active_idx
+  ON public.user_wallets (telegram_id, is_active);
 
--- Helpful FK if users.telegram_id is unique in your schema
--- alter table public.user_wallets
---   add constraint user_wallets_telegram_fk
---   foreign key (telegram_id) references public.users (telegram_id) on delete cascade;
+ALTER TABLE public.user_wallets ENABLE ROW LEVEL SECURITY;
 
-alter table public.user_wallets enable row level security;
+-- Wallets are managed exclusively by the backend (service role bypasses RLS).
+-- Wallets are only exposed through the authenticated API, so no client policy
+-- is created: anon/authenticated access is denied by default.
+DROP POLICY IF EXISTS "wallets_select_own" ON public.user_wallets;
 
--- Service role/backend writes; clients should not write directly.
-create policy if not exists "wallets_select_own"
-  on public.user_wallets
-  for select
-  using (true);
+COMMIT;

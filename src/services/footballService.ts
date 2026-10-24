@@ -50,8 +50,7 @@ export async function getLiveMatches(initData = '') {
     if (response.status === 401 || response.status === 403) {
       throw new Error('Live matches require an active paid subscription.');
     }
-    const backup = await fetch('/api/common/cache?key=live').then((r) => r.ok ? r.json() : { data: [] }).catch(() => ({ data: [] }));
-    return backup.data || [];
+    throw new Error('Failed to load live matches.');
   }
 
   const data = await response.json();

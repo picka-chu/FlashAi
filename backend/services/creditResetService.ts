@@ -32,9 +32,11 @@ interface PlanConfig {
 
 const PLAN_CONFIG: Record<string, PlanConfig> = {
   free: { dailyCredits: 3, name: "Free Trial (7 days)" },
+  weekly: { dailyCredits: 10, name: "Weekly" },
+  monthly: { dailyCredits: 16, name: "Monthly" },
   monthly_basic: { dailyCredits: 10, name: "Monthly Basic" },
   monthly_pro: { dailyCredits: 16, name: "Monthly Pro" },
-  admin: { dailyCredits: 999, name: "Administrator" }
+  admin: { dailyCredits: 999, name: "Administrator" },
 };
 
 export class CreditResetService {
@@ -59,50 +61,73 @@ export class CreditResetService {
       timeZone: this.timezone,
       hour: "2-digit",
       minute: "2-digit",
-      second: "2-digit",
-      hour12: false
+      hourCycle: "h23",
     });
 
     const parts = formatter.formatToParts(now);
     const hour = parts.find(p => p.type === "hour")?.value;
     const minute = parts.find(p => p.type === "minute")?.value;
-    const second = parts.find(p => p.type === "second")?.value;
 
     // Allow 1-minute window around midnight for execution
     return hour === "00" && (minute === "00" || minute === "01");
   }
 
-  /**
-   * Get the start of today in the specified timezone
-   */
-  private getTodayStartInTimezone(): Date {
-    const now = new Date();
-    const formatter = new Intl.DateTimeFormat("en-US", {
+  /** Calendar date (`YYYY-MM-DD`) in the configured timezone. */
+  private getDateKey(date: Date): string {
+    return new Intl.DateTimeFormat("en-CA", {
       timeZone: this.timezone,
       year: "numeric",
       month: "2-digit",
-      day: "2-digit"
-    });
+      day: "2-digit",
+    }).format(date);
+  }
 
-    const parts = formatter.formatToParts(now);
-    const year = parseInt(parts.find(p => p.type === "year")?.value || "2024");
-    const month = parseInt(parts.find(p => p.type === "month")?.value || "1") - 1;
-    const day = parseInt(parts.find(p => p.type === "day")?.value || "1");
+  /** Offset (ms) of the configured timezone at the given instant. */
+  private getTimeZoneOffsetMs(date: Date): number {
+    const parts = new Intl.DateTimeFormat("en-US", {
+      timeZone: this.timezone,
+      year: "numeric",
+      month: "2-digit",
+      day: "2-digit",
+      hour: "2-digit",
+      minute: "2-digit",
+      second: "2-digit",
+      hourCycle: "h23",
+    }).formatToParts(date);
 
-    const todayStart = new Date(year, month, day);
-    return todayStart;
+    const values: Record<string, number> = {};
+    for (const part of parts) {
+      if (part.type !== "literal") values[part.type] = Number(part.value);
+    }
+
+    const asUtc = Date.UTC(
+      values.year,
+      (values.month || 1) - 1,
+      values.day || 1,
+      values.hour || 0,
+      values.minute || 0,
+      values.second || 0,
+    );
+    return asUtc - date.getTime();
   }
 
   /**
-   * Check if user needs credit reset (last reset was before today)
+   * Get the start of today in the specified timezone as a precise instant.
+   */
+  private getTodayStartInTimezone(): Date {
+    const [year, month, day] = this.getDateKey(new Date()).split("-").map(Number);
+    const utcGuess = Date.UTC(year, month - 1, day, 0, 0, 0);
+    const offset = this.getTimeZoneOffsetMs(new Date(utcGuess));
+    return new Date(utcGuess - offset);
+  }
+
+  /**
+   * Check if user needs credit reset (last reset was on an earlier calendar
+   * day in the configured timezone).
    */
   private shouldResetUserCredits(lastResetTime: Date | null): boolean {
     if (!lastResetTime) return true;
-
-    const todayStart = this.getTodayStartInTimezone();
-    const lastReset = new Date(lastResetTime);
-
-    return lastReset.getTime() < todayStart.getTime();
+    return this.getDateKey(new Date(lastResetTime)) < this.getDateKey(new Date());
   }
 
   /**
@@ -132,10 +157,11 @@ export class CreditResetService {
     plan: string,
     createdAt: Date,
     currentCredits: number
-  ): Promise<{ success: boolean; newCredits: number; error?: string }> {
+  ): Promise<{ success: boolean; newCredits: number; granted: number; error?: string }> {
     try {
       const dailyQuota = this.getDailyQuota(plan, createdAt);
       const newCredits = Math.max(currentCredits, dailyQuota);
+      const granted = Math.max(0, newCredits - currentCredits);
 
       const now = new Date();
       const { error } = await this.supabase
@@ -151,20 +177,23 @@ export class CreditResetService {
         throw error;
       }
 
-      // Log credit transaction for audit trail
-      await this.logCreditTransaction(
-        telegramId,
-        dailyQuota,
-        currentCredits,
-        newCredits,
-        "daily_reset"
-      );
+      // Only write an audit row when credits were actually granted.
+      if (granted > 0) {
+        await this.logCreditTransaction(
+          telegramId,
+          granted,
+          currentCredits,
+          newCredits,
+          "daily_reset"
+        );
+      }
 
-      return { success: true, newCredits };
+      return { success: true, newCredits, granted };
     } catch (error: any) {
       return {
         success: false,
         newCredits: currentCredits,
+        granted: 0,
         error: error.message || "Unknown error"
       };
     }
@@ -222,11 +251,14 @@ export class CreditResetService {
       while (hasMore) {
         const { data: users, error } = await this.supabase
           .from("users")
-          .select("telegram_id, plan, credits, created_at, last_credit_reset")
+          .select("telegram_id, plan, credits, created_at, last_credit_reset, plan_expires_at")
+          .order("telegram_id", { ascending: true })
           .range(offset, offset + this.batchSize - 1);
 
         if (error) {
-          stats.errors.push(`Batch fetch error at offset ${offset}: ${error.message}`);
+          if (stats.errors.length < 100) {
+            stats.errors.push(`Batch fetch error at offset ${offset}: ${error.message}`);
+          }
           break;
         }
 
@@ -245,17 +277,32 @@ export class CreditResetService {
             continue;
           }
 
+          // Expired paid plans fall back to the free tier instead of
+          // continuing to receive paid-plan quotas forever.
+          const planExpired =
+            user.plan !== "admin" &&
+            user.plan_expires_at &&
+            new Date(user.plan_expires_at).getTime() < Date.now();
+          const effectivePlan = planExpired ? "free" : user.plan;
+
+          if (planExpired) {
+            await this.supabase
+              .from("users")
+              .update({ plan: "free", plan_expires_at: null })
+              .eq("telegram_id", user.telegram_id);
+          }
+
           const result = await this.resetUserCredits(
             user.telegram_id,
-            user.plan,
+            effectivePlan,
             user.created_at,
             user.credits
           );
 
           if (result.success) {
             stats.usersReset++;
-            stats.totalCreditsDistributed += result.newCredits;
-          } else {
+            stats.totalCreditsDistributed += result.granted;
+          } else if (stats.errors.length < 100) {
             stats.errors.push(
               `Failed to reset credits for user ${user.telegram_id}: ${result.error}`
             );
@@ -298,9 +345,9 @@ export class CreditResetService {
    */
   async healthCheck(): Promise<boolean> {
     try {
-      const { data, error } = await this.supabase
+      const { error } = await this.supabase
         .from("users")
-        .select("count", { count: "exact" })
+        .select("telegram_id", { count: "exact", head: true })
         .limit(1);
 
       return !error;
@@ -319,9 +366,9 @@ export class CreditResetService {
     try {
       const todayStart = this.getTodayStartInTimezone();
 
-      const { data, error } = await this.supabase
+      const { count, error } = await this.supabase
         .from("users")
-        .select("count", { count: "exact" })
+        .select("telegram_id", { count: "exact", head: true })
         .lt("last_credit_reset", todayStart.toISOString());
 
       if (error) throw error;
@@ -332,10 +379,10 @@ export class CreditResetService {
         .eq("transaction_type", "daily_reset")
         .order("created_at", { ascending: false })
         .limit(1)
-        .single();
+        .maybeSingle();
 
       return {
-        usersNeedingReset: data?.count || 0,
+        usersNeedingReset: count || 0,
         lastResetTime: lastReset?.created_at || null
       };
     } catch (error: any) {
