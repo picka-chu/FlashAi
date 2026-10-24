@@ -116,6 +116,39 @@ export async function analyzeLiveMatch(payload: { fixtureId: string; liveSnapsho
   throw lastError;
 }
 
+export interface FootballNewsArticle {
+  id: string;
+  headline: string;
+  description: string | null;
+  image: string | null;
+  url: string;
+  source: string;
+  byline: string | null;
+  published: string;
+  leagueSlug: string;
+  league: string;
+}
+
+export async function getFootballNews(limit = 12, league?: string): Promise<FootballNewsArticle[]> {
+  const cacheKey = `news_${league || 'all'}_${limit}`;
+  const cached = getFromCache(cacheKey);
+  if (cached) return cached;
+
+  const params = new URLSearchParams({ limit: String(limit) });
+  if (league) params.set('league', league);
+
+  try {
+    const response = await fetch(`/api/football/news?${params.toString()}`);
+    if (!response.ok) return [];
+    const data = await response.json();
+    if (!Array.isArray(data)) return [];
+    setCache(cacheKey, data);
+    return data;
+  } catch {
+    return [];
+  }
+}
+
 export async function getUpcomingMatches() {
   const cacheKey = 'upcoming_matches';
   const cached = getFromCache(cacheKey);

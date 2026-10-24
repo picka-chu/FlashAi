@@ -2,7 +2,7 @@ import axios from 'axios';
 import { MatchData, TeamStats } from '../../src/types/prediction';
 
 const API_KEY = process.env.SPORTS_API_KEY || process.env.FOOTBALL_API_KEY || '';
-const API_BASE = 'https://v2.football.sportsapipro.com/api';
+const API_BASE = (process.env.SPORTS_API_BASE || 'https://v2.football.sportsapipro.com/api').replace(/\/+$/, '');
 const HEADERS = API_KEY ? { 'x-api-key': API_KEY } : {};
 const BSD_API_KEY = process.env.BSD_API_KEY || process.env.BSD_FOOTBALL_API_KEY || '';
 const BSD_API_BASE = process.env.BSD_API_BASE || 'https://sports.bzzoiro.com/api';
@@ -162,21 +162,49 @@ function safeIsoDate(value: any) {
 }
 
 function mapSportsApiEvent(e: any) {
-  const status = String(e?.status || e?.fixture?.status?.short || '').toLowerCase();
-  const isPre = status.includes('not started') || status === 'ns' || status === 'pre' || status === 'scheduled';
+  // SportsAPI Pro returns two shapes:
+  //  - /api/live: flat strings + `status` string + unix `startTimestamp`
+  //  - /api/today and /api/schedule/{date}: nested teams, score objects,
+  //    `status.type` = notstarted | inprogress | finished
+  const statusType = String(e?.status?.type || '').toLowerCase();
+  const statusText = String(
+    e?.status?.description || (typeof e?.status === 'string' ? e?.status : '') || '',
+  ).toLowerCase();
+  const state =
+    statusType === 'inprogress' || statusText.includes('half') || /\d(st|nd)\s*half/.test(statusText)
+      ? 'in'
+      : statusType === 'finished' || statusText.includes('ended') || statusText.includes('full time')
+        ? 'post'
+        : statusType === 'notstarted' || statusType === '' || statusText.includes('not started') || statusText.includes('scheduled')
+          ? 'pre'
+          : 'in';
+
   const start = e?.startTimestamp || e?.startTime || e?.date || e?.fixture?.date || e?.timestamp;
-  const homeName = e?.homeTeam?.name || e?.homeTeam || e?.teams?.home?.name || 'Home';
-  const awayName = e?.awayTeam?.name || e?.awayTeam || e?.teams?.away?.name || 'Away';
+  const homeTeam = e?.homeTeam;
+  const awayTeam = e?.awayTeam;
+  const homeName = homeTeam?.name || (typeof homeTeam === 'string' ? homeTeam : '') || e?.teams?.home?.name || 'Home';
+  const awayName = awayTeam?.name || (typeof awayTeam === 'string' ? awayTeam : '') || e?.teams?.away?.name || 'Away';
+  const league = e?.tournament?.name || (typeof e?.tournament === 'string' ? e?.tournament : '') || e?.league?.name || 'Leagues';
+  const homeScore = e?.homeScore?.current ?? e?.homeScore ?? e?.goals?.home ?? 0;
+  const awayScore = e?.awayScore?.current ?? e?.awayScore ?? e?.goals?.away ?? 0;
+  const short = e?.status?.description || (typeof e?.status === 'string' ? e?.status : '') || (state === 'in' ? 'LIVE' : state === 'post' ? 'FT' : 'NS');
 
   return {
     fixture: {
       id: `sportsapi_${e?.id || e?.eventId || e?.matchId || `${homeName}-${awayName}-${start || Date.now()}`}`,
       date: safeIsoDate(start),
-      status: { short: e?.status || (isPre ? 'NS' : 'LIVE'), elapsed: 0, state: isPre ? 'pre' : 'in' }
+      status: { short, elapsed: 0, state },
     },
-    teams: { home: { name: homeName, id: e?.homeTeam?.id || homeName, logo: e?.homeTeam?.logo || null }, away: { name: awayName, id: e?.awayTeam?.id || awayName, logo: e?.awayTeam?.logo || null } },
-    league: { name: e?.tournament?.name || e?.tournament || e?.league?.name || 'Leagues', id: e?.tournament?.id || e?.tournament || e?.league?.id, slug: e?.tournament?.slug || e?.league?.slug },
-    goals: { home: Number(e?.homeScore ?? e?.goals?.home ?? 0), away: Number(e?.awayScore ?? e?.goals?.away ?? 0) },
+    teams: {
+      home: { name: homeName, id: homeTeam?.id || homeName, logo: homeTeam?.logo || e?.teams?.home?.logo || null },
+      away: { name: awayName, id: awayTeam?.id || awayName, logo: awayTeam?.logo || e?.teams?.away?.logo || null },
+    },
+    league: {
+      name: league,
+      id: e?.tournament?.id || e?.league?.id,
+      slug: e?.tournament?.slug || e?.league?.slug,
+    },
+    goals: { home: Number(homeScore) || 0, away: Number(awayScore) || 0 },
     stats: { possession: { home: '50%', away: '50%' }, shotsOnTarget: { home: '0', away: '0' }, shots: { home: '0', away: '0' }, corners: { home: '0', away: '0' } },
     provider: 'sportsapi',
   };
@@ -263,14 +291,27 @@ async function fetchBsdUpcomingEvents() {
   return [];
 }
 
-async function fetchSportsApiEvents(path: 'live' | 'matches') {
+function extractSportsApiEvents(payload: any): any[] {
+  const events = payload?.events ?? payload?.data?.events ?? payload?.data;
+  return Array.isArray(events) ? events : [];
+}
+
+async function fetchSportsApiEvents(path: string) {
   if (!API_KEY) return [];
   try {
     const res = await axios.get(`${API_BASE}/${path}`, { headers: HEADERS, timeout: 8000 });
-    return res.data?.events || res.data?.matches || res.data?.data || [];
+    return extractSportsApiEvents(res.data);
   } catch {
     return [];
   }
+}
+
+async function fetchSportsApiLiveEvents() {
+  return fetchSportsApiEvents('live');
+}
+
+async function fetchSportsApiScheduleEvents(date: string) {
+  return fetchSportsApiEvents(`schedule/${date}`);
 }
 
 function normalizeMatchName(value: any) {
@@ -469,7 +510,7 @@ export async function getLiveMatches() {
         .then((res) => (res.data.events || []).map((e: any) => ({ ...e, _leagueSlug: league })))
         .catch(() => []),
     ).then((groups) => groups.flat()),
-    fetchSportsApiEvents('live'),
+    fetchSportsApiLiveEvents(),
   ]);
 
   const bsdMapped = bsdEvents.map(mapBSDEvent).filter(Boolean);
@@ -506,7 +547,7 @@ export async function getUpcomingMatches(topFixtures: string[] = []) {
   const [espnEvents, bsdEvents, sportsEvents] = await Promise.all([
     fetchLeagues(POPULAR_LEAGUES),
     fetchBsdUpcomingEvents(),
-    fetchSportsApiEvents('matches'),
+    fetchSportsApiScheduleEvents(new Date().toISOString().slice(0, 10)),
   ]);
 
   const espnMapped = sortAndFilterUpcoming(espnEvents, topFixtures);
@@ -525,6 +566,107 @@ export async function getUpcomingMatches(topFixtures: string[] = []) {
   UPCOMING_CACHE[cacheKey] = { data: merged, timestamp: Date.now() };
 
   return merged;
+}
+
+const NEWS_LEAGUES = [
+  'eng.1', 'esp.1', 'ita.1', 'ger.1', 'fra.1',
+  'uefa.champions', 'uefa.europa', 'usa.1',
+];
+
+const NEWS_LEAGUE_LABELS: Record<string, string> = {
+  'eng.1': 'Premier League',
+  'esp.1': 'LaLiga',
+  'ita.1': 'Serie A',
+  'ger.1': 'Bundesliga',
+  'fra.1': 'Ligue 1',
+  'uefa.champions': 'Champions League',
+  'uefa.europa': 'Europa League',
+  'usa.1': 'MLS',
+};
+
+const NEWS_CACHE_TTL = 5 * 60 * 1000;
+let newsCache: { data: any[]; timestamp: number } | null = null;
+
+function mapESPNNews(article: any, leagueSlug: string) {
+  const headline = String(article?.headline || '').trim();
+  const url = article?.links?.web?.href || article?.links?.mobile?.href || null;
+  if (!headline || !url) return null;
+
+  const image =
+    article?.images?.find((img: any) => img?.url)?.url ||
+    article?.images?.[0]?.url ||
+    null;
+
+  return {
+    id: `espn_news_${article?.id || headline}`,
+    headline,
+    description: String(article?.description || '').trim() || null,
+    image,
+    url,
+    source: 'ESPN',
+    byline: article?.byline || null,
+    published: article?.published || article?.lastModified || new Date().toISOString(),
+    leagueSlug,
+    league: NEWS_LEAGUE_LABELS[leagueSlug] || 'Football',
+  };
+}
+
+export async function getFootballNews(limit = 20, league?: string) {
+  const now = Date.now();
+  if (!newsCache || now - newsCache.timestamp >= NEWS_CACHE_TTL) {
+    const groups = await mapWithConcurrency(NEWS_LEAGUES, 4, (leagueSlug) =>
+      axios
+        .get(`${ESPN_BASE}/${leagueSlug}/news?limit=8`, { timeout: 6000 })
+        .then((res) =>
+          (res.data?.articles || [])
+            .map((article: any) => mapESPNNews(article, leagueSlug))
+            .filter(Boolean),
+        )
+        .catch((err) => {
+          console.warn(`[footballService] ESPN news failed for ${leagueSlug}:`, err?.message || err);
+          return [];
+        }),
+    );
+
+    const seen = new Set<string>();
+    const merged = groups.flat().filter((article: any) => {
+      const key = String(article.headline).toLowerCase().replace(/\s+/g, ' ').trim();
+      if (seen.has(key)) return false;
+      seen.add(key);
+      return true;
+    });
+
+    merged.sort(
+      (a: any, b: any) => new Date(b.published).getTime() - new Date(a.published).getTime(),
+    );
+
+    // Round-robin by league so the feed is not dominated by a single
+    // competition while still keeping each league's newest stories first.
+    const buckets = new Map<string, any[]>();
+    for (const article of merged) {
+      const bucket = buckets.get(article.leagueSlug) || [];
+      bucket.push(article);
+      buckets.set(article.leagueSlug, bucket);
+    }
+    const interleaved: any[] = [];
+    for (let index = 0; interleaved.length < merged.length; index++) {
+      let added = false;
+      for (const bucket of buckets.values()) {
+        if (bucket[index]) {
+          interleaved.push(bucket[index]);
+          added = true;
+        }
+      }
+      if (!added) break;
+    }
+
+    newsCache = { data: interleaved, timestamp: now };
+  }
+
+  const articles = league
+    ? newsCache.data.filter((article) => article.leagueSlug === league)
+    : newsCache.data;
+  return articles.slice(0, Math.min(Math.max(limit, 1), 30));
 }
 
 function sortAndFilterUpcoming(events: any[], topFixtures: string[]) {

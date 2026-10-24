@@ -186,6 +186,53 @@ CREATE TABLE IF NOT EXISTS public.notification_logs (
   error_message TEXT
 );
 
+CREATE TABLE IF NOT EXISTS public.notification_preferences (
+  telegram_id BIGINT PRIMARY KEY REFERENCES public.users(telegram_id) ON DELETE CASCADE,
+  daily_fixtures BOOLEAN NOT NULL DEFAULT TRUE,
+  live_alerts BOOLEAN NOT NULL DEFAULT TRUE,
+  news_digest BOOLEAN NOT NULL DEFAULT TRUE,
+  weekly_recap BOOLEAN NOT NULL DEFAULT TRUE,
+  marketing BOOLEAN NOT NULL DEFAULT TRUE,
+  quiet_hours_start SMALLINT NOT NULL DEFAULT 22 CHECK (quiet_hours_start BETWEEN 0 AND 23),
+  quiet_hours_end SMALLINT NOT NULL DEFAULT 8 CHECK (quiet_hours_end BETWEEN 0 AND 23),
+  timezone TEXT NOT NULL DEFAULT 'UTC',
+  blocked_at TIMESTAMPTZ,
+  updated_at TIMESTAMPTZ NOT NULL DEFAULT now()
+);
+
+CREATE TABLE IF NOT EXISTS public.notification_deliveries (
+  id BIGSERIAL PRIMARY KEY,
+  telegram_id BIGINT NOT NULL,
+  category TEXT NOT NULL,
+  dedupe_key TEXT NOT NULL,
+  status TEXT NOT NULL DEFAULT 'pending' CHECK (status IN ('pending', 'sent', 'failed')),
+  error_message TEXT,
+  sent_at TIMESTAMPTZ,
+  created_at TIMESTAMPTZ NOT NULL DEFAULT now(),
+  UNIQUE (telegram_id, dedupe_key)
+);
+
+CREATE TABLE IF NOT EXISTS public.match_alert_subscriptions (
+  id BIGSERIAL PRIMARY KEY,
+  telegram_id BIGINT NOT NULL REFERENCES public.users(telegram_id) ON DELETE CASCADE,
+  fixture_id TEXT NOT NULL,
+  home TEXT,
+  away TEXT,
+  league TEXT,
+  kickoff TIMESTAMPTZ NOT NULL,
+  active BOOLEAN NOT NULL DEFAULT TRUE,
+  created_at TIMESTAMPTZ NOT NULL DEFAULT now(),
+  UNIQUE (telegram_id, fixture_id)
+);
+
+CREATE TABLE IF NOT EXISTS public.live_match_state (
+  fixture_id TEXT PRIMARY KEY,
+  home_score INTEGER NOT NULL DEFAULT 0,
+  away_score INTEGER NOT NULL DEFAULT 0,
+  status TEXT NOT NULL DEFAULT 'in',
+  updated_at TIMESTAMPTZ NOT NULL DEFAULT now()
+);
+
 CREATE TABLE IF NOT EXISTS public.credit_transactions (
   id BIGSERIAL PRIMARY KEY,
   telegram_id BIGINT NOT NULL,
@@ -287,6 +334,11 @@ CREATE INDEX IF NOT EXISTS idx_ads_created_at ON public.ads(created_at DESC);
 CREATE INDEX IF NOT EXISTS idx_referrals_referrer ON public.referrals(referrer_telegram_id);
 CREATE INDEX IF NOT EXISTS idx_referrals_reward_given ON public.referrals(reward_given);
 CREATE INDEX IF NOT EXISTS idx_notification_logs_telegram_sent ON public.notification_logs(telegram_id, sent_at);
+CREATE INDEX IF NOT EXISTS idx_notification_deliveries_telegram_sent ON public.notification_deliveries(telegram_id, sent_at DESC);
+CREATE INDEX IF NOT EXISTS idx_notification_deliveries_category_sent ON public.notification_deliveries(category, sent_at DESC);
+CREATE INDEX IF NOT EXISTS idx_match_alert_subscriptions_active ON public.match_alert_subscriptions(active, kickoff);
+CREATE INDEX IF NOT EXISTS idx_match_alert_subscriptions_telegram ON public.match_alert_subscriptions(telegram_id);
+CREATE INDEX IF NOT EXISTS idx_notification_preferences_blocked ON public.notification_preferences(blocked_at) WHERE blocked_at IS NOT NULL;
 CREATE INDEX IF NOT EXISTS idx_credit_transactions_telegram ON public.credit_transactions(telegram_id);
 CREATE INDEX IF NOT EXISTS idx_credit_transactions_type ON public.credit_transactions(transaction_type);
 CREATE INDEX IF NOT EXISTS idx_credit_transactions_created ON public.credit_transactions(created_at DESC);
@@ -427,6 +479,10 @@ ALTER TABLE public.user_tasks ENABLE ROW LEVEL SECURITY;
 ALTER TABLE public.ads ENABLE ROW LEVEL SECURITY;
 ALTER TABLE public.referrals ENABLE ROW LEVEL SECURITY;
 ALTER TABLE public.notification_logs ENABLE ROW LEVEL SECURITY;
+ALTER TABLE public.notification_preferences ENABLE ROW LEVEL SECURITY;
+ALTER TABLE public.notification_deliveries ENABLE ROW LEVEL SECURITY;
+ALTER TABLE public.match_alert_subscriptions ENABLE ROW LEVEL SECURITY;
+ALTER TABLE public.live_match_state ENABLE ROW LEVEL SECURITY;
 ALTER TABLE public.credit_transactions ENABLE ROW LEVEL SECURITY;
 ALTER TABLE public.transactions ENABLE ROW LEVEL SECURITY;
 ALTER TABLE public.processed_transactions ENABLE ROW LEVEL SECURITY;

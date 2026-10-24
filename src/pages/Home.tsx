@@ -25,10 +25,12 @@ import {
   Percent,
   History as HistoryIcon,
   UserPlus,
-  Megaphone
+  Megaphone,
+  Newspaper
 } from 'lucide-react';
 import { useUserStore } from '../store/useUserStore';
-import { getLiveMatches, getUpcomingMatches, getTrendingPicks, recordMatchClick } from '../services/footballService';
+import { getLiveMatches, getUpcomingMatches, getTrendingPicks, getFootballNews, recordMatchClick, type FootballNewsArticle } from '../services/footballService';
+import { FootballNewsFeed } from '../components/FootballNewsFeed';
 import { useTelegram } from '../hooks/useTelegram';
 import { SignUpSheet } from '../components/SignUpSheet';
 import { ModernMatchCard } from '../components/ModernMatchCard';
@@ -105,6 +107,8 @@ export const Home: React.FC<HomeProps> = ({ onTabChange }) => {
   const [dynamicAds, setDynamicAds] = useState<any[]>([]);
   const [recentAnalysis, setRecentAnalysis] = useState<any[]>([]);
   const [historyLoading, setHistoryLoading] = useState(false);
+  const [news, setNews] = useState<FootballNewsArticle[]>([]);
+  const [newsLoading, setNewsLoading] = useState(true);
   const [isLoading, setIsLoading] = useState(true);
   
   const topPicksRef = useRef<HTMLDivElement>(null);
@@ -279,6 +283,22 @@ export const Home: React.FC<HomeProps> = ({ onTabChange }) => {
     };
     fetchData();
   }, [initData, tg?.initData, user?.phone, user?.plan]);
+
+  // Football news feed is loaded independently so it never delays the home page.
+  useEffect(() => {
+    let cancelled = false;
+    setNewsLoading(true);
+    getFootballNews(12)
+      .then((articles) => {
+        if (!cancelled) setNews(articles);
+      })
+      .finally(() => {
+        if (!cancelled) setNewsLoading(false);
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, []);
 
   // Auto-scroll for Top Picks
   useEffect(() => {
@@ -531,6 +551,29 @@ export const Home: React.FC<HomeProps> = ({ onTabChange }) => {
             </div>
           )}
         </section>
+
+        {/* Football News Feed */}
+        {(newsLoading || news.length > 0) && (
+          <section className="space-y-4">
+            <div className="flex items-center justify-between">
+              <div className="flex items-center gap-2">
+                <Newspaper className="w-4 h-4 text-[#ccff00]" />
+                <h3 className="text-sm font-black text-white tracking-wider">Football feed</h3>
+              </div>
+              <span className="text-[9px] font-black text-zinc-500 uppercase tracking-widest">ESPN</span>
+            </div>
+
+            <FootballNewsFeed
+              articles={news}
+              loading={newsLoading}
+              onOpen={(url) => {
+                hapticFeedback('light');
+                if (tg?.openLink) tg.openLink(url);
+                else window.open(url, '_blank', 'noopener,noreferrer');
+              }}
+            />
+          </section>
+        )}
 
         {/* Live & Trending Matches (Glassmorphism) */}
         <section className="space-y-4">

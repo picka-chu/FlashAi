@@ -613,7 +613,7 @@ export const Profile: React.FC<{ initialSection?: ProfileSection }> = ({ initial
     }
   };
 
-  const handleLemonSqueezyPayment = async () => {
+  const handleCardPayment = async () => {
     hapticFeedback('medium');
     if (!selectedPlanForPayment || !user) return;
 
@@ -623,24 +623,39 @@ export const Profile: React.FC<{ initialSection?: ProfileSection }> = ({ initial
         title: 'Creating secure checkout',
         detail: 'Please wait while we redirect you...',
       });
-      // Get Lemon Squeezy checkout URL from backend
-      const response = await fetch('/api/payments/create-lemonsqueezy-checkout', {
+      const checkoutPayload = {
+        telegramId: user.telegram_id,
+        planId: selectedPlanForPayment.id,
+        planName: selectedPlanForPayment.name,
+        price: selectedPlanForPayment.price,
+      };
+
+      // Whop is the primary card provider. If it is not configured on this
+      // deployment, fall back to the existing Lemon Squeezy checkout.
+      let response = await fetch('/api/payments/create-whop-checkout', {
         method: 'POST',
         headers: {
           'Content-Type': 'application/json',
           'X-TG-Init-Data': initData || ''
         },
-        body: JSON.stringify({
-          telegramId: user.telegram_id,
-          planId: selectedPlanForPayment.id,
-          planName: selectedPlanForPayment.name,
-          price: selectedPlanForPayment.price,
-        }),
+        body: JSON.stringify(checkoutPayload),
       });
+      let data = await response.json().catch(() => ({}));
 
-      const data = await response.json();
+      if (!response.ok && (data?.code === 'WHOP_NOT_CONFIGURED' || data?.code === 'WHOP_PLAN_NOT_CONFIGURED')) {
+        response = await fetch('/api/payments/create-lemonsqueezy-checkout', {
+          method: 'POST',
+          headers: {
+            'Content-Type': 'application/json',
+            'X-TG-Init-Data': initData || ''
+          },
+          body: JSON.stringify(checkoutPayload),
+        });
+        data = await response.json().catch(() => ({}));
+      }
+
       if (!response.ok && data?.code === 'LEMONSQUEEZY_COMING_SOON') {
-        showAlert('Lemon Squeezy checkout is coming soon.');
+        showAlert('Card checkout is coming soon.');
         return;
       }
 
@@ -651,7 +666,7 @@ export const Profile: React.FC<{ initialSection?: ProfileSection }> = ({ initial
         throw new Error(data.error || 'Failed to create checkout session');
       }
     } catch (e: any) {
-      console.error('Lemon Squeezy Payment error:', e);
+      console.error('Card payment error:', e);
       showAlert('Failed to initiate payment: ' + (e.message || 'Unknown error'));
     } finally {
       setPaymentProcessing({ isLoading: false, title: '', detail: '' });
@@ -1306,7 +1321,7 @@ export const Profile: React.FC<{ initialSection?: ProfileSection }> = ({ initial
               </button>
 
               <button
-                onClick={handleLemonSqueezyPayment}
+                onClick={handleCardPayment}
                 className="w-full bg-[#FFC233]/10 border border-[#FFC233]/25 rounded-3xl p-5 flex items-center justify-between group active:scale-[0.98] transition-all"
               >
                 <div className="flex items-center gap-4">
@@ -1315,7 +1330,7 @@ export const Profile: React.FC<{ initialSection?: ProfileSection }> = ({ initial
                   </div>
                   <div className="text-left">
                     <p className="text-base font-black text-white">Bank Card</p>
-                    <p className="text-xs font-semibold text-zinc-400">${selectedPlanUsdPrice.toFixed(2)} • Powered by Lemon Squeezy</p>
+                    <p className="text-xs font-semibold text-zinc-400">${selectedPlanUsdPrice.toFixed(2)} • Card, Apple Pay & more</p>
                   </div>
                 </div>
                 <ChevronRight className="w-5 h-5 text-[#FFC233]" />

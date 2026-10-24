@@ -12,9 +12,11 @@ import path from "path";
 import { fileURLToPath } from "url";
 import fs from "fs";
 import crypto from "crypto";
-import { getLiveMatchPreview, getLiveMatches, getMatchDetails, getUpcomingMatches, searchMatches } from "./services/footballService";
+import { getLiveMatchPreview, getLiveMatches, getMatchDetails, getUpcomingMatches, searchMatches, getFootballNews } from "./services/footballService";
 import { generateSupportReply, getDefaultFaqs } from "./services/supportService";
 import CreditResetScheduler from "./tasks/creditResetScheduler.js";
+import { EngagementScheduler } from "./tasks/engagementScheduler.js";
+import { NotificationService, escapeHtml, normalizeTimezone } from "./services/notificationService";
 import { InMemoryRateLimiter } from "./middleware/rateLimit";
 import { registerLeaderboardRoutes } from "./routes/leaderboard";
 import { getTelegramUserFromInitData, validateTelegramInitData, getVerifiedTelegramUser } from "./middleware/auth";
@@ -62,6 +64,91 @@ const PLAN_PRICE_STARS: Record<string, number> = {
 };
 // Fallback TON-per-USD rate used only when the live price feed is unavailable.
 const DEFAULT_TON_PER_USD = 0.23;
+
+const WHOP_API_BASE = (process.env.WHOP_API_BASE || "https://api.whop.com/api/v1").replace(/\/+$/, "");
+const WHOP_ACCOUNT_ID = process.env.WHOP_ACCOUNT_ID || process.env.WHOP_COMPANY_ID || "";
+const WHOP_PLAN_IDS: Record<string, string> = {
+  monthly_basic: process.env.WHOP_PLAN_MONTHLY_BASIC || "",
+  monthly_pro: process.env.WHOP_PLAN_MONTHLY_PRO || "",
+};
+const WHOP_ENABLED = Boolean(
+  process.env.WHOP_API_KEY &&
+  WHOP_ACCOUNT_ID &&
+  (WHOP_PLAN_IDS.monthly_basic || WHOP_PLAN_IDS.monthly_pro),
+);
+
+function verifyWhopWebhookSignature(
+  secret: string,
+  headers: { id?: string; timestamp?: string; signature?: string },
+  rawBody: string,
+): boolean {
+  if (!headers.id || !headers.timestamp || !headers.signature) return false;
+  const timestamp = Number(headers.timestamp);
+  if (!Number.isFinite(timestamp)) return false;
+  if (Math.abs(Date.now() / 1000 - timestamp) > 5 * 60) return false;
+
+  const signedContent = `${headers.id}.${headers.timestamp}.${rawBody}`;
+  const expected = crypto.createHmac("sha256", secret).update(signedContent).digest("base64");
+  const expectedBuffer = Buffer.from(expected);
+
+  for (const part of headers.signature.split(" ")) {
+    const signature = part.includes(",") ? part.split(",").slice(1).join(",") : part;
+    const provided = Buffer.from(signature);
+    if (provided.length === expectedBuffer.length && crypto.timingSafeEqual(provided, expectedBuffer)) {
+      return true;
+    }
+  }
+  return false;
+}
+
+async function createWhopCheckout(
+  telegramId: number,
+  planId: string,
+): Promise<{ checkoutUrl: string }> {
+  const apiKey = process.env.WHOP_API_KEY;
+  if (!apiKey || !WHOP_ACCOUNT_ID) {
+    const error: any = new Error("Whop checkout is not configured");
+    error.code = "WHOP_NOT_CONFIGURED";
+    throw error;
+  }
+  const planVariantId = WHOP_PLAN_IDS[planId];
+  if (!planVariantId) {
+    const error: any = new Error("This plan is not available for card checkout");
+    error.code = "WHOP_PLAN_NOT_CONFIGURED";
+    throw error;
+  }
+
+  const response = await fetch(`${WHOP_API_BASE}/checkout_configurations`, {
+    method: "POST",
+    headers: {
+      Authorization: `Bearer ${apiKey}`,
+      "Content-Type": "application/json",
+    },
+    body: JSON.stringify({
+      account_id: WHOP_ACCOUNT_ID,
+      plan_id: planVariantId,
+      metadata: {
+        telegram_id: String(telegramId),
+        plan_id: planId,
+        source: "flashai",
+      },
+      redirect_url:
+        process.env.WHOP_REDIRECT_URL ||
+        process.env.APP_URL ||
+        DEFAULT_APP_URL,
+    }),
+  });
+
+  const result: any = await response.json().catch(() => ({}));
+  if (!response.ok) {
+    console.error("Whop checkout API error:", response.status, result?.message || result?.error || "");
+    throw new Error("Failed to create card checkout");
+  }
+
+  const checkoutUrl = String(result?.purchase_url || result?.data?.purchase_url || "");
+  if (!checkoutUrl) throw new Error("No checkout URL returned by Whop");
+  return { checkoutUrl };
+}
 
 const signupCreditsRaw = Number(process.env.SIGNUP_CREDITS ?? 3);
 const signupCredits = Number.isFinite(signupCreditsRaw) && signupCreditsRaw >= 0 ? Math.floor(signupCreditsRaw) : 3;
@@ -677,7 +764,9 @@ async function startServer() {
     const tgUser = getAuthedTelegramUser(c);
     const rateKey = tgUser?.id ? `api:user:${tgUser.id}` : `api:ip:${getRequestIp(c)}`;
     // Signed payment webhooks must not be dropped by generic rate limiting.
-    const isWebhook = c.req.path === "/api/payments/lemonsqueezy-webhook";
+    const isWebhook =
+      c.req.path === "/api/payments/lemonsqueezy-webhook" ||
+      c.req.path === "/api/payments/whop-webhook";
     if (!isWebhook && isRateLimited(rateKey)) {
       return c.json({ error: "Too many requests. Please try again shortly." }, 429);
     }
@@ -1014,6 +1103,154 @@ function extractTelegramChannelFromTaskUrl(taskUrl: string): string | null {
     }
   });
 
+
+  // Whop webhook (Standard Webhooks signature over the raw body).
+  // Fail closed when the signing secret is absent.
+  app.post("/api/payments/whop-webhook", async (c) => {
+    const webhookSecret = process.env.WHOP_WEBHOOK_SECRET;
+    if (!webhookSecret) {
+      console.error("Whop webhook rejected: WHOP_WEBHOOK_SECRET is not configured.");
+      return c.json({ error: "Webhook is not configured" }, 503);
+    }
+
+    const rawBody = await c.req.text();
+    const signatureValid = verifyWhopWebhookSignature(
+      webhookSecret,
+      {
+        id: c.req.header("webhook-id"),
+        timestamp: c.req.header("webhook-timestamp"),
+        signature: c.req.header("webhook-signature"),
+      },
+      rawBody,
+    );
+    if (!signatureValid) {
+      return c.json({ error: "Invalid signature" }, 401);
+    }
+
+    let body: any;
+    try {
+      body = JSON.parse(rawBody);
+    } catch {
+      return c.json({ error: "Invalid JSON payload" }, 400);
+    }
+
+    const eventType = String(body?.type || "");
+    if (!eventType) return c.json({ error: "Invalid webhook payload" }, 400);
+    if (eventType !== "payment.succeeded") {
+      return c.json({ received: true, ignored: eventType });
+    }
+
+    try {
+      const payment = body?.data || {};
+      const metadata = payment?.metadata || body?.metadata || {};
+      const telegramId = Number(metadata?.telegram_id ?? metadata?.telegramId);
+      const planId = String(metadata?.plan_id ?? metadata?.plan ?? "").trim();
+      const paymentId = String(payment?.id || body?.id || "").slice(0, 200);
+
+      if (!Number.isSafeInteger(telegramId) || telegramId <= 0 || !PAID_PLANS.has(planId)) {
+        console.error("Whop webhook: invalid telegram_id or plan_id", { telegramId, planId });
+        return c.json({ error: "Invalid payment metadata" }, 400);
+      }
+      if (!paymentId) {
+        console.error("Whop webhook: missing payment id");
+        return c.json({ error: "Missing payment reference" }, 400);
+      }
+
+      const { data: insertedTx, error: insertTxError } = await supabase
+        .from("transactions")
+        .insert({
+          telegram_id: telegramId,
+          amount: Number(payment?.amount || payment?.subtotal || 0),
+          currency: String(payment?.currency || "USD").toUpperCase().slice(0, 8),
+          status: "completed",
+          provider_payment_charge_id: `whop_${paymentId}`,
+          type: "whop",
+        })
+        .select("id")
+        .single();
+
+      if (insertTxError) {
+        if (insertTxError.code === "23505") {
+          return c.json({ received: true, duplicate: true });
+        }
+        throw insertTxError;
+      }
+
+      let creditsToAdd = 0;
+      try {
+        creditsToAdd = await applyPlanCredits(telegramId, planId);
+      } catch (grantError) {
+        if (insertedTx?.id) {
+          await supabase.from("transactions").delete().eq("id", insertedTx.id);
+        }
+        throw grantError;
+      }
+
+      if (bot) {
+        const notifications = new NotificationService(supabase, bot);
+        // Fire-and-forget: Whop expects a response within 5 seconds. Delivery
+        // is idempotent, so a retry cannot send the message twice.
+        void notifications
+          .send({
+            telegramId,
+            category: "transactional",
+            dedupeKey: `payment:whop:${paymentId}`,
+            text:
+              `✅ <b>Payment received</b>\n\n` +
+              `Your Flash AI <b>${escapeHtml(planId.replace("monthly_", "").toUpperCase())}</b> plan is now active.\n` +
+              `💎 ${creditsToAdd} daily credits added.`,
+          })
+          .catch(() => undefined);
+      }
+
+      console.log(`Whop payment processed for user ${telegramId}, plan ${planId}, payment ${paymentId}`);
+      return c.json({ received: true });
+    } catch (error: any) {
+      console.error("Whop webhook error:", error?.message || error);
+      return c.json({ error: "Webhook processing failed" }, 500);
+    }
+  });
+
+  app.get("/api/football/news", async (c) => {
+    const rawLimit = parseInt(c.req.query("limit") || "20", 10);
+    const limit = Number.isFinite(rawLimit) ? Math.min(Math.max(rawLimit, 1), 30) : 20;
+    const league = (c.req.query("league") || "").trim().slice(0, 40);
+    if (league && !/^[a-z0-9.]+$/i.test(league)) {
+      return c.json({ error: "Invalid league" }, 400);
+    }
+    try {
+      const articles = await getFootballNews(limit, league || undefined);
+      c.header("Cache-Control", "public, max-age=60");
+      return c.json(articles);
+    } catch (error: any) {
+      console.error("Football news API error:", error?.message || error);
+      return c.json({ error: "Failed to fetch football news" }, 500);
+    }
+  });
+
+  app.get("/api/notifications/preferences", async (c) => {
+    const tgUser = getAuthedTelegramUser(c);
+    if (!tgUser?.id) return c.json({ error: "Invalid Telegram authentication" }, 401);
+    const notifications = new NotificationService(supabase, bot);
+    const preferences = await notifications.getPreferences(tgUser.id);
+    return c.json(preferences);
+  });
+
+  app.post("/api/notifications/preferences", async (c) => {
+    const tgUser = getAuthedTelegramUser(c);
+    if (!tgUser?.id) return c.json({ error: "Invalid Telegram authentication" }, 401);
+    const body = await c.req.json().catch(() => ({} as any));
+    const updates: Record<string, unknown> = {};
+    for (const key of ["daily_fixtures", "live_alerts", "news_digest", "weekly_recap", "marketing"]) {
+      if (typeof body?.[key] === "boolean") updates[key] = body[key];
+    }
+    if (body?.timezone !== undefined) updates.timezone = normalizeTimezone(body.timezone);
+    if (body?.quiet_hours_start !== undefined) updates.quiet_hours_start = body.quiet_hours_start;
+    if (body?.quiet_hours_end !== undefined) updates.quiet_hours_end = body.quiet_hours_end;
+    const notifications = new NotificationService(supabase, bot);
+    const preferences = await notifications.updatePreferences(tgUser.id, updates as any);
+    return c.json(preferences);
+  });
 
   app.get("/api/football/live", async (c) => {
     const initData = c.req.header("X-TG-Init-Data");
@@ -1860,9 +2097,204 @@ function extractTelegramChannelFromTaskUrl(taskUrl: string): string | null {
     `https://t.me/${botUsername.replace('@', '')}${telegramId ? `?start=signup_${telegramId}` : ''}`;
 
   let bot: Telegraf | null = null;
+  let engagementScheduler: EngagementScheduler | null = null;
 
   if (botToken) {
     bot = new Telegraf(botToken);
+    const notifications = new NotificationService(supabase, bot);
+
+    const formatQuietHours = (start: number, end: number) => {
+      if (start === end) return "Off";
+      const pad = (value: number) => String(value).padStart(2, "0");
+      return `${pad(start)}:00–${pad(end)}:00`;
+    };
+
+    const buildSettingsView = async (telegramId: number) => {
+      const prefs = await notifications.getPreferences(telegramId);
+      const status = (enabled: boolean) => (enabled ? "✅" : "⭕");
+      const text =
+        `⚙️ <b>Notification settings</b>\n\n` +
+        `${status(prefs.daily_fixtures)} Matchday digest — today's fixtures\n` +
+        `${status(prefs.live_alerts)} Live alerts — goals for matches you follow\n` +
+        `${status(prefs.news_digest)} Football feed — top stories\n` +
+        `${status(prefs.weekly_recap)} Weekly recap — your progress\n` +
+        `${status(prefs.marketing)} Offers & tips — upgrades and win-backs\n\n` +
+        `🌙 Quiet hours: <b>${formatQuietHours(prefs.quiet_hours_start, prefs.quiet_hours_end)}</b> (${escapeHtml(prefs.timezone)})\n` +
+        `Send <code>/timezone Europe/London</code> to change your timezone.`;
+      const keyboard = Markup.inlineKeyboard([
+        [
+          Markup.button.callback(`${status(prefs.daily_fixtures)} Matchday`, "pref:toggle:daily_fixtures"),
+          Markup.button.callback(`${status(prefs.live_alerts)} Live alerts`, "pref:toggle:live_alerts"),
+        ],
+        [
+          Markup.button.callback(`${status(prefs.news_digest)} News feed`, "pref:toggle:news_digest"),
+          Markup.button.callback(`${status(prefs.weekly_recap)} Weekly recap`, "pref:toggle:weekly_recap"),
+        ],
+        [Markup.button.callback(`${status(prefs.marketing)} Offers & tips`, "pref:toggle:marketing")],
+        [
+          Markup.button.callback(
+            prefs.quiet_hours_start === prefs.quiet_hours_end ? "🌙 Enable quiet hours" : "🌙 Disable quiet hours",
+            "pref:quiet:toggle",
+          ),
+        ],
+        [Markup.button.callback("🔕 Pause all", "pref:all_off")],
+      ]);
+      return { prefs, text, keyboard };
+    };
+
+    const refreshSettingsMessage = async (ctx: any) => {
+      const telegramId = Number(ctx.from?.id);
+      if (!telegramId) return;
+      const { text, keyboard } = await buildSettingsView(telegramId);
+      try {
+        await ctx.editMessageText(text, { parse_mode: "HTML", ...keyboard });
+      } catch {
+        try {
+          await ctx.reply(text, { parse_mode: "HTML", ...keyboard });
+        } catch { /* ignore */ }
+      }
+    };
+
+    bot.command(["settings", "notifications"], async (ctx) => {
+      const { text, keyboard } = await buildSettingsView(ctx.from.id);
+      await ctx.reply(text, { parse_mode: "HTML", ...keyboard });
+    });
+
+    bot.command("timezone", async (ctx) => {
+      const requested = String(ctx.message.text || "").split(/\s+/).slice(1).join(" ").trim();
+      if (!requested) {
+        const prefs = await notifications.getPreferences(ctx.from.id);
+        await ctx.reply(`Your timezone is ${prefs.timezone}. Send /timezone Europe/London to change it.`);
+        return;
+      }
+      if (requested.length > 64 || !/^[A-Za-z0-9_+\-/]+$/.test(requested)) {
+        await ctx.reply("Please send a valid IANA timezone, for example /timezone Europe/London.");
+        return;
+      }
+      const timezone = normalizeTimezone(requested);
+      if (timezone === "UTC" && requested.toUpperCase() !== "UTC") {
+        await ctx.reply("That timezone is not recognised. Try /timezone Africa/Lagos or /timezone Europe/London.");
+        return;
+      }
+      await notifications.updatePreferences(ctx.from.id, { timezone });
+      await ctx.reply(`✅ Timezone updated to ${timezone}. Quiet hours now follow your local time.`);
+    });
+
+    bot.command("stop", async (ctx) => {
+      await notifications.updatePreferences(ctx.from.id, {
+        daily_fixtures: false,
+        live_alerts: false,
+        news_digest: false,
+        weekly_recap: false,
+        marketing: false,
+      });
+      await ctx.reply("🔕 All notifications paused. Send /settings to turn them back on.");
+    });
+
+    bot.action(/^pref:/, async (ctx) => {
+      const data = String(ctx.match?.[0] || "");
+      const parts = data.split(":");
+      const action = parts[1];
+      const key = parts[2];
+
+      if (action === "menu") {
+        const { text, keyboard } = await buildSettingsView(ctx.from.id);
+        await ctx.answerCbQuery();
+        await ctx.editMessageText(text, { parse_mode: "HTML", ...keyboard }).catch(() => undefined);
+        return;
+      }
+
+      if (action === "all_off") {
+        await notifications.updatePreferences(ctx.from.id, {
+          daily_fixtures: false,
+          live_alerts: false,
+          news_digest: false,
+          weekly_recap: false,
+          marketing: false,
+        });
+        await ctx.answerCbQuery("All notifications paused");
+        await refreshSettingsMessage(ctx);
+        return;
+      }
+
+      if (action === "quiet" && key === "toggle") {
+        const prefs = await notifications.getPreferences(ctx.from.id);
+        const enabled = prefs.quiet_hours_start !== prefs.quiet_hours_end;
+        await notifications.updatePreferences(
+          ctx.from.id,
+          enabled ? { quiet_hours_start: 0, quiet_hours_end: 0 } : { quiet_hours_start: 22, quiet_hours_end: 8 },
+        );
+        await ctx.answerCbQuery(enabled ? "Quiet hours disabled" : "Quiet hours enabled (22:00–08:00)");
+        await refreshSettingsMessage(ctx);
+        return;
+      }
+
+      const allowedKeys = new Set(["daily_fixtures", "live_alerts", "news_digest", "weekly_recap", "marketing"]);
+      if (!key || !allowedKeys.has(key)) {
+        await ctx.answerCbQuery("Unknown setting");
+        return;
+      }
+
+      const prefs = await notifications.getPreferences(ctx.from.id);
+      const nextValue = action === "off" ? false : !Boolean((prefs as any)[key]);
+      await notifications.updatePreferences(ctx.from.id, { [key]: nextValue } as any);
+      await ctx.answerCbQuery(nextValue ? "Enabled" : "Disabled");
+      await refreshSettingsMessage(ctx);
+    });
+
+    bot.action(/^alert:/, async (ctx) => {
+      const fixtureId = String(ctx.match?.[0] || "").replace(/^alert:/, "").slice(0, 64);
+      if (!fixtureId) {
+        await ctx.answerCbQuery("Match unavailable");
+        return;
+      }
+
+      try {
+        const { count } = await supabase
+          .from("match_alert_subscriptions")
+          .select("id", { count: "exact", head: true })
+          .eq("telegram_id", ctx.from.id)
+          .eq("active", true);
+        if ((count || 0) >= 10) {
+          await ctx.answerCbQuery("Alert limit reached (10)");
+          await ctx.reply("You are following 10 matches. Use /settings to manage live alerts.");
+          return;
+        }
+
+        const upcoming = await getUpcomingMatches();
+        const match = (upcoming || []).find((item: any) => String(item?.fixture?.id || "") === fixtureId);
+        if (!match) {
+          await ctx.answerCbQuery("Match not available");
+          await ctx.reply("I could not find that match. Please open Flash AI and try again.");
+          return;
+        }
+
+        await notifications.ensurePreferences(ctx.from.id);
+        await notifications.updatePreferences(ctx.from.id, { live_alerts: true });
+        const { error } = await supabase.from("match_alert_subscriptions").upsert(
+          {
+            telegram_id: ctx.from.id,
+            fixture_id: fixtureId,
+            home: match?.teams?.home?.name || "Home",
+            away: match?.teams?.away?.name || "Away",
+            league: match?.league?.name || "Football",
+            kickoff: match?.fixture?.date || new Date().toISOString(),
+            active: true,
+          },
+          { onConflict: "telegram_id,fixture_id" },
+        );
+        if (error) throw error;
+
+        await ctx.answerCbQuery("Alerts enabled");
+        await ctx.reply(
+          `🔔 You're following <b>${escapeHtml(match?.teams?.home?.name || "Home")} vs ${escapeHtml(match?.teams?.away?.name || "Away")}</b>. I'll message you at kick-off, on goals and at full time.`,
+          { parse_mode: "HTML" },
+        );
+      } catch (error: any) {
+        console.error("Match alert subscription failed:", error?.message || error);
+        await ctx.answerCbQuery("Could not enable alerts").catch(() => undefined);
+      }
+    });
 
     bot.start(async (ctx) => {
       const startPayload = ctx.payload; // This contains the user ID if joined via referral link
@@ -1921,7 +2353,8 @@ function extractTelegramChannelFromTaskUrl(taskUrl: string): string | null {
       }
 
       await ctx.replyWithMarkdown(welcomeMsg, Markup.inlineKeyboard([
-        [Markup.button.webApp("🚀 Get Started", `${appUrl}`)]
+        [Markup.button.webApp("🚀 Get Started", `${appUrl}`)],
+        [Markup.button.callback("🔔 Notification settings", "pref:menu")],
       ]));
     });
 
@@ -2095,7 +2528,8 @@ function extractTelegramChannelFromTaskUrl(taskUrl: string): string | null {
         ctx.reply("Ready to analyze? Click below:", Markup.inlineKeyboard([
           [Markup.button.webApp("⚡ Start Analysis", appUrl)],
           [Markup.button.callback("📊 View Matches", "matches_tab")],
-          [Markup.button.callback("👤 My Profile", "profile_tab")]
+          [Markup.button.callback("👤 My Profile", "profile_tab")],
+          [Markup.button.callback("🔔 Match alerts & offers", "pref:menu")]
         ]));
 
       } catch (err) {
@@ -2173,140 +2607,21 @@ function extractTelegramChannelFromTaskUrl(taskUrl: string): string | null {
       }
     });
 
+    bot.telegram
+      .setMyCommands([
+        { command: "start", description: "Open Flash AI" },
+        { command: "settings", description: "Notification settings" },
+        { command: "timezone", description: "Set your timezone for quiet hours" },
+        { command: "stop", description: "Pause all notifications" },
+      ])
+      .catch(() => undefined);
+
     bot.launch().catch(err => console.error("❌ Bot launch failed:", err));
 
-    let lastReminderDate = "";
-    const maybeSendMatchdayReminders = async () => {
-      const now = new Date();
-      const todayKey = now.toISOString().slice(0, 10);
-      if (lastReminderDate === todayKey) return;
-      if (now.getUTCHours() < 9) return; // Send once after 09:00 UTC
-
-      try {
-        const upcoming = await getUpcomingMatches();
-        const todaysMatches = (upcoming || []).filter((m: any) => String(m?.fixture?.date || "").startsWith(todayKey)).slice(0, 3);
-        if (!todaysMatches.length) return;
-
-        const reminderLines = todaysMatches.map((m: any) =>
-          `• ${m?.teams?.home?.name || "Home"} vs ${m?.teams?.away?.name || "Away"}`
-        );
-        const message = `⚽ Matchday Reminder\n\nToday's highlighted fixtures:\n${reminderLines.join("\n")}\n\nOpen Flash AI for analysis before kickoff.`;
-
-        const { data: recipients } = await supabase
-          .from("users")
-          .select("telegram_id")
-          .neq("plan", "free")
-          .limit(500);
-
-        for (const recipient of recipients || []) {
-          try {
-            await bot.telegram.sendMessage(Number(recipient.telegram_id), message, Markup.inlineKeyboard([
-              [Markup.button.webApp("Open Flash AI", appUrl)],
-            ]));
-          } catch {
-            // Continue broadcasting to remaining recipients.
-          }
-        }
-        lastReminderDate = todayKey;
-      } catch (err) {
-        console.error("Matchday reminder task failed:", err);
-      }
-    };
-
-    // ── Daily Pro Accumulator ─────────────────────────────────────────────────
-    // Fires once per day after 09:30 UTC, picks up to 4 of today's matches,
-    // runs them through Gemini, and sends the combined accumulator slip to
-    // every monthly_pro user via Telegram.
-    let lastAccumulatorDate = "";
-    const maybeSendDailyAccumulator = async () => {
-      const now = new Date();
-      const todayKey = now.toISOString().slice(0, 10);
-      if (lastAccumulatorDate === todayKey) return;
-      if (now.getUTCHours() < 9 || (now.getUTCHours() === 9 && now.getUTCMinutes() < 30)) return;
-
-      try {
-        const upcoming = await getUpcomingMatches();
-        const todaysMatches = (upcoming || [])
-          .filter((m: any) => String(m?.fixture?.date || "").startsWith(todayKey))
-          .slice(0, 4);
-
-        if (todaysMatches.length < 2) {
-          console.log("Accumulator skipped — fewer than 2 matches today.");
-          return;
-        }
-
-        const { analyzeMatchWithSearch } = await import("./services/geminiService.js");
-
-        // Analyse each match and pick the single top prediction per match
-        const legs: { match: string; pick: string; confidence: number }[] = [];
-        for (const m of todaysMatches) {
-          const home = m?.teams?.home?.name || "Home";
-          const away = m?.teams?.away?.name || "Away";
-          const matchStr = `${home} vs ${away}`;
-          try {
-            const result: any = await Promise.race([
-              analyzeMatchWithSearch(matchStr),
-              new Promise((_, rej) => setTimeout(() => rej(new Error("timeout")), 25_000))
-            ]);
-            const top = result?.predictions?.[0];
-            if (top?.market && top?.confidence) {
-              legs.push({ match: matchStr, pick: top.market, confidence: Number(top.confidence) });
-            }
-          } catch {
-            // If one match fails analysis, skip it rather than aborting the whole slip
-          }
-        }
-
-        if (legs.length < 2) {
-          console.log("Accumulator skipped — not enough successful analyses.");
-          return;
-        }
-
-        const legEmoji = ["🏆", "⚡", "🎯", "🔥"];
-        const legLines = legs.map((l, i) =>
-          `${legEmoji[i] || "•"} ${l.match}\n   → ${l.pick} (${l.confidence}% confidence)`
-        );
-        const avgConfidence = Math.round(legs.reduce((s, l) => s + l.confidence, 0) / legs.length);
-
-        const message =
-          `⚡ *Daily Pro Accumulator — ${todayKey}*\n\n` +
-          `${legLines.join("\n\n")}\n\n` +
-          `📊 Average confidence: *${avgConfidence}%*\n` +
-          `📌 ${legs.length}-leg accumulator\n\n` +
-          `_Open Flash AI to view full analysis for each match._`;
-
-        const { data: proUsers } = await supabase
-          .from("users")
-          .select("telegram_id")
-          .eq("plan", "monthly_pro")
-          .not("telegram_id", "is", null)
-          .limit(1000);
-
-        let sentCount = 0;
-        for (const u of proUsers || []) {
-          try {
-            await bot.telegram.sendMessage(Number(u.telegram_id), message, {
-              parse_mode: "Markdown",
-              ...Markup.inlineKeyboard([[Markup.button.webApp("Open Flash AI", appUrl)]]),
-            });
-            sentCount++;
-            if (sentCount % 20 === 0) await new Promise(r => setTimeout(r, 1000));
-          } catch { /* user may have blocked the bot */ }
-        }
-
-        lastAccumulatorDate = todayKey;
-        console.log(`Daily accumulator sent to ${sentCount} Pro users.`);
-      } catch (err) {
-        console.error("Daily accumulator task failed:", err);
-      }
-    };
-
-    setInterval(() => {
-      maybeSendMatchdayReminders().catch(() => undefined);
-      maybeSendDailyAccumulator().catch(() => undefined);
-    }, 60 * 60 * 1000).unref?.();
-    maybeSendMatchdayReminders().catch(() => undefined);
-    maybeSendDailyAccumulator().catch(() => undefined);
+    engagementScheduler = new EngagementScheduler({ supabase, bot, appUrl });
+    if (String(process.env.NOTIFICATIONS_ENABLED || "true").toLowerCase() !== "false") {
+      engagementScheduler.start();
+    }
   }
 
   // Auth/Signup Request Endpoint
@@ -2656,6 +2971,50 @@ function extractTelegramChannelFromTaskUrl(taskUrl: string): string | null {
       console.error("Create invoice error:", e.message);
       return c.json({ error: "Failed to create invoice link" }, 500);
     }
+  });
+
+  // Whop card checkout. The client falls back to Lemon Squeezy when Whop is
+  // not configured, so deployments can switch card providers with env vars.
+  app.post("/api/payments/create-whop-checkout", async (c) => {
+    const tgUser = getAuthedTelegramUser(c);
+    if (!tgUser?.id) {
+      return c.json({ error: "Invalid Telegram authentication" }, 401);
+    }
+
+    try {
+      const body = await c.req.json().catch(() => ({} as any));
+      const planId = String(body?.planId || "").trim();
+      const bodyTelegramId = Number(body?.telegramId || 0);
+      if (bodyTelegramId && bodyTelegramId !== tgUser.id) {
+        return c.json({ error: "Telegram identity mismatch" }, 403);
+      }
+      if (!PAID_PLANS.has(planId)) {
+        return c.json({ error: "Unsupported plan" }, 400);
+      }
+
+      const { checkoutUrl } = await createWhopCheckout(tgUser.id, planId);
+      return c.json({ checkoutUrl, provider: "whop" });
+    } catch (e: any) {
+      if (e?.code === "WHOP_NOT_CONFIGURED") {
+        return c.json({ error: "Card checkout is coming soon.", code: "WHOP_NOT_CONFIGURED" }, 503);
+      }
+      if (e?.code === "WHOP_PLAN_NOT_CONFIGURED") {
+        return c.json(
+          { error: "This plan is not available for card checkout.", code: "WHOP_PLAN_NOT_CONFIGURED" },
+          503,
+        );
+      }
+      console.error("Whop checkout error:", e?.message || e);
+      return c.json({ error: "Failed to create checkout session" }, 500);
+    }
+  });
+
+  app.get("/api/payments/methods", (c) => {
+    return c.json({
+      card: WHOP_ENABLED ? "whop" : "lemonsqueezy",
+      stars: true,
+      ton: true,
+    });
   });
 
   // Lemon Squeezy Checkout Endpoint
@@ -3922,6 +4281,17 @@ ${ad.subtitle}`;
     } catch (e: any) {
       return c.json({ error: e?.message || "Failed to notify user" }, 500);
     }
+  });
+
+  app.post("/api/admin/notifications/run", adminOnly, async (c) => {
+    if (!engagementScheduler) return c.json({ error: "Bot is not configured" }, 503);
+    const body = await c.req.json().catch(() => ({} as any));
+    const job = String(body?.job || "").trim();
+    if (!["daily_fixtures", "news_digest", "weekly_recap", "marketing", "live_alerts"].includes(job)) {
+      return c.json({ error: "Invalid job" }, 400);
+    }
+    const result = await engagementScheduler.runNow(job as any);
+    return c.json({ success: true, result });
   });
 
   app.get("/api/admin/reports", adminOnly, async (c) => {
