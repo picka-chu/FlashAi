@@ -85,31 +85,43 @@ const FeaturedMatch: React.FC<{
     <button
       type="button"
       onClick={onClick}
-      className="group w-full rounded-[24px] bg-[var(--primary)] p-5 text-left text-[var(--primary-foreground)] transition-transform duration-200 active:scale-[0.99]"
+      className="group relative isolate w-full overflow-hidden rounded-[28px] border border-white/15 bg-gradient-to-br from-[#d6ff57] via-[#b9ec35] to-[#8fbd19] p-5 text-left text-[#111609] shadow-[0_16px_40px_rgba(151,205,32,0.16)] transition-all duration-200 active:scale-[0.99]"
     >
-      <div className="flex items-center justify-between gap-3">
-        <span className="text-[12px] font-medium uppercase tracking-[0.08em] opacity-70 truncate">{match.league}</span>
-        <StatusPill tone={isLive ? 'live' : 'upcoming'} dark>{isLive ? match.minute : eyebrow}</StatusPill>
+      <div aria-hidden="true" className="pointer-events-none absolute -right-10 -top-14 h-40 w-40 rounded-full border-[24px] border-black/[0.04]" />
+      <div aria-hidden="true" className="pointer-events-none absolute -bottom-20 -left-10 h-40 w-40 rounded-full bg-white/20 blur-2xl" />
+      <div className="relative flex items-center justify-between gap-3">
+        <div className="flex min-w-0 items-center gap-2">
+          <span className="flex h-8 w-8 shrink-0 items-center justify-center rounded-xl bg-black/10">
+            <Trophy className="h-4 w-4" />
+          </span>
+          <div className="min-w-0">
+            <p className="truncate text-[12px] font-bold tracking-tight">{match.league}</p>
+            <p className="mt-0.5 text-[10px] font-medium opacity-65">{match.date || 'Upcoming fixture'}{match.time ? ` · ${match.time}` : ''}</p>
+          </div>
+        </div>
+        <span className="shrink-0 rounded-full border border-black/10 bg-black/[0.07] px-3 py-1.5 text-[10px] font-bold uppercase tracking-wide">
+          {isLive ? match.minute : eyebrow}
+        </span>
       </div>
 
-      <div className="mt-5 grid grid-cols-[1fr_auto_1fr] items-center gap-3">
+      <div className="relative mt-6 grid grid-cols-[1fr_auto_1fr] items-center gap-3">
         <div className="flex flex-col items-center gap-2 text-center">
-          <TeamLogo name={match.home} logo={match.homeLogo} className="h-14 w-14 rounded-full bg-black/10" textClassName="text-base" />
-          <span className="line-clamp-1 text-[13px] font-semibold">{match.home}</span>
+          <TeamLogo name={match.home} logo={match.homeLogo} className="h-[60px] w-[60px] rounded-full border border-black/10 bg-white/80 p-1 shadow-sm" textClassName="text-base" />
+          <span className="line-clamp-2 min-h-[34px] text-[13px] font-bold leading-tight">{match.home}</span>
         </div>
         <div className="flex flex-col items-center">
           {hasScore ? (
             <span className="tabular text-[30px] font-semibold leading-none tracking-tight">{match.score}</span>
           ) : (
             <>
-              <span className="tabular text-[22px] font-semibold leading-none">{match.time}</span>
-              <span className="mt-1.5 text-[11px] font-medium opacity-70">{match.date}</span>
+              <span className="rounded-2xl border border-black/10 bg-black/[0.06] px-3 py-2 tabular text-[22px] font-black leading-none">{match.time}</span>
+              <span className="mt-1.5 text-[10px] font-bold uppercase tracking-wide opacity-60">Kick-off</span>
             </>
           )}
         </div>
         <div className="flex flex-col items-center gap-2 text-center">
-          <TeamLogo name={match.away} logo={match.awayLogo} className="h-14 w-14 rounded-full bg-black/10" textClassName="text-base" />
-          <span className="line-clamp-1 text-[13px] font-semibold">{match.away}</span>
+          <TeamLogo name={match.away} logo={match.awayLogo} className="h-[60px] w-[60px] rounded-full border border-black/10 bg-white/80 p-1 shadow-sm" textClassName="text-base" />
+          <span className="line-clamp-2 min-h-[34px] text-[13px] font-bold leading-tight">{match.away}</span>
         </div>
       </div>
 
@@ -121,9 +133,9 @@ const FeaturedMatch: React.FC<{
         </div>
       )}
 
-      <div className="mt-5 flex items-center justify-between rounded-2xl bg-black/85 px-4 py-3 text-[14px] font-medium text-white transition-colors group-hover:bg-black">
-        <span>Analyze match</span>
-        <ChevronRight className="h-4 w-4" />
+      <div className="relative mt-5 flex items-center justify-between rounded-2xl bg-[#10130a] px-4 py-3.5 text-[13px] font-semibold text-white shadow-sm transition-transform group-hover:translate-y-[-1px]">
+        <span className="flex items-center gap-2"><Zap className="h-4 w-4 text-[#d6ff57]" /> Get AI match analysis</span>
+        <span className="flex h-7 w-7 items-center justify-center rounded-full bg-white/10"><ChevronRight className="h-4 w-4" /></span>
       </div>
     </button>
   );
