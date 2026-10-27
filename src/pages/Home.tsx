@@ -2,6 +2,7 @@ import React, { useState, useEffect, useMemo } from 'react';
 import { motion } from 'motion/react';
 import {
   Zap,
+  Trophy,
   ChevronRight,
   Info,
   Users,
