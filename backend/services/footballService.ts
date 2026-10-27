@@ -25,7 +25,20 @@ const dayFormatter = new Intl.DateTimeFormat('en-CA', {
 });
 
 function getTodayDateString(offset = 0) {
-  return dayFormatter.format(new Date(Date.now() + offset * 24 * 60 * 60 * 1000));
+  // Derive the calendar date in the configured match timezone first, then
+  // apply day offsets in UTC calendar space. Adding 24 hours to the current
+  // instant can otherwise skip/repeat a date around timezone/DST transitions.
+  const parts = dayFormatter.formatToParts(new Date());
+  const part = (type: string) => parts.find((item) => item.type === type)?.value || '';
+  const year = Number(part('year'));
+  const month = Number(part('month'));
+  const day = Number(part('day'));
+  const calendarDate = new Date(Date.UTC(year, month - 1, day + offset));
+  return [
+    calendarDate.getUTCFullYear(),
+    String(calendarDate.getUTCMonth() + 1).padStart(2, '0'),
+    String(calendarDate.getUTCDate()).padStart(2, '0'),
+  ].join('-');
 }
 
 function safeIsoDate(value: any) {
