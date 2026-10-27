@@ -28,6 +28,7 @@ import { searchMatches } from '../services/footballService';
 import { BetSlipAnalysis, PredictionResult } from '../types/prediction';
 import { useTelegram } from '../hooks/useTelegram';
 import { SignUpSheet } from '../components/SignUpSheet';
+import { TeamLogo } from '../components/TeamLogo';
 
 export const Analyze: React.FC<{ onTabChange?: (tab: string) => void }> = ({ onTabChange }) => {
   const [isSignUpOpen, setIsSignUpOpen] = useState(false);
@@ -478,12 +479,8 @@ export const Analyze: React.FC<{ onTabChange?: (tab: string) => void }> = ({ onT
                 </div>
                 <div className="grid grid-cols-[1fr_auto_1fr] items-center gap-3">
                   <div className="min-w-0 flex flex-col items-center justify-center">
-                    <div className="w-12 h-12 rounded-xl bg-gradient-to-br from-zinc-800 to-zinc-900 border border-zinc-700/30 flex items-center justify-center shadow-lg mb-2 overflow-hidden shrink-0">
-                      {selectedMatch.homeLogo ? (
-                        <img src={selectedMatch.homeLogo} alt={selectedMatch.homeShort} className="w-8 h-8 object-contain" referrerPolicy="no-referrer" />
-                      ) : (
-                        <span className="text-xs font-black text-white">{selectedMatch.homeShort}</span>
-                      )}
+                    <div className="w-12 h-12 rounded-xl bg-gradient-to-br from-zinc-800 to-zinc-900 border border-zinc-700/30 flex items-center justify-center shadow-lg mb-2 overflow-hidden shrink-0 p-1.5">
+                      <TeamLogo name={selectedMatch.home} logo={selectedMatch.homeLogo} textClassName="text-xs" />
                     </div>
                     <p className="text-sm font-black text-white leading-tight text-center line-clamp-2 min-h-10">{selectedMatch.home}</p>
                   </div>
@@ -496,12 +493,8 @@ export const Analyze: React.FC<{ onTabChange?: (tab: string) => void }> = ({ onT
                     <span className="text-[8px] font-black text-zinc-500 mt-1">{selectedMatch.minute || selectedMatch.time}</span>
                   </div>
                   <div className="min-w-0 flex flex-col items-center justify-center">
-                    <div className="w-12 h-12 rounded-xl bg-gradient-to-br from-zinc-800 to-zinc-900 border border-zinc-700/30 flex items-center justify-center shadow-lg mb-2 overflow-hidden shrink-0">
-                      {selectedMatch.awayLogo ? (
-                        <img src={selectedMatch.awayLogo} alt={selectedMatch.awayShort} className="w-8 h-8 object-contain" referrerPolicy="no-referrer" />
-                      ) : (
-                        <span className="text-xs font-black text-white">{selectedMatch.awayShort}</span>
-                      )}
+                    <div className="w-12 h-12 rounded-xl bg-gradient-to-br from-zinc-800 to-zinc-900 border border-zinc-700/30 flex items-center justify-center shadow-lg mb-2 overflow-hidden shrink-0 p-1.5">
+                      <TeamLogo name={selectedMatch.away} logo={selectedMatch.awayLogo} textClassName="text-xs" />
                     </div>
                     <p className="text-sm font-black text-white leading-tight text-center line-clamp-2 min-h-10">{selectedMatch.away}</p>
                   </div>

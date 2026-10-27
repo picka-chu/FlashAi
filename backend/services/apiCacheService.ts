@@ -137,6 +137,44 @@ class ApiCacheManager {
 }
 
 // ─── API Key Manager ──────────────────────────────────────────────────────────
+const GEMINI_KEY_ENV_NAMES = [
+  'GEMINI_API_KEY',
+  'GOOGLE_AI_API_KEY',
+  'GOOGLE_API_KEY',
+  'GOOGLE_GEMINI_API_KEY',
+  'GOOGLE_GENERATIVE_AI_API_KEY',
+  'GEMINI_KEY',
+  'GEMINI_API_KEYS',
+  'GEMINI_KEYS',
+  'VITE_GEMINI_API_KEY',
+  ...[1, 2, 3, 4, 5, 6, 7, 8, 9].map((i) => `GEMINI_API_KEY_${i}`),
+  'GEMINI_PREDICTION_KEY',
+  ...[1, 2, 3].map((i) => `GEMINI_PREDICTION_KEY_${i}`),
+  'GEMINI_AGENT_KEY',
+  ...[1, 2, 3].map((i) => `GEMINI_AGENT_KEY_${i}`),
+  'GEMINI_SUPPORT_KEY',
+  ...[1, 2, 3].map((i) => `GEMINI_SUPPORT_KEY_${i}`),
+];
+
+const cleanGeminiKey = (value: unknown) =>
+  String(value || '')
+    .trim()
+    .replace(/^["']|["']$/g, '')
+    .replace(/\s+/g, '');
+
+const readGeminiApiKeys = (): string[] => {
+  const keys: string[] = [];
+  for (const name of GEMINI_KEY_ENV_NAMES) {
+    const raw = process.env[name];
+    if (!raw) continue;
+    for (const part of String(raw).split(/[\n,;]+/)) {
+      const key = cleanGeminiKey(part);
+      if (key.length >= 20 && !/^(your|replace|paste|enter)/i.test(key)) keys.push(key);
+    }
+  }
+  return [...new Set(keys)];
+};
+
 class ApiKeyManager {
   private keys: string[];
   private currentIndex = 0;
@@ -145,24 +183,32 @@ class ApiKeyManager {
   private readonly RESET_INTERVAL = 10 * 60 * 1000;
 
   constructor() {
-    this.keys = this.loadKeys();
+    this.keys = readGeminiApiKeys();
+    this.logStatus();
   }
 
-  private loadKeys(): string[] {
-    const keys: string[] = [];
-    const base = process.env.GEMINI_API_KEY || process.env.GOOGLE_AI_API_KEY;
-    if (base) keys.push(base);
-    for (let i = 1; i <= 9; i++) {
-      const k = process.env[`GEMINI_API_KEY_${i}`];
-      if (k) keys.push(k);
+  private logStatus(): void {
+    if (this.keys.length > 0) {
+      console.log(`[ApiKeyManager] Gemini API keys loaded: ${this.keys.length}.`);
+    } else {
+      console.warn(
+        '[ApiKeyManager] No Gemini API keys found. Set GEMINI_API_KEY (or GEMINI_API_KEY_1/GEMINI_PREDICTION_KEY_1) in the runtime environment.',
+      );
     }
-    if (keys.length === 0) {
-      console.warn('[ApiKeyManager] No Gemini API keys found in environment.');
-    }
-    return keys;
+  }
+
+  private reloadIfEmpty(): void {
+    if (this.keys.length > 0) return;
+    const found = readGeminiApiKeys();
+    if (!found.length) return;
+    this.keys = found;
+    this.currentIndex = 0;
+    this.failedKeys.clear();
+    this.logStatus();
   }
 
   getNextKey(): { key: string; index: number } | null {
+    this.reloadIfEmpty();
     if (this.keys.length === 0) return null;
 
     if (Date.now() - this.lastResetTime > this.RESET_INTERVAL) {
@@ -193,6 +239,24 @@ class ApiKeyManager {
   get availableCount(): number {
     return this.keys.length - this.failedKeys.size;
   }
+
+  get totalCount(): number {
+    return this.keys.length;
+  }
+
+  diagnostics() {
+    this.reloadIfEmpty();
+    return {
+      configured: this.keys.length > 0,
+      totalKeys: this.keys.length,
+      availableKeys: this.keys.length - this.failedKeys.size,
+      failedKeys: this.failedKeys.size,
+    };
+  }
+}
+
+export function getGeminiKeyStatus() {
+  return apiKeyManager.diagnostics();
 }
 
 // ─── Gemini client factory ────────────────────────────────────────────────────

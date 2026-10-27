@@ -46,7 +46,9 @@ serves the built frontend from `dist/`.
   proxy, so rate limiting can use `X-Forwarded-For`.
 - **Whop (recommended card provider):** set `WHOP_API_KEY`,
   `WHOP_PLAN_MONTHLY_BASIC`, `WHOP_PLAN_MONTHLY_PRO`, and
-  `WHOP_WEBHOOK_SECRET`. Point the webhook to
+  `WHOP_WEBHOOK_SECRET`. Plan variables should use `plan_...` IDs; a
+  `prod_...` product ID is resolved automatically. `WHOP_ACCOUNT_ID` is
+  optional and helps with resolution. Point the webhook to
   `POST /api/payments/whop-webhook` and subscribe to `payment.succeeded`.
   Card checkout uses Whop when configured and otherwise falls back to Lemon
   Squeezy. Both webhooks fail closed without their signing secret.
@@ -62,6 +64,15 @@ serves the built frontend from `dist/`.
   win-back/upgrade campaigns. Quiet hours default to 22:00–08:00 in the user's
   timezone. Delivery is deduplicated in `notification_deliveries`, so restarts
   and overlapping ticks cannot double-send.
+- **AI channel editor:** set `TELEGRAM_CHANNEL_ID` (the bot must be a channel
+  admin) and optionally a dedicated `GEMINI_CHANNEL_KEY`. The editor publishes a
+  morning brief at 08:00, a match spotlight at 13:00, and a newsroom digest at
+  18:00 in `CHANNEL_AGENT_TIMEZONE` (UTC by default). Posts are deduplicated in
+  `api_cache`; if Gemini or a data source is unavailable it falls back to a
+  deterministic editorial post. Admins can inspect or trigger it with
+  `GET /api/admin/channel-agent/status` and `POST /api/admin/channel-agent/run`
+  (`{"job":"morning_brief","dryRun":true}`). `GET /api/admin/ai/status` reports
+  whether Gemini keys are visible to the running server.
 
 ## Security notes
 

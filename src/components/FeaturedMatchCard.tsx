@@ -1,13 +1,23 @@
 import React from 'react';
 import { motion } from 'motion/react';
 import { Sparkles, Flame, Star } from 'lucide-react';
+import { TeamLogo } from './TeamLogo';
 
 interface FeaturedMatchCardProps {
   match: any;
   onClick: () => void;
+  eyebrow?: string;
+  badge?: string;
+  showHot?: boolean;
 }
 
-export const FeaturedMatchCard: React.FC<FeaturedMatchCardProps> = ({ match, onClick }) => {
+export const FeaturedMatchCard: React.FC<FeaturedMatchCardProps> = ({
+  match,
+  onClick,
+  eyebrow = 'Featured match',
+  badge = 'Top pick',
+  showHot = true,
+}) => {
   if (!match) return null;
 
   return (
@@ -15,15 +25,17 @@ export const FeaturedMatchCard: React.FC<FeaturedMatchCardProps> = ({ match, onC
       <div className="flex items-center justify-between mb-3">
         <h3 className="text-xs font-black tracking-[0.2em] text-zinc-400 uppercase flex items-center gap-2">
           <Star className="w-3.5 h-3.5 text-[#ccff00] fill-[#ccff00]" />
-          Featured match
+          {eyebrow}
         </h3>
         <div className="flex items-center gap-2">
-          <div className="px-2 py-0.5 rounded-full bg-red-500/10 border border-red-500/20 flex items-center gap-1">
-            <Flame className="w-3 h-3 text-red-500" />
-            <span className="text-[9px] font-black text-red-500 uppercase">Hot</span>
-          </div>
+          {showHot && (
+            <div className="px-2 py-0.5 rounded-full bg-red-500/10 border border-red-500/20 flex items-center gap-1">
+              <Flame className="w-3 h-3 text-red-500" />
+              <span className="text-[9px] font-black text-red-500 uppercase">Hot</span>
+            </div>
+          )}
           <div className="px-2 py-0.5 rounded-full bg-[#ccff00]/10 border border-[#ccff00]/20">
-            <span className="text-[9px] font-black text-[#ccff00] uppercase">Top pick</span>
+            <span className="text-[9px] font-black text-[#ccff00] uppercase">{badge}</span>
           </div>
         </div>
       </div>
@@ -52,8 +64,8 @@ export const FeaturedMatchCard: React.FC<FeaturedMatchCardProps> = ({ match, onC
             <div className="flex flex-col items-center gap-3 min-w-0">
               <div className="relative group-hover:scale-105 transition-transform duration-300">
                 <div className="absolute inset-0 bg-[#ccff00]/20 blur-xl rounded-full opacity-0 group-hover:opacity-100 transition-opacity" />
-                <div className="w-[72px] h-[72px] rounded-2xl bg-zinc-900 border border-zinc-800 p-4 relative z-10 flex items-center justify-center shadow-inner">
-                  <img src={match.homeLogo} alt={match.home} className="w-full h-full object-contain" referrerPolicy="no-referrer" />
+                <div className="w-[72px] h-[72px] rounded-2xl bg-zinc-900 border border-zinc-800 p-3 relative z-10 flex items-center justify-center shadow-inner">
+                  <TeamLogo name={match.home} logo={match.homeLogo} textClassName="text-lg" />
                 </div>
               </div>
               <span className="text-sm font-black text-white text-center line-clamp-2 w-full leading-tight">{match.home}</span>
@@ -94,8 +106,8 @@ export const FeaturedMatchCard: React.FC<FeaturedMatchCardProps> = ({ match, onC
             <div className="flex flex-col items-center gap-3 min-w-0">
               <div className="relative group-hover:scale-105 transition-transform duration-300">
                 <div className="absolute inset-0 bg-[#ccff00]/20 blur-xl rounded-full opacity-0 group-hover:opacity-100 transition-opacity" />
-                <div className="w-[72px] h-[72px] rounded-2xl bg-zinc-900 border border-zinc-800 p-4 relative z-10 flex items-center justify-center shadow-inner">
-                  <img src={match.awayLogo} alt={match.away} className="w-full h-full object-contain" referrerPolicy="no-referrer" />
+                <div className="w-[72px] h-[72px] rounded-2xl bg-zinc-900 border border-zinc-800 p-3 relative z-10 flex items-center justify-center shadow-inner">
+                  <TeamLogo name={match.away} logo={match.awayLogo} textClassName="text-lg" />
                 </div>
               </div>
               <span className="text-sm font-black text-white text-center line-clamp-2 w-full leading-tight">{match.away}</span>

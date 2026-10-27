@@ -1,3 +1,17 @@
+export const localDateKey = (value?: Date | string | number | null) => {
+  const date = value instanceof Date ? value : new Date(value ?? Date.now());
+  if (Number.isNaN(date.getTime())) return '';
+  const year = date.getFullYear();
+  const month = String(date.getMonth() + 1).padStart(2, '0');
+  const day = String(date.getDate()).padStart(2, '0');
+  return `${year}-${month}-${day}`;
+};
+
+export const dateFromKey = (key: string) => {
+  const [year, month, day] = key.split('-').map(Number);
+  return new Date(year, month - 1, day);
+};
+
 export const formatMatch = (m: any) => {
   if (!m) return null;
   const elapsed = Number(m?.fixture?.status?.elapsed || 0);
@@ -8,7 +22,10 @@ export const formatMatch = (m: any) => {
     displayMinute = `${minutes}:${String(seconds).padStart(2, '0')}`;
   }
 
-  // Ensure league is always a string for the UI
+  const rawFixtureDate = m?.fixture?.date ?? m?.fixtureDate ?? m?.dateISO ?? null;
+  const parsedFixtureDate = rawFixtureDate ? new Date(rawFixtureDate) : new Date();
+  const matchDate = Number.isNaN(parsedFixtureDate.getTime()) ? new Date() : parsedFixtureDate;
+
   const leagueName =
     typeof m.league === 'string'
       ? m.league
@@ -28,9 +45,10 @@ export const formatMatch = (m: any) => {
       : (typeof m.score === 'string' ? m.score : null),
     minute: displayMinute,
     league: leagueName,
-    time: new Date(m?.fixture?.date || m?.date || Date.now()).toLocaleTimeString('en-GB', { hour: '2-digit', minute: '2-digit' }),
+    fixtureDate: matchDate.toISOString(),
+    dateKey: localDateKey(matchDate),
+    time: matchDate.toLocaleTimeString('en-GB', { hour: '2-digit', minute: '2-digit' }),
     date: (() => {
-      const matchDate = new Date(m?.fixture?.date || m?.date || Date.now());
       const today = new Date();
       const tomorrow = new Date();
       tomorrow.setDate(today.getDate() + 1);

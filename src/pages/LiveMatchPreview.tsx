@@ -4,6 +4,7 @@ import { analyzeLiveMatch, getLiveMatchPreview } from '../services/footballServi
 import { useTelegram } from '../hooks/useTelegram';
 import { useUserStore } from '../store/useUserStore';
 import { formatMatch } from '../lib/matchUtils';
+import { TeamLogo } from '../components/TeamLogo';
 
 const statPercent = (value: string | number | undefined | null, fallback = 0) => {
   if (value == null || value === '') return fallback;
@@ -143,7 +144,9 @@ export const LiveMatchPreview: React.FC<{ onBack: () => void; onGoAnalyze: () =>
         <div className="rounded-3xl border border-zinc-800 bg-zinc-900/80 p-5">
           <div className="grid grid-cols-[1fr_auto_1fr] items-center gap-3">
             <div className="text-center">
-              <div className="w-16 h-16 mx-auto rounded-2xl bg-zinc-800 border border-zinc-700 p-2 overflow-hidden">{livePreviewMatch.homeLogo ? <img src={livePreviewMatch.homeLogo} alt={livePreviewMatch.home} className="w-full h-full object-contain" /> : <span>{livePreviewMatch.homeShort}</span>}</div>
+              <div className="w-16 h-16 mx-auto rounded-2xl bg-zinc-800 border border-zinc-700 p-2 overflow-hidden">
+                <TeamLogo name={livePreviewMatch.home} logo={livePreviewMatch.homeLogo} textClassName="text-base" />
+              </div>
               <p className="mt-2 text-sm font-bold line-clamp-1">{livePreviewMatch.home}</p>
             </div>
             <div className="text-center">
@@ -151,7 +154,9 @@ export const LiveMatchPreview: React.FC<{ onBack: () => void; onGoAnalyze: () =>
               <div className="text-xs text-red-400 font-black uppercase mt-1">{livePreviewMatch.minute || 'LIVE'}</div>
             </div>
             <div className="text-center">
-              <div className="w-16 h-16 mx-auto rounded-2xl bg-zinc-800 border border-zinc-700 p-2 overflow-hidden">{livePreviewMatch.awayLogo ? <img src={livePreviewMatch.awayLogo} alt={livePreviewMatch.away} className="w-full h-full object-contain" /> : <span>{livePreviewMatch.awayShort}</span>}</div>
+              <div className="w-16 h-16 mx-auto rounded-2xl bg-zinc-800 border border-zinc-700 p-2 overflow-hidden">
+                <TeamLogo name={livePreviewMatch.away} logo={livePreviewMatch.awayLogo} textClassName="text-base" />
+              </div>
               <p className="mt-2 text-sm font-bold line-clamp-1">{livePreviewMatch.away}</p>
             </div>
           </div>

@@ -1,4 +1,4 @@
-import React, { useState, useRef, useEffect } from 'react';
+import React, { useState, useRef, useEffect, useMemo } from 'react';
 import { motion, AnimatePresence } from 'motion/react';
 import { Skeleton } from '../components/ui/Skeleton';
 import { 
@@ -17,6 +17,7 @@ import {
   Info,
   Search,
   Calendar,
+  CalendarDays,
   Users,
   Play,
   Clock,
@@ -35,7 +36,7 @@ import { useTelegram } from '../hooks/useTelegram';
 import { SignUpSheet } from '../components/SignUpSheet';
 import { ModernMatchCard } from '../components/ModernMatchCard';
 import { FeaturedMatchCard } from '../components/FeaturedMatchCard';
-import { formatMatch } from '../lib/matchUtils';
+import { dateFromKey, formatMatch, localDateKey } from '../lib/matchUtils';
 
 const CountdownBadge: React.FC<{ expiresAt: string, color: string }> = ({ expiresAt, color }) => {
   const [timeLeft, setTimeLeft] = useState('');
@@ -86,18 +87,6 @@ interface HomeProps {
   onTabChange: (tab: any) => void;
 }
 
-const generateDates = () => {
-  const dates = [];
-  for (let i = -2; i <= 4; i++) {
-    const d = new Date();
-    d.setDate(d.getDate() + i);
-    dates.push(d);
-  }
-  return dates;
-};
-
-const weekDates = generateDates();
-
 export const Home: React.FC<HomeProps> = ({ onTabChange }) => {
   const [topPickIndex, setTopPickIndex] = useState(0);
   const [adIndex, setAdIndex] = useState(0);
@@ -110,6 +99,7 @@ export const Home: React.FC<HomeProps> = ({ onTabChange }) => {
   const [news, setNews] = useState<FootballNewsArticle[]>([]);
   const [newsLoading, setNewsLoading] = useState(true);
   const [isLoading, setIsLoading] = useState(true);
+  const [selectedDate, setSelectedDate] = useState(() => localDateKey(new Date()));
   
   const topPicksRef = useRef<HTMLDivElement>(null);
   const adsRef = useRef<HTMLDivElement>(null);
@@ -357,13 +347,99 @@ export const Home: React.FC<HomeProps> = ({ onTabChange }) => {
     onTabChange('analyze');
   };
 
+  const todayKey = localDateKey(new Date());
+  const selectedDay = dateFromKey(selectedDate || todayKey);
+  const isToday = selectedDate === todayKey;
+  const todayLabel = new Date().toLocaleDateString('en-GB', {
+    weekday: 'short', day: 'numeric', month: 'short',
+  });
+  const selectedLabel = selectedDay.toLocaleDateString('en-GB', {
+    weekday: 'short', day: 'numeric', month: 'short',
+  });
+  const hour = new Date().getHours();
+  const greeting = hour < 12 ? 'Good morning' : hour < 18 ? 'Good afternoon' : 'Good evening';
+  const firstName = user?.phone ? String(user?.name || 'there').split(' ')[0] : 'Guest';
+
+  const countByDate = useMemo(() => upcomingMatches.reduce((counts: Record<string, number>, match: any) => {
+    if (match?.dateKey) counts[match.dateKey] = (counts[match.dateKey] || 0) + 1;
+    return counts;
+  }, {}), [upcomingMatches]);
+
+  const dayOptions = useMemo(() => {
+    const base = dateFromKey(todayKey);
+    return Array.from({ length: 7 }, (_, offset) => {
+      const date = new Date(base);
+      date.setDate(base.getDate() + offset);
+      const key = localDateKey(date);
+      return {
+        key,
+        date,
+        dayName: date.toLocaleDateString('en-GB', { weekday: 'short' }),
+        dayNumber: date.getDate(),
+        isToday: key === todayKey,
+        count: countByDate[key] || 0,
+      };
+    });
+  }, [countByDate, todayKey]);
+
+  useEffect(() => {
+    const firstKey = localDateKey(new Date());
+    const lastKey = localDateKey(new Date(Date.now() + 6 * 24 * 60 * 60 * 1000));
+    setSelectedDate((current) => (!current || current < firstKey || current > lastKey ? firstKey : current));
+    const now = new Date();
+    const midnight = new Date(now);
+    midnight.setHours(24, 0, 5, 0);
+    const timer = window.setTimeout(() => {
+      setSelectedDate(localDateKey(new Date()));
+    }, Math.max(1000, midnight.getTime() - now.getTime()));
+    return () => window.clearTimeout(timer);
+  }, [todayKey]);
+
+  const selectedMatches = useMemo(
+    () => upcomingMatches.filter((match: any) => match?.dateKey === selectedDate),
+    [selectedDate, upcomingMatches],
+  );
+  const nextMatch = upcomingMatches.find((match: any) => match?.dateKey >= selectedDate) || null;
+  const featuredMatch = selectedMatches[0] || nextMatch;
+  const listMatches = selectedMatches.length
+    ? selectedMatches
+    : upcomingMatches.filter((match: any) => match?.dateKey >= selectedDate).slice(0, 10);
+  const selectedCount = selectedMatches.length;
+  const featuredIsNext = selectedCount === 0;
+
   return (
-    <div className="h-full relative overflow-hidden bg-[#0a0a0a] text-white">
-      {/* Header */}
-      <div className="flex justify-between items-center px-4 pt-6 pb-4">
-        <div className="flex items-center gap-3">
-          {user?.phone ? (
-            <>
+    <div className="h-full relative overflow-hidden bg-[#0a0a0a] text-white flex flex-col">
+      <div className="pointer-events-none absolute inset-x-0 top-0 h-72 bg-[radial-gradient(circle_at_top_right,rgba(204,255,0,0.09),transparent_66%)]" />
+
+      <header className="relative z-10 flex-none px-4 pt-5 pb-4">
+        <div className="flex items-center justify-between">
+          <div className="flex items-center gap-2.5">
+            <div className="w-9 h-9 rounded-2xl bg-[#ccff00] flex items-center justify-center shadow-[0_0_24px_rgba(204,255,0,0.18)]">
+              <Zap className="w-4 h-4 text-black" fill="currentColor" />
+            </div>
+            <div>
+              <p className="text-[9px] font-black uppercase tracking-[0.28em] text-[#ccff00]">Flash AI</p>
+              <p className="text-[10px] font-semibold text-zinc-500">Smart match intelligence</p>
+            </div>
+          </div>
+
+          <div className="flex items-center gap-2">
+            {user?.phone ? (
+              <div className={`border px-3 py-1.5 rounded-full flex items-center gap-1.5 backdrop-blur-md ${user.credits <= 0 ? 'bg-red-500/10 border-red-500/20' : 'bg-white/5 border-white/10'}`}>
+                <Zap className={`w-3.5 h-3.5 ${user.credits <= 0 ? 'text-red-500' : 'text-[#ccff00]'}`} />
+                <span className={`text-xs font-black ${user.credits <= 0 ? 'text-red-500' : 'text-white'}`}>{user.credits}</span>
+              </div>
+            ) : (
+              <button
+                onClick={() => { hapticFeedback('light'); setIsSignUpOpen(true); }}
+                className="flex items-center gap-1.5 bg-[#ccff00] text-black px-3.5 py-2 rounded-xl text-[10px] font-black uppercase tracking-wider active:scale-95 transition-all"
+              >
+                <UserPlus className="w-3.5 h-3.5" />
+                Sign up
+              </button>
+            )}
+
+            {user?.phone && (
               <button
                 type="button"
                 onClick={() => {
@@ -374,52 +450,42 @@ export const Home: React.FC<HomeProps> = ({ onTabChange }) => {
                 aria-label="Open profile"
               >
                 {user.photo_url ? (
-                  <img 
+                  <img
                     src={user.photo_url}
-                    alt="User" 
-                    className="w-10 h-10 rounded-full border-2 border-[#ccff00]/50 object-cover" 
+                    alt="User"
+                    className="w-9 h-9 rounded-full border-2 border-[#ccff00]/50 object-cover"
                   />
                 ) : (
-                  <div className="w-10 h-10 rounded-full border-2 border-[#ccff00]/50 bg-zinc-800 flex items-center justify-center">
+                  <div className="w-9 h-9 rounded-full border-2 border-[#ccff00]/50 bg-zinc-800 flex items-center justify-center">
                     <Users className="w-4 h-4 text-zinc-400" />
                   </div>
                 )}
-                <div className="absolute bottom-0 right-0 w-2.5 h-2.5 bg-[#ccff00] rounded-full border-2 border-[#0a0a0a]"></div>
+                <div className="absolute bottom-0 right-0 w-2.5 h-2.5 bg-[#ccff00] rounded-full border-2 border-[#0a0a0a]" />
               </button>
-              <div>
-                <p className="text-[10px] text-zinc-400 tracking-wider font-bold">Good morning!</p>
-                <p className="text-sm font-black text-white">{user.name}</p>
-              </div>
-            </>
-          ) : (
-            <div className="flex items-center gap-2">
-              <button 
-                onClick={() => { hapticFeedback('light'); setIsSignUpOpen(true); }}
-                className="flex items-center gap-2 bg-[#ccff00] text-black px-4 py-2 rounded-xl text-xs font-black shadow-[0_0_15px_rgba(204,255,0,0.1)] active:scale-95 transition-all"
-              >
-                <UserPlus className="w-4 h-4" />
-                Sign up
-              </button>
-              <div className="w-px h-4 bg-zinc-800 mx-1" />
-              <p className="text-[10px] font-bold text-zinc-500 uppercase tracking-widest">Guest access</p>
-            </div>
-          )}
-        </div>
-        
-        {user?.phone && (
-          <div className="flex items-center gap-3">
-            <div className={`backdrop-blur-md border px-3 py-1.5 rounded-full flex items-center gap-1.5 shadow-[0_0_15px_rgba(204,255,0,0.1)] ${user.credits <= 0 ? 'bg-red-500/10 border-red-500/20' : 'bg-white/5 border-white/10'}`}>
-              <Zap className={`w-3.5 h-3.5 ${user.credits <= 0 ? 'text-red-500' : 'text-[#ccff00]'}`} />
-              <span className={`text-xs font-black ${user.credits <= 0 ? 'text-red-500' : 'text-white'}`}>{user.credits}</span>
-            </div>
+            )}
           </div>
-        )}
-      </div>
+        </div>
 
-      <div className="h-[calc(100%-80px)] overflow-y-auto no-scrollbar px-4 space-y-8 pb-24">
+        <div className="mt-5 flex items-end justify-between gap-3">
+          <div className="min-w-0">
+            <p className="text-[10px] font-bold uppercase tracking-[0.18em] text-zinc-500">
+              {user?.phone ? greeting : 'Live match intelligence'}
+            </p>
+            <h1 className="text-[22px] font-black leading-tight text-white mt-0.5 truncate">
+              {user?.phone ? firstName : 'Welcome to Flash AI'}
+            </h1>
+          </div>
+          <div className="shrink-0 flex items-center gap-1.5 text-[10px] font-bold text-zinc-400 bg-white/[0.04] border border-white/[0.06] rounded-full px-3 py-1.5">
+            <CalendarDays className="w-3 h-3 text-[#ccff00]" />
+            {todayLabel}
+          </div>
+        </div>
+      </header>
+
+      <div className="relative z-10 flex-1 min-h-0 overflow-y-auto no-scrollbar px-4 space-y-7 pb-24">
         {isLoading ? (
-          <div className="space-y-8">
-            {/* Featured Match Skeleton */}
+          <div className="space-y-7">
+            <Skeleton className="w-full h-20 rounded-2xl" />
             <div className="space-y-3">
               <div className="flex justify-between">
                 <Skeleton className="w-32 h-4" />
@@ -427,17 +493,88 @@ export const Home: React.FC<HomeProps> = ({ onTabChange }) => {
               </div>
               <Skeleton className="w-full h-48 rounded-[32px]" />
             </div>
-
-            {/* Ads Skeleton */}
             <Skeleton className="w-full h-32 rounded-[28px]" />
           </div>
         ) : (
           <>
-            {/* Featured Match */}
-            <FeaturedMatchCard 
-              match={upcomingMatches[0]} 
-              onClick={() => handleAnalyze(upcomingMatches[0])} 
-            />
+            <section className="space-y-3">
+              <div className="flex items-center justify-between">
+                <div className="flex items-center gap-2">
+                  <CalendarDays className="w-4 h-4 text-[#ccff00]" />
+                  <h2 className="text-sm font-black text-white tracking-wide">Match centre</h2>
+                </div>
+                <button
+                  onClick={() => onTabChange('matches')}
+                  className="flex items-center gap-0.5 text-[10px] font-black text-[#ccff00] uppercase tracking-wider"
+                >
+                  All matches
+                  <ChevronRight className="w-3.5 h-3.5" />
+                </button>
+              </div>
+
+              <div className="flex gap-2 overflow-x-auto no-scrollbar -mx-4 px-4 pb-1">
+                {dayOptions.map((day) => {
+                  const active = day.key === selectedDate;
+                  return (
+                    <button
+                      key={day.key}
+                      type="button"
+                      onClick={() => {
+                        hapticFeedback('light');
+                        setSelectedDate(day.key);
+                      }}
+                      className={`shrink-0 w-[64px] rounded-2xl border px-2 py-2.5 text-center transition-all active:scale-95 ${
+                        active
+                          ? 'bg-[#ccff00] border-[#ccff00] text-black shadow-[0_8px_24px_rgba(204,255,0,0.16)]'
+                          : 'bg-white/[0.03] border-white/[0.07] text-zinc-300'
+                      }`}
+                    >
+                      <span className={`block text-[9px] font-black uppercase tracking-wider ${active ? 'text-black/60' : 'text-zinc-500'}`}>
+                        {day.isToday ? 'Today' : day.dayName}
+                      </span>
+                      <span className="block text-lg font-black leading-6">{day.dayNumber}</span>
+                      <span className={`block text-[8px] font-bold uppercase tracking-wide ${active ? 'text-black/60' : 'text-zinc-600'}`}>
+                        {day.count ? `${day.count} ${day.count === 1 ? 'match' : 'matches'}` : 'No games'}
+                      </span>
+                    </button>
+                  );
+                })}
+              </div>
+            </section>
+
+            {selectedCount === 0 && (
+              <div className="flex items-start gap-3 rounded-2xl border border-white/[0.07] bg-white/[0.03] p-3.5">
+                <div className="w-8 h-8 shrink-0 rounded-xl bg-[#ccff00]/10 border border-[#ccff00]/20 flex items-center justify-center">
+                  <Info className="w-4 h-4 text-[#ccff00]" />
+                </div>
+                <div className="min-w-0">
+                  <p className="text-[11px] font-black text-white">
+                    {isToday ? 'No fixtures left today' : `No fixtures on ${selectedLabel}`}
+                  </p>
+                  <p className="text-[10px] text-zinc-500 mt-0.5 leading-relaxed">
+                    {nextMatch ? `Next scheduled: ${nextMatch.home} vs ${nextMatch.away} · ${nextMatch.date} ${nextMatch.time}` : 'New fixtures will appear here as soon as they are scheduled.'}
+                  </p>
+                </div>
+              </div>
+            )}
+
+            {featuredMatch ? (
+              <FeaturedMatchCard
+                match={featuredMatch}
+                eyebrow={featuredIsNext ? 'Next up' : isToday ? "Today's headline" : 'Selected fixture'}
+                badge={featuredIsNext ? 'Scheduled' : 'Top pick'}
+                showHot={!featuredIsNext}
+                onClick={() => handleAnalyze(featuredMatch)}
+              />
+            ) : (
+              <div className="rounded-[28px] border border-zinc-800 bg-zinc-900/40 p-7 text-center">
+                <div className="w-12 h-12 rounded-full bg-zinc-800/60 flex items-center justify-center mx-auto mb-3">
+                  <CalendarDays className="w-5 h-5 text-zinc-600" />
+                </div>
+                <p className="text-sm font-black text-white">No fixtures available</p>
+                <p className="text-[10px] text-zinc-500 mt-1">Check back soon for the next round of matches.</p>
+              </div>
+            )}
 
         {/* Ad Carousel */}
         <div className="relative group">
@@ -491,31 +628,41 @@ export const Home: React.FC<HomeProps> = ({ onTabChange }) => {
           </div>
         </div>
 
-        {/* Top Prematch */}
         <section className="space-y-4">
-          <div className="flex items-center justify-between">
-            <h3 className="text-xs font-black text-zinc-400 uppercase tracking-[0.15em]">Top prematch</h3>
-            <button 
+          <div className="flex items-end justify-between gap-3">
+            <div>
+              <h3 className="text-sm font-black text-white tracking-wide">
+                {selectedCount ? (isToday ? "Today's fixtures" : `${selectedLabel} fixtures`) : 'Next fixtures'}
+              </h3>
+              <p className="text-[10px] text-zinc-500 mt-0.5">
+                {selectedCount
+                  ? `${selectedCount} ${selectedCount === 1 ? 'match' : 'matches'} scheduled`
+                  : 'Showing the next scheduled matches'}
+              </p>
+            </div>
+            <button
               onClick={() => onTabChange('matches')}
-              className="text-[10px] font-black text-[#ccff00] uppercase tracking-wider"
+              className="flex items-center gap-0.5 text-[10px] font-black text-[#ccff00] uppercase tracking-wider"
             >
               View all
+              <ChevronRight className="w-3.5 h-3.5" />
             </button>
           </div>
 
-          <div className="flex gap-3 overflow-x-auto no-scrollbar snap-x pb-2">
-            {upcomingMatches.length > 0 ? (
-              upcomingMatches.slice(0, 10).map((match) => (
+          {listMatches.length > 0 ? (
+            <div className="flex gap-3 overflow-x-auto no-scrollbar snap-x pb-2">
+              {listMatches.map((match: any) => (
                 <motion.div key={match.id} initial={{ opacity: 0, scale: 0.95 }} animate={{ opacity: 1, scale: 1 }} className="shrink-0 w-[320px] snap-center">
                   <ModernMatchCard match={match} variant="prematch" onClick={() => handleAnalyze(match)} compact />
                 </motion.div>
-              ))
-            ) : (
-              [1, 2, 3].map((i) => (
-                <div key={i} className="shrink-0 w-[280px] h-36 bg-[#141414] border border-white/[0.03] rounded-2xl animate-pulse" />
-              ))
-            )}
-          </div>
+              ))}
+            </div>
+          ) : (
+            <div className="rounded-2xl border border-zinc-800 bg-zinc-900/30 p-5 text-center">
+              <p className="text-xs font-black text-zinc-300">No fixtures scheduled</p>
+              <p className="text-[10px] text-zinc-500 mt-1">Check back later for new matches.</p>
+            </div>
+          )}
         </section>
 
         {/* Top Live Matches */}

@@ -1,5 +1,6 @@
 import React from 'react';
 import { Radio, Sparkles, Clock, Trophy } from 'lucide-react';
+import { TeamLogo } from './TeamLogo';
 
 interface ModernMatchCardProps {
   match: any;
@@ -56,12 +57,8 @@ export const ModernMatchCard: React.FC<ModernMatchCardProps> = ({ match, variant
           <div className="flex flex-col items-center gap-2.5 min-w-0">
             <div className="relative">
               <div className="absolute inset-0 bg-white/5 blur-xl rounded-full opacity-0 group-hover:opacity-100 transition-opacity" />
-              <div className="w-14 h-14 rounded-2xl bg-zinc-800/40 border border-zinc-700/30 p-2.5 flex items-center justify-center relative z-10 backdrop-blur-md shadow-inner">
-                {match.homeLogo ? (
-                  <img src={match.homeLogo} alt={match.home} className="w-full h-full object-contain" referrerPolicy="no-referrer" />
-                ) : (
-                  <span className="text-xs font-black text-zinc-500">{match.homeShort}</span>
-                )}
+              <div className="w-14 h-14 rounded-2xl bg-zinc-800/40 border border-zinc-700/30 p-2 flex items-center justify-center relative z-10 backdrop-blur-md shadow-inner overflow-hidden">
+                <TeamLogo name={match.home} logo={match.homeLogo} textClassName="text-xs" />
               </div>
             </div>
             <span className="text-[12px] font-bold text-zinc-100 text-center line-clamp-1 w-full tracking-tight">
@@ -103,12 +100,8 @@ export const ModernMatchCard: React.FC<ModernMatchCardProps> = ({ match, variant
           <div className="flex flex-col items-center gap-2.5 min-w-0">
             <div className="relative">
               <div className="absolute inset-0 bg-white/5 blur-xl rounded-full opacity-0 group-hover:opacity-100 transition-opacity" />
-              <div className="w-14 h-14 rounded-2xl bg-zinc-800/40 border border-zinc-700/30 p-2.5 flex items-center justify-center relative z-10 backdrop-blur-md shadow-inner">
-                {match.awayLogo ? (
-                  <img src={match.awayLogo} alt={match.away} className="w-full h-full object-contain" referrerPolicy="no-referrer" />
-                ) : (
-                  <span className="text-xs font-black text-zinc-500">{match.awayShort}</span>
-                )}
+              <div className="w-14 h-14 rounded-2xl bg-zinc-800/40 border border-zinc-700/30 p-2 flex items-center justify-center relative z-10 backdrop-blur-md shadow-inner overflow-hidden">
+                <TeamLogo name={match.away} logo={match.awayLogo} textClassName="text-xs" />
               </div>
             </div>
             <span className="text-[12px] font-bold text-zinc-100 text-center line-clamp-1 w-full tracking-tight">

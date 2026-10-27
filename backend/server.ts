@@ -16,10 +16,12 @@ import { getBsdH2H, getLiveMatchPreview, getLiveMatches, getMatchDetails, getUpc
 import { generateSupportReply, getDefaultFaqs } from "./services/supportService";
 import CreditResetScheduler from "./tasks/creditResetScheduler.js";
 import { EngagementScheduler } from "./tasks/engagementScheduler.js";
+import { ChannelAgentScheduler } from "./services/channelAgentService.js";
 import { NotificationService, escapeHtml, normalizeTimezone } from "./services/notificationService";
 import { InMemoryRateLimiter } from "./middleware/rateLimit";
 import { registerLeaderboardRoutes } from "./routes/leaderboard";
 import { getTelegramUserFromInitData, validateTelegramInitData, getVerifiedTelegramUser } from "./middleware/auth";
+import { getGeminiKeyStatus } from "./services/apiCacheService.js";
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
@@ -70,6 +72,11 @@ const USD_TO_STARS_RATE = 50;
 const PAID_PLANS = new Set(["monthly_basic", "monthly_pro"]);
 const ALLOWED_PLANS = new Set(["free", "monthly_basic", "monthly_pro", "admin"]);
 const MAX_MATCH_STRING_LENGTH = 200;
+
+const isGeminiConfigError = (message: string) =>
+  /no gemini api keys|api key not valid|api_key_invalid|api key not set|api key is missing|invalid api key/i.test(
+    String(message || ""),
+  );
 const MAX_SUPPORT_HISTORY = 10;
 const MAX_SUPPORT_MESSAGE_LENGTH = 2_000;
 const PLAN_PRICE_STARS: Record<string, number> = {
@@ -105,6 +112,130 @@ const WHOP_ENABLED = Boolean(
   process.env.WHOP_API_KEY &&
   (WHOP_PLAN_IDS.monthly_basic || WHOP_PLAN_IDS.monthly_pro),
 );
+const WHOP_ACCOUNT_ID = firstEnv("WHOP_ACCOUNT_ID", "WHOP_COMPANY_ID", "WHOP_ACCOUNT");
+const whopResolvedPlans = new Map<string, { id: string; expiresAt: number }>();
+
+const shortWhopId = (value: string) =>
+  value.length > 16 ? `${value.slice(0, 8)}...${value.slice(-4)}` : value;
+
+async function listWhopPlans(apiKey: string): Promise<any[]> {
+  const plans: any[] = [];
+  let after = "";
+
+  for (let page = 0; page < 3; page += 1) {
+    const params = new URLSearchParams({ first: "100" });
+    if (WHOP_ACCOUNT_ID) params.set("account_id", WHOP_ACCOUNT_ID);
+    if (after) params.set("after", after);
+
+    const response = await fetch(`${WHOP_API_BASE}/plans?${params.toString()}`, {
+      headers: { Authorization: `Bearer ${apiKey}` },
+    });
+    const data: any = await response.json().catch(() => ({}));
+    if (!response.ok) {
+      console.error(
+        "Whop plans API error:",
+        response.status,
+        data?.error?.message || data?.message || data?.error || "",
+      );
+      return plans;
+    }
+
+    if (Array.isArray(data?.data)) plans.push(...data.data);
+    if (!data?.page_info?.has_next_page || !data?.page_info?.end_cursor) break;
+    after = String(data.page_info.end_cursor);
+  }
+
+  return plans;
+}
+
+function scoreWhopPlan(plan: any, tier: string, configured: string): number {
+  const title = String(plan?.title || "").toLowerCase();
+  const productId = String(plan?.product?.id || "");
+  const initial = Number(plan?.initial_price || 0);
+  const renewal = Number(plan?.renewal_price || initial);
+  const price = renewal || initial;
+  const target = tier === "monthly_basic" ? 5 : 8;
+  let score = 0;
+
+  if (configured && plan?.id === configured) score += 100;
+  if (configured.startsWith("prod_")) {
+    score += productId === configured ? 45 : -15;
+  }
+  if (tier === "monthly_basic") {
+    if (/\bbasic\b|\bstarter\b|\bstandard\b/.test(title)) score += 40;
+    if (/\bpro\b|\bpremium\b|\belite\b/.test(title)) score -= 60;
+  } else {
+    if (/\bpro\b|\bpremium\b|\belite\b/.test(title)) score += 40;
+    if (/\bbasic\b|\bstarter\b|\bstandard\b/.test(title)) score -= 60;
+  }
+  if (plan?.plan_type === "renewal") score += 6;
+  if (plan?.release_method === "buy_now") score += 5;
+  if (plan?.visibility === "visible") score += 3;
+
+  const priceGap = Math.abs(price - target);
+  if (priceGap <= 0.75) score += 15;
+  else if (priceGap <= 2) score += 7;
+  else if (priceGap >= 10) score -= 10;
+  return score;
+}
+
+async function resolveWhopPlanVariant(
+  apiKey: string,
+  tier: string,
+  configured: string,
+): Promise<string | null> {
+  const cacheKey = `${tier}:${configured}`;
+  const cached = whopResolvedPlans.get(cacheKey);
+  if (cached && cached.expiresAt > Date.now()) return cached.id;
+
+  const plans = (await listWhopPlans(apiKey)).filter(
+    (plan) => plan?.id &&
+      plan?.visibility !== "archived" &&
+      plan?.release_method !== "waitlist",
+  );
+  if (!plans.length) {
+    console.error("Whop plan resolution found no available plans:", tier, shortWhopId(configured));
+    return null;
+  }
+
+  const ranked = plans
+    .map((plan) => ({ plan, score: scoreWhopPlan(plan, tier, configured) }))
+    .sort((a, b) => b.score - a.score);
+  const best = ranked[0];
+  if (!best || best.score < 25) {
+    console.error(
+      "Whop plan resolution found no confident match:",
+      tier,
+      shortWhopId(configured),
+      ranked.slice(0, 3).map(({ plan, score }) =>
+        `${shortWhopId(String(plan.id))} ${plan.title || "(untitled)"} score=${score}`,
+      ),
+    );
+    return null;
+  }
+  if (ranked[1] && best.score - ranked[1].score < 10) {
+    console.error(
+      "Whop plan resolution is ambiguous:",
+      tier,
+      ranked.slice(0, 3).map(({ plan, score }) =>
+        `${shortWhopId(String(plan.id))} ${plan.title || "(untitled)"} score=${score}`,
+      ),
+    );
+    return null;
+  }
+
+  const id = String(best.plan.id);
+  whopResolvedPlans.set(cacheKey, { id, expiresAt: Date.now() + 10 * 60 * 1000 });
+  console.log(
+    "Whop plan resolved:",
+    tier,
+    shortWhopId(id),
+    best.plan.title || "(untitled)",
+    `$${best.plan.renewal_price ?? best.plan.initial_price ?? 0}`,
+    `score=${best.score}`,
+  );
+  return id;
+}
 
 function verifyWhopWebhookSignature(
   secret: string,
@@ -140,11 +271,28 @@ async function createWhopCheckout(
     error.code = "WHOP_NOT_CONFIGURED";
     throw error;
   }
-  const planVariantId = WHOP_PLAN_IDS[planId];
-  if (!planVariantId) {
+
+  const configuredPlanId = WHOP_PLAN_IDS[planId];
+  if (!configuredPlanId) {
     const error: any = new Error("This plan is not available for card checkout");
     error.code = "WHOP_PLAN_NOT_CONFIGURED";
     throw error;
+  }
+
+  let planVariantId = configuredPlanId;
+  if (!/^plan_/i.test(planVariantId)) {
+    const resolved = await resolveWhopPlanVariant(apiKey, planId, configuredPlanId);
+    if (!resolved) {
+      console.error(
+        "Whop plan could not be resolved from the configured value:",
+        planId,
+        shortWhopId(configuredPlanId),
+      );
+      const error: any = new Error("This plan is not available for card checkout");
+      error.code = "WHOP_PLAN_NOT_CONFIGURED";
+      throw error;
+    }
+    planVariantId = resolved;
   }
 
   const redirectUrl = (
@@ -170,28 +318,54 @@ async function createWhopCheckout(
     payload.redirect_url = successUrl.toString();
   }
 
-  const response = await fetch(`${WHOP_API_BASE}/checkout_configurations`, {
-    method: "POST",
-    headers: {
-      Authorization: `Bearer ${apiKey}`,
-      "Content-Type": "application/json",
-    },
-    body: JSON.stringify(payload),
-  });
-
-  const result: any = await response.json().catch(() => ({}));
-  if (!response.ok) {
-    console.error(
-      "Whop checkout API error:",
-      response.status,
+  const requestCheckout = async (variantId: string) => {
+    const response = await fetch(`${WHOP_API_BASE}/checkout_configurations`, {
+      method: "POST",
+      headers: {
+        Authorization: `Bearer ${apiKey}`,
+        "Content-Type": "application/json",
+      },
+      body: JSON.stringify({ ...payload, plan_id: variantId }),
+    });
+    const result: any = await response.json().catch(() => ({}));
+    const message = String(
       result?.error?.message || result?.message || result?.error || "",
     );
+    return { response, result, message };
+  };
+
+  let attempt = await requestCheckout(planVariantId);
+  if (
+    !attempt.response.ok &&
+    attempt.response.status === 404 &&
+    /plan not found/i.test(attempt.message)
+  ) {
+    const resolved = await resolveWhopPlanVariant(apiKey, planId, configuredPlanId);
+    if (resolved && resolved !== planVariantId) {
+      planVariantId = resolved;
+      attempt = await requestCheckout(planVariantId);
+    }
+  }
+
+  if (!attempt.response.ok) {
+    console.error(
+      "Whop checkout API error:",
+      attempt.response.status,
+      attempt.message,
+      `plan=${shortWhopId(planVariantId)}`,
+      `tier=${planId}`,
+      `configured=${shortWhopId(configuredPlanId)}`,
+    );
     const error: any = new Error("Failed to create card checkout");
-    error.code = "WHOP_CHECKOUT_FAILED";
+    error.code = attempt.response.status === 404 && /plan not found/i.test(attempt.message)
+      ? "WHOP_PLAN_NOT_CONFIGURED"
+      : "WHOP_CHECKOUT_FAILED";
     throw error;
   }
 
-  const checkoutUrl = String(result?.purchase_url || result?.data?.purchase_url || "");
+  const checkoutUrl = String(
+    attempt.result?.purchase_url || attempt.result?.data?.purchase_url || "",
+  );
   if (!checkoutUrl) throw new Error("No checkout URL returned by Whop");
   return { checkoutUrl };
 }
@@ -728,6 +902,15 @@ async function startServer() {
   const botToken = process.env.TELEGRAM_BOT_TOKEN?.trim();
   if (!botToken || botToken === "YOUR_TELEGRAM_BOT_TOKEN") {
     throw new Error("CRITICAL: TELEGRAM_BOT_TOKEN is not set. Server startup aborted.");
+  }
+
+  const geminiStatus = getGeminiKeyStatus();
+  if (geminiStatus.configured) {
+    console.log(`✅ Gemini configured with ${geminiStatus.totalKeys} key(s).`);
+  } else {
+    console.warn(
+      "⚠️ Gemini is not configured. Set GEMINI_API_KEY (or GEMINI_API_KEY_1 / GEMINI_PREDICTION_KEY_1) in the runtime environment and restart.",
+    );
   }
 
   const RATE_LIMIT_WINDOW_MS = 60 * 1000;
@@ -1723,6 +1906,9 @@ function extractTelegramChannelFromTaskUrl(taskUrl: string): string | null {
       if (message.includes("timeout")) {
         return c.json({ error: "Analysis is taking longer than expected. Please retry." }, 504);
       }
+      if (isGeminiConfigError(message)) {
+        return c.json({ error: "AI analysis is not configured correctly. Verify GEMINI_API_KEY on the server." }, 503);
+      }
       return c.json({ error: "Failed to perform analysis" }, 500);
     }
   });
@@ -1861,7 +2047,11 @@ function extractTelegramChannelFromTaskUrl(taskUrl: string): string | null {
       return c.json({ result, newCredits: Number(updatedUser.credits || 0) });
     } catch (e: any) {
       console.error("Bet Slip Analysis API error:", e.message);
-      return c.json({ error: "Failed to analyze bet slip" }, 500);
+      return c.json({
+        error: isGeminiConfigError(e?.message)
+          ? "AI analysis is not configured correctly. Verify GEMINI_API_KEY on the server."
+          : "Failed to analyze bet slip",
+      }, 500);
     }
   });
 
@@ -2013,7 +2203,11 @@ function extractTelegramChannelFromTaskUrl(taskUrl: string): string | null {
       });
     } catch (error: any) {
       console.error("Analyze live API error:", error?.message || error);
-      return c.json({ error: "Failed to analyze live match" }, 500);
+      return c.json({
+        error: isGeminiConfigError(error?.message)
+          ? "AI analysis is not configured correctly. Verify GEMINI_API_KEY on the server."
+          : "Failed to analyze live match",
+      }, 500);
     }
   });
 
@@ -2176,6 +2370,7 @@ function extractTelegramChannelFromTaskUrl(taskUrl: string): string | null {
 
   let bot: Telegraf | null = null;
   let engagementScheduler: EngagementScheduler | null = null;
+  let channelAgent: ChannelAgentScheduler | null = null;
 
   if (botToken) {
     bot = new Telegraf(botToken);
@@ -2725,6 +2920,9 @@ function extractTelegramChannelFromTaskUrl(taskUrl: string): string | null {
     if (String(process.env.NOTIFICATIONS_ENABLED || "true").toLowerCase() !== "false") {
       engagementScheduler.start();
     }
+
+    channelAgent = new ChannelAgentScheduler({ supabase, bot, appUrl });
+    channelAgent.start();
   }
 
   // Auth/Signup Request Endpoint
@@ -3747,6 +3945,14 @@ function extractTelegramChannelFromTaskUrl(taskUrl: string): string | null {
     return await next();
   };
 
+  app.get("/api/admin/ai/status", adminOnly, async (c) => {
+    const { getGeminiKeyStatus: readGeminiStatus } = await import("./services/apiCacheService.js");
+    return c.json({
+      gemini: readGeminiStatus(),
+      channelAgent: channelAgent?.getStatus() || null,
+    });
+  });
+
   // Dashboard Stats
   app.get("/api/admin/dashboard", adminOnly, async (c) => {
     try {
@@ -4395,6 +4601,35 @@ ${ad.subtitle}`;
     }
     const result = await engagementScheduler.runNow(job as any);
     return c.json({ success: true, result });
+  });
+
+  app.get("/api/admin/channel-agent/status", adminOnly, async (c) => {
+    if (!channelAgent) {
+      return c.json({
+        enabled: false,
+        connected: false,
+        error: "Bot is not configured",
+      });
+    }
+    return c.json(channelAgent.getStatus());
+  });
+
+  app.post("/api/admin/channel-agent/run", adminOnly, async (c) => {
+    if (!channelAgent) return c.json({ error: "Bot is not configured" }, 503);
+    const body = await c.req.json().catch(() => ({} as any));
+    const job = String(body?.job || "morning_brief").trim();
+    if (!["morning_brief", "featured_match", "newsroom"].includes(job)) {
+      return c.json({ error: "Invalid job" }, 400);
+    }
+    try {
+      const result = await channelAgent.runNow(job as any, {
+        force: body?.force === true,
+        dryRun: body?.dryRun === true,
+      });
+      return c.json({ success: true, result });
+    } catch (e: any) {
+      return c.json({ error: e?.message || "Channel agent run failed" }, 500);
+    }
   });
 
   app.get("/api/admin/reports", adminOnly, async (c) => {
