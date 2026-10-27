@@ -264,7 +264,7 @@ export const Analyze: React.FC<{ onTabChange?: (tab: string) => void }> = ({ onT
     } else if (input.trim()) {
       // Search for match by name
       try {
-        const matches = await searchMatches(input);
+        const matches = await searchMatches(input, initData || '');
         if (matches.length > 0) {
           const match = matches[0];
           const matchObj = {

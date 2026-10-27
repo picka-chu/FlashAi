@@ -17,7 +17,7 @@ export const BottomNav: React.FC<BottomNavProps> = ({ activeTab, onTabChange }) 
     { id: 'home', icon: Home, label: 'Home' },
     { id: 'matches', icon: Goal, label: 'Matches' },
     { id: 'analyze', icon: Zap, label: 'Analyze' },
-    ...(user?.phone ? [
+    ...((user?.phone || user?.role === 'admin') ? [
       { id: 'history', icon: History, label: 'History' },
       { id: 'profile', icon: User, label: 'Profile' }
     ] : []),

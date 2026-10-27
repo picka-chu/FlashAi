@@ -32,7 +32,7 @@ export const Matches: React.FC<MatchesProps> = ({ onTabChange }) => {
     const fetchMatches = async () => {
       setLoading(true);
       try {
-        const upcoming = await getUpcomingMatches();
+        const upcoming = await getUpcomingMatches(initData || '');
         setMatches(upcoming.map(formatMatch));
       } catch (error) {
         console.error('Failed to fetch matches:', error);
@@ -42,7 +42,7 @@ export const Matches: React.FC<MatchesProps> = ({ onTabChange }) => {
     };
 
     fetchMatches();
-  }, []);
+  }, [initData]);
 
   useEffect(() => {
     const fetchLive = async () => {

@@ -215,7 +215,7 @@ export const Home: React.FC<HomeProps> = ({ onTabChange }) => {
         const authInitData = initData || tg?.initData || '';
         setHistoryLoading(Boolean(authInitData));
         const [upcoming, trending, adsRes, historyRes, live] = await Promise.all([
-          getUpcomingMatches(),
+          getUpcomingMatches(authInitData),
           getTrendingPicks(),
           fetch('/api/common/ads', { headers: { 'X-TG-Init-Data': authInitData } }).then(r => r.json()),
           authInitData

@@ -13,7 +13,7 @@ betting-prediction history.
 - Hono + Node backend (`backend/server.ts`)
 - Supabase Postgres (service-role access from the backend only)
 - Telegram bot (Telegraf), Gemini AI
-- Football data: ESPN (free, no key) + BSD/Bzzoiro (primary) + optional SportsAPI Pro v2
+- Football match data: BSD/Bzzoiro v2 only (fixtures, live scores, stats, odds, search)
 - Home feed news: ESPN per-league news, cached and exposed at `GET /api/football/news`
 - Payments: Telegram Stars, Whop (cards, primary), Lemon Squeezy (fallback), TON Connect
 - Engagement: bot digests, football news, live goal alerts, weekly recap, win-back/upgrade campaigns
@@ -33,7 +33,7 @@ serves the built frontend from `dist/`.
 
 ## Production deployment (Render / any Node host)
 
-- **Build command:** `npm install && npm run build`
+- **Build command:** `npm ci --include=dev && npm run build`
 - **Start command:** `npm run start`
 - **Health check:** `GET /api/health`
 - **Database:** run `CONSOLIDATED_PRODUCTION_SCHEMA.sql` before the first deploy.
@@ -44,7 +44,7 @@ serves the built frontend from `dist/`.
   features that use them.
 - **Reverse proxy:** set `TRUST_PROXY=true` only when the app is behind a trusted
   proxy, so rate limiting can use `X-Forwarded-For`.
-- **Whop (recommended card provider):** set `WHOP_API_KEY`, `WHOP_ACCOUNT_ID`,
+- **Whop (recommended card provider):** set `WHOP_API_KEY`,
   `WHOP_PLAN_MONTHLY_BASIC`, `WHOP_PLAN_MONTHLY_PRO`, and
   `WHOP_WEBHOOK_SECRET`. Point the webhook to
   `POST /api/payments/whop-webhook` and subscribe to `payment.succeeded`.

@@ -82,7 +82,7 @@ export default function App() {
           if (res.ok) {
             const payload = await res.json();
             const profile = payload?.user;
-            if (profile?.phone) {
+            if (profile?.phone || profile?.role === 'admin') {
               setUser(mapUser(profile));
             } else {
               setUser(null);
@@ -99,7 +99,7 @@ export default function App() {
             .eq('telegram_id', tgUser.id)
             .single();
 
-          if (!error && data?.phone) {
+          if (!error && (data?.phone || data?.role === 'admin')) {
             setUser(mapUser(data));
           } else {
             setUser(null);

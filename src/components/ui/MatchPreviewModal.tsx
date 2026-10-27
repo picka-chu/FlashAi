@@ -2,6 +2,7 @@ import React, { useEffect, useState } from 'react';
 import { motion, AnimatePresence, useMotionValue, useTransform } from 'motion/react';
 import { X, Sparkles, Activity, Shield, Loader2 } from 'lucide-react';
 import { fetchMatchH2H, getMatchDetails } from '../../services/footballService';
+import { useTelegram } from '../../hooks/useTelegram';
 
 interface MatchPreviewModalProps {
   isOpen: boolean;
@@ -17,6 +18,7 @@ export const MatchPreviewModal: React.FC<MatchPreviewModalProps> = ({
   onAnalyze 
 }) => {
   const y = useMotionValue(0);
+  const { initData } = useTelegram();
   const [h2hData, setH2hData] = useState<any>(null);
   const [loadingH2H, setLoadingH2H] = useState(false);
 
@@ -25,7 +27,7 @@ export const MatchPreviewModal: React.FC<MatchPreviewModalProps> = ({
       const loadH2H = async () => {
         setLoadingH2H(true);
         try {
-          const details = await getMatchDetails(match.id, match);
+          const details = await getMatchDetails(match.id, match, initData);
           if (details && details.home.last5.results.length > 0) {
             const results = details.home.last5.results;
             const w = results.filter(r => r === 'W').length;
@@ -38,11 +40,11 @@ export const MatchPreviewModal: React.FC<MatchPreviewModalProps> = ({
               hypeLevel: "HIGH"
             });
           } else {
-            const data = await fetchMatchH2H(match.home, match.away);
+            const data = await fetchMatchH2H(match.home, match.away, initData, match.id);
             if (data) setH2hData(data);
           }
         } catch (e) {
-          const data = await fetchMatchH2H(match.home, match.away);
+          const data = await fetchMatchH2H(match.home, match.away, initData, match.id);
           if (data) setH2hData(data);
         }
         setLoadingH2H(false);
@@ -51,7 +53,7 @@ export const MatchPreviewModal: React.FC<MatchPreviewModalProps> = ({
     } else {
       setH2hData(null);
     }
-  }, [isOpen, match]);
+  }, [isOpen, match, initData]);
 
   if (!match) return null;
 

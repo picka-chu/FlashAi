@@ -660,8 +660,12 @@ export const Profile: React.FC<{ initialSection?: ProfileSection }> = ({ initial
       }
 
       if (data.checkoutUrl) {
-        // Open Lemon Squeezy checkout in browser/webview
-        window.open(data.checkoutUrl, '_blank');
+        if (tg?.openLink) {
+          tg.openLink(data.checkoutUrl);
+        } else {
+          window.open(data.checkoutUrl, '_blank');
+        }
+        showAlert('Complete the payment in the checkout window. Your plan will activate automatically.');
       } else {
         throw new Error(data.error || 'Failed to create checkout session');
       }

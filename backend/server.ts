@@ -12,7 +12,7 @@ import path from "path";
 import { fileURLToPath } from "url";
 import fs from "fs";
 import crypto from "crypto";
-import { getLiveMatchPreview, getLiveMatches, getMatchDetails, getUpcomingMatches, searchMatches, getFootballNews } from "./services/footballService";
+import { getBsdH2H, getLiveMatchPreview, getLiveMatches, getMatchDetails, getUpcomingMatches, searchMatches, getFootballNews } from "./services/footballService";
 import { generateSupportReply, getDefaultFaqs } from "./services/supportService";
 import CreditResetScheduler from "./tasks/creditResetScheduler.js";
 import { EngagementScheduler } from "./tasks/engagementScheduler.js";
@@ -32,7 +32,21 @@ const supabaseServiceKey =
   process.env.SUPABASE_SERVICE_KEY;
 const supabaseAnonKey = process.env.SUPABASE_ANON_KEY;
 const supabaseKey = supabaseServiceKey;
-const bootstrapAdminId = process.env.ADMIN_TELEGRAM_ID ? Number(process.env.ADMIN_TELEGRAM_ID) : null;
+const adminIdRaw =
+  process.env.ADMIN_TELEGRAM_ID ||
+  process.env.ADMIN_ID ||
+  process.env.TELEGRAM_ADMIN_ID ||
+  process.env.ADMIN_USER_ID ||
+  "";
+const bootstrapAdminId = (() => {
+  const match = String(adminIdRaw).match(/\d{5,}/);
+  if (!match) return null;
+  const id = Number(match[0]);
+  return Number.isSafeInteger(id) && id > 0 ? id : null;
+})();
+if (adminIdRaw && !bootstrapAdminId) {
+  console.warn("[Admin] ADMIN_TELEGRAM_ID is set but is not a valid Telegram user id.");
+}
 
 if (!supabaseUrl || !supabaseKey || supabaseUrl === "YOUR_SUPABASE_URL" || supabaseKey === "YOUR_SUPABASE_SERVICE_ROLE_KEY") {
   throw new Error("CRITICAL: Missing required Supabase configuration. Set SUPABASE_URL and SUPABASE_SERVICE_ROLE_KEY for production.");
@@ -65,15 +79,30 @@ const PLAN_PRICE_STARS: Record<string, number> = {
 // Fallback TON-per-USD rate used only when the live price feed is unavailable.
 const DEFAULT_TON_PER_USD = 0.23;
 
-const WHOP_API_BASE = (process.env.WHOP_API_BASE || "https://api.whop.com/api/v1").replace(/\/+$/, "");
-const WHOP_ACCOUNT_ID = process.env.WHOP_ACCOUNT_ID || process.env.WHOP_COMPANY_ID || "";
+const firstEnv = (...names: string[]) => {
+  for (const name of names) {
+    const value = String(process.env[name] || "").trim();
+    if (value) return value;
+  }
+  return "";
+};
+const WHOP_API_BASE = (firstEnv("WHOP_API_BASE", "WHOP_API_BASE_URL") || "https://api.whop.com/api/v1").replace(/\/+$/, "");
 const WHOP_PLAN_IDS: Record<string, string> = {
-  monthly_basic: process.env.WHOP_PLAN_MONTHLY_BASIC || "",
-  monthly_pro: process.env.WHOP_PLAN_MONTHLY_PRO || "",
+  monthly_basic: firstEnv(
+    "WHOP_PLAN_MONTHLY_BASIC",
+    "WHOP_MONTHLY_BASIC_PLAN_ID",
+    "WHOP_BASIC_PLAN_ID",
+    "WHOP_PLAN_ID_BASIC",
+  ),
+  monthly_pro: firstEnv(
+    "WHOP_PLAN_MONTHLY_PRO",
+    "WHOP_MONTHLY_PRO_PLAN_ID",
+    "WHOP_PRO_PLAN_ID",
+    "WHOP_PLAN_ID_PRO",
+  ),
 };
 const WHOP_ENABLED = Boolean(
   process.env.WHOP_API_KEY &&
-  WHOP_ACCOUNT_ID &&
   (WHOP_PLAN_IDS.monthly_basic || WHOP_PLAN_IDS.monthly_pro),
 );
 
@@ -106,7 +135,7 @@ async function createWhopCheckout(
   planId: string,
 ): Promise<{ checkoutUrl: string }> {
   const apiKey = process.env.WHOP_API_KEY;
-  if (!apiKey || !WHOP_ACCOUNT_ID) {
+  if (!apiKey) {
     const error: any = new Error("Whop checkout is not configured");
     error.code = "WHOP_NOT_CONFIGURED";
     throw error;
@@ -118,31 +147,48 @@ async function createWhopCheckout(
     throw error;
   }
 
+  const redirectUrl = (
+    process.env.WHOP_REDIRECT_URL ||
+    process.env.APP_URL ||
+    process.env.RENDER_EXTERNAL_URL ||
+    DEFAULT_APP_URL
+  ).replace(/\/+$/, "");
+
+  const payload: Record<string, any> = {
+    plan_id: planVariantId,
+    mode: "payment",
+    metadata: {
+      telegram_id: String(telegramId),
+      plan_id: planId,
+      source: "flashai",
+    },
+  };
+  if (/^https:\/\//i.test(redirectUrl)) {
+    const successUrl = new URL(redirectUrl);
+    successUrl.searchParams.set("tab", "profile");
+    successUrl.searchParams.set("payment", "success");
+    payload.redirect_url = successUrl.toString();
+  }
+
   const response = await fetch(`${WHOP_API_BASE}/checkout_configurations`, {
     method: "POST",
     headers: {
       Authorization: `Bearer ${apiKey}`,
       "Content-Type": "application/json",
     },
-    body: JSON.stringify({
-      account_id: WHOP_ACCOUNT_ID,
-      plan_id: planVariantId,
-      metadata: {
-        telegram_id: String(telegramId),
-        plan_id: planId,
-        source: "flashai",
-      },
-      redirect_url:
-        process.env.WHOP_REDIRECT_URL ||
-        process.env.APP_URL ||
-        DEFAULT_APP_URL,
-    }),
+    body: JSON.stringify(payload),
   });
 
   const result: any = await response.json().catch(() => ({}));
   if (!response.ok) {
-    console.error("Whop checkout API error:", response.status, result?.message || result?.error || "");
-    throw new Error("Failed to create card checkout");
+    console.error(
+      "Whop checkout API error:",
+      response.status,
+      result?.error?.message || result?.message || result?.error || "",
+    );
+    const error: any = new Error("Failed to create card checkout");
+    error.code = "WHOP_CHECKOUT_FAILED";
+    throw error;
   }
 
   const checkoutUrl = String(result?.purchase_url || result?.data?.purchase_url || "");
@@ -1142,7 +1188,11 @@ function extractTelegramChannelFromTaskUrl(taskUrl: string): string | null {
 
     try {
       const payment = body?.data || {};
-      const metadata = payment?.metadata || body?.metadata || {};
+      const metadata =
+        payment?.metadata ||
+        payment?.checkout_configuration?.metadata ||
+        body?.metadata ||
+        {};
       const telegramId = Number(metadata?.telegram_id ?? metadata?.telegramId);
       const planId = String(metadata?.plan_id ?? metadata?.plan ?? "").trim();
       const paymentId = String(payment?.id || body?.id || "").slice(0, 200);
@@ -1340,9 +1390,7 @@ function extractTelegramChannelFromTaskUrl(taskUrl: string): string | null {
     if (!tgUser?.id) return c.json({ error: "Invalid Telegram authentication" }, 401);
     if (guardExpensiveEndpoint(c)) return c.json({ error: "Too many requests. Please try again shortly." }, 429);
     try {
-      const { getTopFixturesFromSearch } = await import("./services/geminiService.js");
-      const topFixtures = await getTopFixturesFromSearch().catch(() => []);
-      const matches = await getUpcomingMatches(topFixtures);
+      const matches = await getUpcomingMatches();
       return c.json(matches);
     } catch (error: any) {
       console.error("Football upcoming API error:", error?.message || error);
@@ -1385,13 +1433,31 @@ function extractTelegramChannelFromTaskUrl(taskUrl: string): string | null {
     if (!tgUser?.id) return c.json({ error: "Invalid Telegram authentication" }, 401);
     if (guardExpensiveEndpoint(c)) return c.json({ error: "Too many requests. Please try again shortly." }, 429);
     try {
-      const home = c.req.query("home");
-      const away = c.req.query("away");
+      const home = c.req.query("home") || "";
+      const away = c.req.query("away") || "";
+      const fixtureId = c.req.query("fixtureId") || "";
       if (!home || !away) return c.json({ error: "Missing home or away team" }, 400);
-      
-      const { fetchMatchH2H } = await import("./services/geminiService.js");
-      const data = await fetchMatchH2H(home, away);
-      return c.json(data);
+
+      let data = fixtureId ? await getBsdH2H(fixtureId, home, away) : null;
+      if (!data && !fixtureId) {
+        const candidates = await searchMatches(home);
+        const match = (candidates || []).find(
+          (item: any) =>
+            String(item?.teams?.away?.name || '').toLowerCase() === away.toLowerCase() &&
+            String(item?.teams?.home?.name || '').toLowerCase() === home.toLowerCase(),
+        );
+        if (match?.fixture?.id) data = await getBsdH2H(match.fixture.id, home, away);
+      }
+      return c.json(
+        data || {
+          last5: [],
+          summary: "No H2H data",
+          avgGoals: 0,
+          hypeScore: 0,
+          hypeLevel: "LOW",
+          source: "bsd",
+        },
+      );
     } catch (error: any) {
       console.error("Football H2H API error:", error?.message || error);
       return c.json({ error: "Failed to fetch H2H data" }, 500);
@@ -2143,6 +2209,7 @@ function extractTelegramChannelFromTaskUrl(taskUrl: string): string | null {
           Markup.button.callback(`${status(prefs.weekly_recap)} Weekly recap`, "pref:toggle:weekly_recap"),
         ],
         [Markup.button.callback(`${status(prefs.marketing)} Offers & tips`, "pref:toggle:marketing")],
+        [Markup.button.webApp("💎 View plans & offers", `${appUrl}?tab=subscriptions`)],
         [
           Markup.button.callback(
             prefs.quiet_hours_start === prefs.quiet_hours_end ? "🌙 Enable quiet hours" : "🌙 Disable quiet hours",
@@ -2261,6 +2328,8 @@ function extractTelegramChannelFromTaskUrl(taskUrl: string): string | null {
         return;
       }
 
+      await ctx.answerCbQuery("Adding alert...").catch(() => undefined);
+
       try {
         const { count } = await supabase
           .from("match_alert_subscriptions")
@@ -2268,15 +2337,21 @@ function extractTelegramChannelFromTaskUrl(taskUrl: string): string | null {
           .eq("telegram_id", ctx.from.id)
           .eq("active", true);
         if ((count || 0) >= 10) {
-          await ctx.answerCbQuery("Alert limit reached (10)");
           await ctx.reply("You are following 10 matches. Use /settings to manage live alerts.");
           return;
         }
 
-        const upcoming = await getUpcomingMatches();
-        const match = (upcoming || []).find((item: any) => String(item?.fixture?.id || "") === fixtureId);
+        const [upcoming, live] = await Promise.all([
+          getUpcomingMatches().catch(() => []),
+          getLiveMatches().catch(() => []),
+        ]);
+        let match: any = [...(upcoming || []), ...(live || [])].find(
+          (item: any) => String(item?.fixture?.id || "") === fixtureId,
+        );
         if (!match) {
-          await ctx.answerCbQuery("Match not available");
+          match = await getLiveMatchPreview(fixtureId).catch(() => null);
+        }
+        if (!match) {
           await ctx.reply("I could not find that match. Please open Flash AI and try again.");
           return;
         }
@@ -2297,16 +2372,28 @@ function extractTelegramChannelFromTaskUrl(taskUrl: string): string | null {
         );
         if (error) throw error;
 
-        await ctx.answerCbQuery("Alerts enabled");
         await ctx.reply(
           `🔔 You're following <b>${escapeHtml(match?.teams?.home?.name || "Home")} vs ${escapeHtml(match?.teams?.away?.name || "Away")}</b>. I'll message you at kick-off, on goals and at full time.`,
           { parse_mode: "HTML" },
         );
       } catch (error: any) {
         console.error("Match alert subscription failed:", error?.message || error);
-        await ctx.answerCbQuery("Could not enable alerts").catch(() => undefined);
+        await ctx.reply("I could not enable alerts for this match. Please try again from Flash AI.").catch(() => undefined);
       }
     });
+
+    const openMiniAppTab = async (ctx: any, label: string, tab: string) => {
+      await ctx.answerCbQuery().catch(() => undefined);
+      await ctx.reply(
+        `${label} is ready in Flash AI.`,
+        Markup.inlineKeyboard([[Markup.button.webApp(`Open ${label}`, `${appUrl}?tab=${tab}`)]]),
+      );
+    };
+
+    bot.action("matches_tab", (ctx) => openMiniAppTab(ctx, "Matches", "matches"));
+    bot.action("profile_tab", (ctx) => openMiniAppTab(ctx, "Profile", "profile"));
+    bot.action("offers", (ctx) => openMiniAppTab(ctx, "Plans & offers", "subscriptions"));
+    bot.action("admin_tab", (ctx) => openMiniAppTab(ctx, "Admin", "admin"));
 
     bot.start(async (ctx) => {
       const startPayload = ctx.payload; // This contains the user ID if joined via referral link

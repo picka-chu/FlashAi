@@ -14,17 +14,22 @@ function setCache(key: string, data: any) {
   CACHE[key] = { data, timestamp: Date.now() };
 }
 
-export async function searchMatches(query: string) {
+export async function searchMatches(query: string, initData = '') {
   if (!query.trim()) return [];
-  const response = await fetch(`/api/football/search?q=${encodeURIComponent(query)}`);
+  const response = await fetch(`/api/football/search?q=${encodeURIComponent(query)}`, {
+    headers: initData ? { 'X-TG-Init-Data': initData } : {},
+  });
   if (!response.ok) throw new Error('Failed to search matches');
   return response.json();
 }
 
-export async function getMatchDetails(fixtureId: number | string, match?: any): Promise<MatchData> {
+export async function getMatchDetails(fixtureId: number | string, match?: any, initData = ''): Promise<MatchData> {
   const response = await fetch(`/api/football/details/${encodeURIComponent(String(fixtureId))}`, {
     method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
+    headers: {
+      'Content-Type': 'application/json',
+      ...(initData ? { 'X-TG-Init-Data': initData } : {}),
+    },
     body: JSON.stringify({ match }),
   });
 
@@ -32,8 +37,12 @@ export async function getMatchDetails(fixtureId: number | string, match?: any): 
   return response.json();
 }
 
-export async function fetchMatchH2H(home: string, away: string) {
-  const response = await fetch(`/api/football/h2h?home=${encodeURIComponent(home)}&away=${encodeURIComponent(away)}`);
+export async function fetchMatchH2H(home: string, away: string, initData = '', fixtureId = '') {
+  const params = new URLSearchParams({ home, away });
+  if (fixtureId) params.set('fixtureId', String(fixtureId));
+  const response = await fetch(`/api/football/h2h?${params.toString()}`, {
+    headers: initData ? { 'X-TG-Init-Data': initData } : {},
+  });
   if (!response.ok) return null;
   return response.json();
 }
@@ -149,12 +158,14 @@ export async function getFootballNews(limit = 12, league?: string): Promise<Foot
   }
 }
 
-export async function getUpcomingMatches() {
-  const cacheKey = 'upcoming_matches';
+export async function getUpcomingMatches(initData = '') {
+  const cacheKey = `upcoming_matches_${initData ? 'auth' : 'anon'}`;
   const cached = getFromCache(cacheKey);
   if (cached) return cached;
 
-  const response = await fetch('/api/football/upcoming');
+  const response = await fetch('/api/football/upcoming', {
+    headers: initData ? { 'X-TG-Init-Data': initData } : {},
+  });
   if (!response.ok) return [];
 
   const data = await response.json();
