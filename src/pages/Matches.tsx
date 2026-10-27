@@ -147,8 +147,7 @@ export const Matches: React.FC<MatchesProps> = ({ onTabChange }) => {
     <div className="relative flex h-full flex-col overflow-hidden bg-[var(--background)] text-[var(--foreground)]">
       <div className="z-10 flex items-center justify-between px-5 pb-3 pt-5">
         <div>
-          <p className="text-[11px] font-medium uppercase tracking-[0.14em] text-[var(--text-muted)]">Football centre</p>
-          <h1 className="mt-1 text-[25px] font-semibold tracking-tight text-[var(--text-strong)]">Matches</h1>
+          <h1 className="text-[25px] font-semibold tracking-tight text-[var(--text-strong)]">Matches</h1>
         </div>
         {user?.phone && (
           <div className={`backdrop-blur-md border px-3 py-1.5 rounded-full flex items-center gap-1.5 shadow-[0_0_15px_rgba(204,255,0,0.1)] ${user.credits <= 0 ? 'bg-red-500/10 border-red-500/20' : 'bg-white/5 border-white/10'}`}>
@@ -165,13 +164,20 @@ export const Matches: React.FC<MatchesProps> = ({ onTabChange }) => {
         </div>
 
         {activeMatchType === 'prematch' && (
-          <section className="space-y-3">
-            <div className="flex items-center justify-between">
-              <div className="flex items-center gap-2">
-                <CalendarDays className="h-4 w-4 text-[var(--primary)]" />
-                <span className="text-[13px] font-semibold text-[var(--text-strong)]">Choose match day</span>
+          <section className="relative overflow-hidden rounded-[24px] border border-[var(--border)] bg-gradient-to-br from-[var(--surface-1)] via-[var(--surface-1)] to-[var(--surface-2)] p-3.5">
+            <div className="mb-3 flex items-center justify-between gap-3 px-1">
+              <div className="flex items-center gap-2.5">
+                <span className="flex h-9 w-9 items-center justify-center rounded-xl bg-[var(--primary)]/12 text-[var(--primary)]">
+                  <CalendarDays className="h-[18px] w-[18px]" />
+                </span>
+                <div>
+                  <p className="text-[14px] font-semibold text-[var(--text-strong)]">Match schedule</p>
+                  <p className="mt-0.5 text-[11px] text-[var(--text-muted)]">Pick a day to explore fixtures</p>
+                </div>
               </div>
-              <span className="text-[11px] text-[var(--text-muted)]">{dateOptions.find((day) => day.key === selectedDate)?.count || 0} fixtures</span>
+              <span className="rounded-full border border-[var(--border)] bg-[var(--surface-2)] px-2.5 py-1 text-[11px] font-semibold tabular text-[var(--text-muted)]">
+                {dateOptions.find((day) => day.key === selectedDate)?.count || 0} games
+              </span>
             </div>
             <div className="no-scrollbar -mx-1 flex gap-2 overflow-x-auto px-1 pb-1">
               {dateOptions.map((day) => {
@@ -182,14 +188,15 @@ export const Matches: React.FC<MatchesProps> = ({ onTabChange }) => {
                     type="button"
                     onClick={() => { hapticFeedback('light'); setSelectedDate(day.key); }}
                     aria-pressed={active}
-                    className={`flex min-w-[66px] shrink-0 flex-col items-center gap-1 rounded-2xl border px-3 py-3 transition-all active:scale-95 ${
-                      active ? 'border-[var(--primary)] bg-[var(--primary)] text-[var(--primary-foreground)] shadow-[0_6px_20px_rgba(204,255,0,0.12)]' : 'border-[var(--border)] bg-[var(--surface-1)] text-[var(--text-muted)] hover:border-[var(--text-subtle)]'
+                    className={`relative flex min-w-[68px] shrink-0 flex-col items-center gap-1.5 overflow-hidden rounded-[18px] border px-3 py-3 transition-all duration-200 active:scale-95 ${
+                      active ? 'border-[var(--primary)] bg-[var(--primary)] text-[var(--primary-foreground)] shadow-[0_8px_22px_rgba(204,255,0,0.16)]' : 'border-[var(--border)] bg-[var(--background)]/70 text-[var(--text-muted)] hover:border-[var(--primary)]/40 hover:bg-[var(--surface-2)]'
                     }`}
                   >
-                    <span className="text-[10px] font-semibold uppercase tracking-wide">{day.dayName}</span>
-                    <span className="tabular text-[20px] font-bold leading-none">{day.dayNumber}</span>
-                    <span className="text-[10px] opacity-75">{day.month}</span>
-                    <span className={`mt-0.5 h-1 w-1 rounded-full ${day.count ? (active ? 'bg-current' : 'bg-[var(--primary)]') : 'bg-transparent'}`} />
+                    {active && <span className="absolute inset-x-3 top-0 h-[3px] rounded-b-full bg-current opacity-70" />}
+                    <span className="text-[10px] font-bold uppercase tracking-wide">{day.dayName}</span>
+                    <span className="tabular text-[22px] font-bold leading-none">{day.dayNumber}</span>
+                    <span className="text-[10px] font-medium opacity-75">{day.month}</span>
+                    <span className={`h-1 w-1 rounded-full ${day.count ? (active ? 'bg-current' : 'bg-[var(--primary)]') : 'bg-transparent'}`} />
                   </button>
                 );
               })}
