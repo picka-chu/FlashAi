@@ -438,17 +438,11 @@ export const Home: React.FC<HomeProps> = ({ onTabChange }) => {
     () => upcomingMatches.filter((match: any) => match?.dateKey === selectedDate),
     [selectedDate, upcomingMatches],
   );
-  const nextMatch = upcomingMatches.find((match: any) => match?.dateKey >= selectedDate) || null;
-  const featuredMatch = selectedMatches[0] || nextMatch;
-  // Keep the home feed intentionally concise. The Matches screen remains the
-  // place for the complete fixture list.
-  const listMatches = (selectedMatches.length
-    ? selectedMatches
-    : upcomingMatches.filter((match: any) => match?.dateKey >= selectedDate)
-  )
-    .slice()
-    .sort((a: any, b: any) => String(a?.fixtureDate || '').localeCompare(String(b?.fixtureDate || '')))
-    .slice(0, 4);
+  // The selected calendar day is a strict filter: never substitute fixtures
+  // from a later date when this day has no scheduled matches.
+  const featuredMatch = selectedMatches[0] || null;
+  // Preserve the backend's league-priority ranking within the selected day.
+  const listMatches = selectedMatches.slice(0, 4);
   const selectedCount = selectedMatches.length;
   const featuredIsNext = selectedCount === 0;
 
