@@ -1,6 +1,6 @@
 import React, { useMemo, useState, useEffect } from 'react';
 import { motion, AnimatePresence } from 'motion/react';
-import { Search, Trophy, Zap, Radio, Lock, CalendarDays, ChevronLeft, ChevronRight } from 'lucide-react';
+import { Search, Trophy, Zap, Radio, Lock, CalendarDays } from 'lucide-react';
 import { useUserStore } from '../store/useUserStore';
 import { Skeleton } from '../components/ui/Skeleton';
 import { getLiveMatches, getLiveMatchPreview, getUpcomingMatches, recordMatchClick } from '../services/footballService';
