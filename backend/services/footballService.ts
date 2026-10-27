@@ -303,6 +303,37 @@ export async function getLiveMatches() {
 const UPCOMING_CACHE: Record<string, { data: any[]; timestamp: number }> = {};
 const UPCOMING_CACHE_TTL = 5 * 60 * 1000;
 
+// Competition priority keeps high-interest fixtures prominent in featured
+// picks and feeds. Match names are provider-dependent, so use normalized
+// league-name patterns rather than provider-specific numeric IDs.
+const LEAGUE_PRIORITY: Array<{ weight: number; patterns: RegExp[] }> = [
+  { weight: 100, patterns: [/\buefa champions league\b/i, /\bchampions league\b/i] },
+  { weight: 96, patterns: [/\bpremier league\b/i, /\benglish premier league\b/i] },
+  { weight: 94, patterns: [/\blaliga\b/i, /\bla liga\b/i, /\bprimera division\b/i] },
+  { weight: 92, patterns: [/\bserie a\b/i, /\bitalian serie a\b/i] },
+  { weight: 90, patterns: [/\bbundesliga\b/i] },
+  { weight: 88, patterns: [/\bligue 1\b/i] },
+  { weight: 86, patterns: [/\beuropa league\b/i, /\buefa europa\b/i] },
+  { weight: 82, patterns: [/\bfa cup\b/i, /\bcopa del rey\b/i, /\bcoppa italia\b/i, /\bdfb pokal\b/i, /\bdfl cup\b/i] },
+  { weight: 80, patterns: [/\bconference league\b/i, /\buefa conference\b/i] },
+  { weight: 78, patterns: [/\bworld cup\b/i, /\beuro\b/i, /\bcopa america\b/i, /\bnations league\b/i] },
+  { weight: 76, patterns: [/\bmls\b/i, /\bmajor league soccer\b/i] },
+  { weight: 74, patterns: [/\bprimeira liga\b/i, /\bliga portugal\b/i, /\beredivisie\b/i, /\bscottish premiership\b/i] },
+];
+
+function getLeagueWeight(leagueName: unknown): number {
+  const name = String(leagueName || '').trim();
+  if (!name) return 0;
+  const match = LEAGUE_PRIORITY.find(({ patterns }) => patterns.some((pattern) => pattern.test(name)));
+  return match?.weight ?? 10;
+}
+
+function compareFixturesByLeaguePriority(a: any, b: any): number {
+  const weightDifference = getLeagueWeight(b?.league?.name) - getLeagueWeight(a?.league?.name);
+  if (weightDifference !== 0) return weightDifference;
+  return new Date(a?.fixture?.date).getTime() - new Date(b?.fixture?.date).getTime();
+}
+
 export async function getUpcomingMatches(_topFixtures: string[] = []) {
   if (!BSD_API_KEY) return [];
   const cacheKey = `upcoming_${getTodayDateString()}`;
@@ -340,10 +371,7 @@ export async function getUpcomingMatches(_topFixtures: string[] = []) {
         seen.add(id);
         return true;
       })
-      .sort(
-        (a: any, b: any) =>
-          new Date(a.fixture.date).getTime() - new Date(b.fixture.date).getTime(),
-      );
+      .sort(compareFixturesByLeaguePriority);
 
     UPCOMING_CACHE[cacheKey] = { data: matches, timestamp: Date.now() };
     return matches;
