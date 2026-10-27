@@ -298,9 +298,10 @@ export async function getUpcomingMatches(_topFixtures: string[] = []) {
 
   try {
     const [events, leagues] = await Promise.all([
-      // Window starts yesterday so users in any timezone near the day boundary
-      // still see their full "today", and includes matches already in play or
-      // finished. Filtering to status=notstarted hid today's games entirely.
+      // Some providers only return complete event sets when the range begins
+      // on the previous day. Keep that wider fetch, then filter to today's
+      // calendar date in MATCH_TIMEZONE below so yesterday never leaks into
+      // the client-facing "upcoming" feed.
       fetchBsdEvents('/events/', {
         date_from: getTodayDateString(-1),
         date_to: getTodayDateString(7),
@@ -308,12 +309,20 @@ export async function getUpcomingMatches(_topFixtures: string[] = []) {
       getBsdLeagueMap().catch(() => ({} as Record<number, string>)),
     ]);
 
+    const todayKey = getTodayDateString();
     const seen = new Set<string>();
     const matches = events
       .map((event: any) => mapBSDEvent(event, leagues[Number(event?.league_id)]))
       .filter((match: any) => {
-        if (seen.has(match.fixture.id)) return false;
-        seen.add(match.fixture.id);
+        const fixtureDate = new Date(match?.fixture?.date);
+        if (Number.isNaN(fixtureDate.getTime())) return false;
+        const fixtureKey = dayFormatter.format(fixtureDate);
+        // The provider range intentionally starts yesterday, but the public
+        // upcoming feed must never include a fixture from a prior calendar day.
+        if (fixtureKey < todayKey) return false;
+        const id = String(match?.fixture?.id ?? '');
+        if (!id || seen.has(id)) return false;
+        seen.add(id);
         return true;
       })
       .sort(
