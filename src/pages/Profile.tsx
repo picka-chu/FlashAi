@@ -894,7 +894,7 @@ export const Profile: React.FC<{ initialSection?: ProfileSection }> = ({ initial
                         <Headset className="w-8 h-8 text-[#ccff00]" />
                       </div>
                       <div className="space-y-1">
-                        <p className="text-lg font-black text-white">How can we help?</p>
+                        <p className="text-[15px] font-semibold text-[var(--text-strong)]">How can we help?</p>
                         <p className="text-xs font-bold text-zinc-500">Our AI agent is ready to assist you</p>
                       </div>
                     </div>
@@ -1181,7 +1181,7 @@ export const Profile: React.FC<{ initialSection?: ProfileSection }> = ({ initial
       <div className="fixed inset-0 z-[100] bg-black flex flex-col overflow-hidden">
         <div className="flex-1 overflow-y-auto no-scrollbar px-6 py-8 space-y-8">
           <div className="text-center space-y-2">
-            <h1 className="text-3xl font-black text-white tracking-tight">Upgrade Plan</h1>
+            <h1 className="text-[24px] font-semibold tracking-tight text-[var(--text-strong)]">Upgrade Plan</h1>
             <p className="text-zinc-500 text-sm font-bold">Choose the best plan for your success</p>
           </div>
 
@@ -1399,7 +1399,7 @@ export const Profile: React.FC<{ initialSection?: ProfileSection }> = ({ initial
           {/* Avatar Edit */}
           <div className="flex flex-col items-center">
             <div className="relative w-32 h-32 rounded-full p-1 bg-gradient-to-b from-zinc-800 to-zinc-900">
-              <div className="w-full h-full rounded-full bg-zinc-900 flex items-center justify-center overflow-hidden border-4 border-black">
+              <div className="flex h-full w-full items-center justify-center overflow-hidden rounded-full border-4 border-[var(--background)] bg-[var(--surface-2)]">
                 {editPhotoUrl ? (
                   <img src={editPhotoUrl} alt="Profile" className="w-full h-full object-cover opacity-50" />
                 ) : (
@@ -1473,12 +1473,12 @@ export const Profile: React.FC<{ initialSection?: ProfileSection }> = ({ initial
   }
 
   return (
-    <div className="h-full overflow-y-auto no-scrollbar bg-black">
+    <div className="h-full overflow-y-auto bg-[var(--background)] text-[var(--foreground)]">
       {/* Profile Header Section */}
-      <div className="flex flex-col items-center pt-12 pb-8 px-6 space-y-6">
+      <div className="space-y-5 px-5 pb-6 pt-6">
         <div className="relative">
           {/* Avatar with Glow */}
-          <div className={`relative w-32 h-32 rounded-full p-1 ${user ? 'bg-gradient-to-b from-[#ccff00] to-transparent shadow-[0_0_30px_rgba(204,255,0,0.2)]' : 'bg-zinc-800'}`}>
+          <div className={`relative h-20 w-20 rounded-full p-1 ${user ? 'bg-[var(--primary)]' : 'bg-[var(--surface-3)]'}`}>
             <div className="w-full h-full rounded-full bg-zinc-900 flex items-center justify-center overflow-hidden border-4 border-black">
               {user?.photo_url ? (
                 <img src={user.photo_url} alt="Profile" className="w-full h-full object-cover" />
@@ -1492,7 +1492,7 @@ export const Profile: React.FC<{ initialSection?: ProfileSection }> = ({ initial
             {user && (
               <button 
                 onClick={() => setIsEditing(true)}
-                className="absolute -bottom-1 -right-1 bg-zinc-800 rounded-full p-2 border-4 border-black hover:bg-zinc-700 transition-colors active:scale-95"
+                className="absolute -bottom-1 -right-1 rounded-full border-2 border-[var(--background)] bg-[var(--surface-3)] p-2 transition-colors hover:bg-[var(--surface-2)] active:scale-95"
               >
                 <Pencil className="w-3.5 h-3.5 text-white" />
               </button>
@@ -1500,15 +1500,15 @@ export const Profile: React.FC<{ initialSection?: ProfileSection }> = ({ initial
           </div>
         </div>
 
-        <div className="text-center space-y-3">
+        <div className="min-w-0 flex-1 space-y-2">
           {user?.phone ? (
             <>
               <h2 className="text-3xl font-black text-white tracking-tight">
                 {user.name}
               </h2>
-              <p className="text-sm font-bold text-zinc-500">@{user.username || 'user'}</p>
-              <div className="inline-flex items-center px-4 py-1.5 rounded-full bg-[#ccff00]/10 border border-[#ccff00]/20 mt-2">
-                <span className="text-[10px] font-black text-[#ccff00] tracking-[0.2em]">
+              <p className="text-[13px] text-[var(--text-muted)]">@{user.username || 'user'}</p>
+              <div className="mt-2 inline-flex items-center rounded-full border border-[var(--border)] bg-[var(--surface-1)] px-3 py-1.5">
+                <span className="text-[11px] font-medium text-[var(--primary)]">
                   {user.plan !== 'free' ? 'Premium member' : 'Free member'}
                 </span>
               </div>
@@ -1516,7 +1516,7 @@ export const Profile: React.FC<{ initialSection?: ProfileSection }> = ({ initial
           ) : (
             <>
               <h2 className="text-3xl font-black text-white tracking-tight">Guest User</h2>
-              <p className="text-sm font-bold text-zinc-500">Sign up to unlock all features</p>
+              <p className="text-[12px] text-[var(--text-muted)]">Sign up to unlock all features</p>
               <button 
                 onClick={() => setIsSignUpOpen(true)}
                 className="inline-flex items-center gap-2 px-6 py-2 rounded-full bg-[#ccff00] text-black text-xs font-black tracking-widest mt-4 active:scale-95 transition-all"
@@ -1536,32 +1536,32 @@ export const Profile: React.FC<{ initialSection?: ProfileSection }> = ({ initial
       </div>
 
       {/* Action Cards */}
-      <div className="px-6 space-y-6 pb-32">
+      <div className="space-y-4 px-5 pb-28">
         {/* Subscription Plan Card */}
         <button 
           onClick={() => handleAction('Subscription')}
-          className="w-full bg-zinc-900/50 border border-zinc-800/50 rounded-[32px] p-6 flex items-center justify-between group active:scale-[0.98] transition-all"
+          className="group flex w-full items-center justify-between rounded-[20px] border border-[var(--border)] bg-[var(--surface-1)] p-4 transition-colors active:bg-[var(--surface-2)]"
         >
           <div className="flex items-center gap-5">
-            <div className="w-14 h-14 rounded-2xl bg-zinc-800 flex items-center justify-center">
-              <CreditCard className="w-7 h-7 text-[#ccff00]" />
+            <div className="flex h-11 w-11 items-center justify-center rounded-xl bg-[var(--surface-2)]">
+              <CreditCard className="h-5 w-5 text-[var(--primary)]" />
             </div>
             <div className="text-left">
               <p className="text-lg font-black text-white">Subscription Plan</p>
               <p className="text-sm font-bold text-zinc-500">Manage your pro features</p>
             </div>
           </div>
-          <ChevronRight className="w-5 h-5 text-zinc-700 group-hover:text-[#ccff00] transition-colors" />
+          <ChevronRight className="h-4 w-4 text-[var(--text-subtle)] transition-colors group-hover:text-[var(--primary)]" />
         </button>
 
         {/* Referral & Support Grid */}
         <div className="grid grid-cols-2 gap-4">
           <button 
             onClick={() => handleAction('Referral')}
-            className={`bg-zinc-900/50 border border-zinc-800/50 rounded-[32px] p-6 flex flex-col items-start gap-4 active:scale-[0.98] transition-all ${!user?.phone && 'opacity-50'}`}
+            className={`flex flex-col items-start gap-3 rounded-[20px] border border-[var(--border)] bg-[var(--surface-1)] p-4 text-left transition-colors active:bg-[var(--surface-2)] ${!user?.phone && 'opacity-50'}`}
           >
-            <div className="w-12 h-12 rounded-2xl bg-zinc-800 flex items-center justify-center">
-              <Share2 className="w-6 h-6 text-[#ccff00]" />
+            <div className="flex h-10 w-10 items-center justify-center rounded-xl bg-[var(--surface-2)]">
+              <Share2 className="h-5 w-5 text-[var(--primary)]" />
             </div>
             <div className="text-left">
               <p className="text-lg font-black text-white">Referral and Earn</p>
