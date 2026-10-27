@@ -305,12 +305,14 @@ export const Home: React.FC<HomeProps> = ({ onTabChange }) => {
 
         if (adsRes && adsRes.length > 0) setDynamicAds(adsRes);
 
-        const mappedUpcoming = upcoming.map((m: any) => ({
-          ...formatMatch(m),
-          odds: m.odds || null,
-        }));
+        const mappedUpcoming = (Array.isArray(upcoming) ? upcoming : [])
+          .map((m: any) => {
+            const formatted = formatMatch(m);
+            return formatted ? { ...formatted, odds: m.odds || null } : null;
+          })
+          .filter(Boolean);
 
-        const mappedLive = (Array.isArray(live) ? live : []).map((m: any) => formatMatch(m));
+        const mappedLive = (Array.isArray(live) ? live : []).map((m: any) => formatMatch(m)).filter(Boolean);
         setLiveMatches(mappedLive.slice(0, 20));
 
         if (trending && trending.length > 0) {
@@ -470,7 +472,7 @@ export const Home: React.FC<HomeProps> = ({ onTabChange }) => {
             )}
             <div className="min-w-0">
               <p className="text-[12px] text-[var(--text-muted)]">{user?.phone ? greeting : 'Flash AI'}</p>
-              <h1 className="truncate text-[17px] font-semibold tracking-tight text-[var(--text-strong)]">
+              <h1 className="truncate text-[18px] font-semibold tracking-tight text-[var(--text-strong)]">
                 {user?.phone ? firstName : 'Welcome'}
               </h1>
             </div>
@@ -498,7 +500,7 @@ export const Home: React.FC<HomeProps> = ({ onTabChange }) => {
         </div>
       </header>
 
-      <div className="no-scrollbar min-h-0 flex-1 space-y-7 overflow-y-auto px-5 pb-28 pt-2">
+      <div className="no-scrollbar min-h-0 flex-1 space-y-8 overflow-y-auto px-5 pb-28 pt-2">
         {isLoading ? (
           <div className="space-y-6">
             <Skeleton className="h-16 w-full rounded-2xl" />
@@ -525,7 +527,7 @@ export const Home: React.FC<HomeProps> = ({ onTabChange }) => {
                 </button>
               </div>
 
-              <div className="no-scrollbar -mx-5 flex gap-2 overflow-x-auto px-5">
+              <div className="no-scrollbar -mx-5 flex gap-2.5 overflow-x-auto px-5 pb-1">
                 {dayOptions.map((day) => {
                   const active = day.key === selectedDate;
                   return (
