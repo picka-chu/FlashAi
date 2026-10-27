@@ -24,6 +24,8 @@ import { useTelegram } from '../hooks/useTelegram';
 import { SignUpSheet } from '../components/SignUpSheet';
 import { TeamLogo } from '../components/TeamLogo';
 import { dateFromKey, formatMatch, localDateKey } from '../lib/matchUtils';
+import { FixtureRow } from '../components/matches/FixtureRow';
+import { compareByPriority, isMajorLeague } from '../lib/leaguePriority';
 
 interface HomeProps {
   onTabChange: (tab: any) => void;
@@ -125,52 +127,6 @@ const FeaturedMatch: React.FC<{
         <span>Analyze match</span>
         <ChevronRight className="h-4 w-4" />
       </div>
-    </button>
-  );
-};
-
-const FixtureRow: React.FC<{ match: any; onClick: () => void; isLast: boolean }> = ({ match, onClick, isLast }) => {
-  const started = match?.fixture?.status?.state && match.fixture.status.state !== 'pre';
-  const isLive = match?.fixture?.status?.state === 'in';
-  const hasScore = match.score && match.score !== '--';
-  return (
-    <button
-      type="button"
-      onClick={onClick}
-      className={`flex w-full items-center gap-3 px-4 py-3.5 text-left transition-colors hover:bg-white/[0.02] active:bg-white/[0.04] ${isLast ? '' : 'border-b border-[var(--border)]'}`}
-    >
-      <div className="flex min-w-0 flex-1 flex-col gap-2.5">
-        <div className="flex items-center gap-2.5 min-w-0">
-          <TeamLogo name={match.home} logo={match.homeLogo} className="h-7 w-7 shrink-0 rounded-full" textClassName="text-[10px]" />
-          <span className="truncate text-[14px] font-medium text-[var(--text-strong)]">{match.home}</span>
-        </div>
-        <div className="flex items-center gap-2.5 min-w-0">
-          <TeamLogo name={match.away} logo={match.awayLogo} className="h-7 w-7 shrink-0 rounded-full" textClassName="text-[10px]" />
-          <span className="truncate text-[14px] font-medium text-[var(--text-strong)]">{match.away}</span>
-        </div>
-      </div>
-
-      <div className="flex shrink-0 flex-col items-end gap-2.5 tabular">
-        {started && hasScore ? (
-          <>
-            <span className="text-[14px] font-semibold text-[var(--text-strong)]">{match.score.split('-')[0]}</span>
-            <span className="text-[14px] font-semibold text-[var(--text-strong)]">{match.score.split('-')[1]}</span>
-          </>
-        ) : (
-          <>
-            <span className="text-[14px] font-semibold text-[var(--text-strong)]">{match.time}</span>
-            <span className="text-[12px] text-[var(--text-subtle)]">{match.date}</span>
-          </>
-        )}
-      </div>
-
-      {started && (
-        <div className="shrink-0 w-14 text-right">
-          <span className={`text-[11px] font-medium ${isLive ? 'text-[var(--primary)]' : 'text-[var(--text-subtle)]'}`}>
-            {isLive ? match.minute : match?.fixture?.status?.short === 'FT' ? 'Final' : match.minute}
-          </span>
-        </div>
-      )}
     </button>
   );
 };
@@ -433,21 +389,26 @@ export const Home: React.FC<HomeProps> = ({ onTabChange }) => {
   }, [todayKey]);
 
   const selectedMatches = useMemo(
-    () => upcomingMatches.filter((match: any) => match?.dateKey === selectedDate),
+    () => upcomingMatches.filter((match: any) => match?.dateKey === selectedDate).sort(compareByPriority),
     [selectedDate, upcomingMatches],
   );
-  const nextMatch = upcomingMatches.find((match: any) => match?.dateKey >= selectedDate) || null;
-  const featuredMatch = selectedMatches[0] || nextMatch;
-  const listMatches = selectedMatches.length
-    ? selectedMatches
-    : upcomingMatches.filter((match: any) => match?.dateKey >= selectedDate).slice(0, 12);
+  const selectedMajor = selectedMatches.find(isMajorLeague) || null;
+  const nextMajor = useMemo(
+    () =>
+      upcomingMatches
+        .filter((match: any) => match?.dateKey > selectedDate && isMajorLeague(match))
+        .sort((a: any, b: any) => new Date(a.fixtureDate || 0).getTime() - new Date(b.fixtureDate || 0).getTime())[0] || null,
+    [selectedDate, upcomingMatches],
+  );
+  const featuredMatch = selectedMajor || nextMajor;
+  const listMatches = selectedMatches.filter((match: any) => match.id !== featuredMatch?.id).slice(0, 10);
   const selectedCount = selectedMatches.length;
-  const featuredIsNext = selectedCount === 0;
+  const featuredIsNext = !selectedMajor;
 
   const groupedList = useMemo(() => {
     const groups = new Map<string, any[]>();
     for (const m of listMatches) {
-      const key = m.league || 'Football';
+      const key = m.league || 'Other competitions';
       if (!groups.has(key)) groups.set(key, []);
       groups.get(key)!.push(m);
     }
@@ -551,7 +512,7 @@ export const Home: React.FC<HomeProps> = ({ onTabChange }) => {
             {featuredMatch ? (
               <FeaturedMatch
                 match={featuredMatch}
-                eyebrow={featuredIsNext ? 'Next up' : isToday ? 'Top match' : 'Featured'}
+                eyebrow={featuredIsNext ? 'Next major fixture' : isToday ? 'Top match' : 'Featured'}
                 onClick={() => handleAnalyze(featuredMatch)}
               />
             ) : (
@@ -561,15 +522,15 @@ export const Home: React.FC<HomeProps> = ({ onTabChange }) => {
               </div>
             )}
 
-            {selectedCount === 0 && featuredMatch && (
+            {featuredIsNext && featuredMatch && (
               <div className="flex items-start gap-3 rounded-2xl border border-[var(--border)] bg-[var(--surface-1)] p-4">
                 <Info className="mt-0.5 h-4 w-4 shrink-0 text-[var(--text-muted)]" />
                 <div className="min-w-0">
                   <p className="text-[13px] font-medium text-[var(--text-strong)]">
-                    {isToday ? 'No more fixtures today' : `No fixtures on ${selectedLabel}`}
+                    {isToday ? 'No major league fixtures today' : `No major league fixtures on ${selectedLabel}`}
                   </p>
                   <p className="mt-0.5 text-[12px] leading-relaxed text-[var(--text-muted)]">
-                    Showing the next scheduled fixtures below.
+                    Showing the next major fixture, then the rest of the selected day.
                   </p>
                 </div>
               </div>
@@ -641,7 +602,7 @@ export const Home: React.FC<HomeProps> = ({ onTabChange }) => {
                       </div>
                       {rows.map((match: any, idx: number) => (
                         <FixtureRow
-                          key={match.id}
+                          key={match.id || idx}
                           match={match}
                           isLast={idx === rows.length - 1}
                           onClick={() => handleAnalyze(match)}
@@ -652,8 +613,12 @@ export const Home: React.FC<HomeProps> = ({ onTabChange }) => {
                 </div>
               ) : (
                 <div className="rounded-2xl border border-[var(--border)] bg-[var(--surface-1)] p-6 text-center">
-                  <p className="text-[14px] font-medium text-[var(--text-strong)]">No fixtures scheduled</p>
-                  <p className="mt-1 text-[12px] text-[var(--text-muted)]">Check back later for new matches.</p>
+                  <p className="text-[14px] font-medium text-[var(--text-strong)]">
+                    {selectedCount ? 'No more fixtures today' : 'No fixtures scheduled'}
+                  </p>
+                  <p className="mt-1 text-[12px] text-[var(--text-muted)]">
+                    {selectedCount ? 'Browse the Matches tab for other dates.' : 'Check back later for new matches.'}
+                  </p>
                 </div>
               )}
             </section>
