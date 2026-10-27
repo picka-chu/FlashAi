@@ -2084,7 +2084,19 @@ function extractTelegramChannelFromTaskUrl(taskUrl: string): string | null {
   });
 
   const botUsername = process.env.TELEGRAM_BOT_USERNAME || "Deepflashaibot";
-  const appUrl = process.env.APP_URL || `http://localhost:${PORT}`;
+  // Render injects RENDER_EXTERNAL_URL automatically. Prefer it over falling
+  // back to localhost, which Telegram rejects for Web App buttons.
+  const appUrl = (
+    process.env.APP_URL ||
+    process.env.RENDER_EXTERNAL_URL ||
+    DEFAULT_APP_URL ||
+    `http://localhost:${PORT}`
+  ).replace(/\/+$/, "");
+  if (!/^https:\/\//i.test(appUrl)) {
+    console.warn(
+      `APP_URL is not HTTPS (${appUrl}). Telegram Web App buttons will be rejected until APP_URL or RENDER_EXTERNAL_URL is set.`,
+    );
+  }
   const signupContactMessage = "To unlock AI analysis and features, please complete your registration by sharing your contact:";
   const signupContactKeyboard = {
     reply_markup: {
@@ -2605,6 +2617,10 @@ function extractTelegramChannelFromTaskUrl(taskUrl: string): string | null {
         console.error("Failed to update user after payment:", err.message);
         ctx.reply("⚠️ Payment received but failed to update your plan. Please contact support with your payment ID.");
       }
+    });
+
+    bot.catch((error, ctx) => {
+      console.error(`Bot handler error (${ctx.updateType}):`, error);
     });
 
     bot.telegram
