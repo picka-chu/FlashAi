@@ -440,9 +440,12 @@ export const Home: React.FC<HomeProps> = ({ onTabChange }) => {
   );
   const nextMatch = upcomingMatches.find((match: any) => match?.dateKey >= selectedDate) || null;
   const featuredMatch = selectedMatches[0] || nextMatch;
-  const listMatches = selectedMatches.length
+  // Keep the home feed intentionally concise. The Matches screen remains the
+  // place for the complete fixture list.
+  const listMatches = (selectedMatches.length
     ? selectedMatches
-    : upcomingMatches.filter((match: any) => match?.dateKey >= selectedDate).slice(0, 12);
+    : upcomingMatches.filter((match: any) => match?.dateKey >= selectedDate)
+  ).slice(0, 5);
   const selectedCount = selectedMatches.length;
   const featuredIsNext = selectedCount === 0;
 
