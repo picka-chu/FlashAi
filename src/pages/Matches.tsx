@@ -1,13 +1,13 @@
 import React, { useMemo, useState, useEffect } from 'react';
 import { motion, AnimatePresence } from 'motion/react';
-import { Search, Trophy, Zap, Radio, Lock } from 'lucide-react';
+import { Search, Trophy, Zap, Radio, Lock, CalendarDays, ChevronLeft, ChevronRight } from 'lucide-react';
 import { useUserStore } from '../store/useUserStore';
 import { Skeleton } from '../components/ui/Skeleton';
 import { getLiveMatches, getLiveMatchPreview, getUpcomingMatches, recordMatchClick } from '../services/footballService';
 import { useTelegram } from '../hooks/useTelegram';
 import { SignUpSheet } from '../components/SignUpSheet';
 import { ModernMatchCard } from '../components/ModernMatchCard';
-import { formatMatch } from '../lib/matchUtils';
+import { formatMatch, localDateKey, dateFromKey } from '../lib/matchUtils';
 
 type MatchType = 'live' | 'prematch';
 
@@ -20,6 +20,7 @@ export const Matches: React.FC<MatchesProps> = ({ onTabChange }) => {
   const [matches, setMatches] = useState<any[]>([]);
   const [liveMatches, setLiveMatches] = useState<any[]>([]);
   const [activeMatchType, setActiveMatchType] = useState<MatchType>('prematch');
+  const [selectedDate, setSelectedDate] = useState(() => localDateKey(new Date()));
   const [loading, setLoading] = useState(true);
   const [liveLoading, setLiveLoading] = useState(false);
   const [isSignUpOpen, setIsSignUpOpen] = useState(false);
@@ -65,13 +66,35 @@ export const Matches: React.FC<MatchesProps> = ({ onTabChange }) => {
     fetchLive();
   }, [isSubscribed, initData]);
 
+  const todayKey = localDateKey(new Date());
+  const dateOptions = useMemo(() => Array.from({ length: 8 }, (_, offset) => {
+    const date = dateFromKey(todayKey);
+    date.setDate(date.getDate() + offset);
+    const key = localDateKey(date);
+    return {
+      key,
+      dayName: offset === 0 ? 'Today' : offset === 1 ? 'Tomorrow' : date.toLocaleDateString('en-GB', { weekday: 'short' }),
+      dayNumber: date.getDate(),
+      month: date.toLocaleDateString('en-GB', { month: 'short' }),
+      count: matches.filter((match) => match.dateKey === key).length,
+    };
+  }), [matches, todayKey]);
+
+  useEffect(() => {
+    if (selectedDate < todayKey || selectedDate > dateOptions[dateOptions.length - 1]?.key) {
+      setSelectedDate(todayKey);
+    }
+  }, [selectedDate, todayKey, dateOptions]);
+
   const normalizedQuery = searchQuery.trim().toLowerCase();
 
   const filteredUpcomingMatches = useMemo(() => matches.filter((m) =>
-    m.home.toLowerCase().includes(normalizedQuery) ||
-    m.away.toLowerCase().includes(normalizedQuery) ||
-    m.league.toLowerCase().includes(normalizedQuery)
-  ), [matches, normalizedQuery]);
+    m.dateKey === selectedDate && (
+      m.home.toLowerCase().includes(normalizedQuery) ||
+      m.away.toLowerCase().includes(normalizedQuery) ||
+      m.league.toLowerCase().includes(normalizedQuery)
+    )
+  ), [matches, normalizedQuery, selectedDate]);
 
   const filteredLiveMatches = useMemo(() => liveMatches.filter((m) =>
     m.home.toLowerCase().includes(normalizedQuery) ||
@@ -141,6 +164,39 @@ export const Matches: React.FC<MatchesProps> = ({ onTabChange }) => {
           <button onClick={() => setActiveMatchType('live')} className={`flex items-center justify-center gap-1.5 rounded-xl py-3 text-[13px] font-semibold transition-colors ${activeMatchType === 'live' ? 'bg-[var(--surface-3)] text-[var(--text-strong)] shadow-sm' : 'text-[var(--text-muted)] hover:text-[var(--text-strong)]'}`}><Radio className="w-3.5 h-3.5" /> Live</button>
         </div>
 
+        {activeMatchType === 'prematch' && (
+          <section className="space-y-3">
+            <div className="flex items-center justify-between">
+              <div className="flex items-center gap-2">
+                <CalendarDays className="h-4 w-4 text-[var(--primary)]" />
+                <span className="text-[13px] font-semibold text-[var(--text-strong)]">Choose match day</span>
+              </div>
+              <span className="text-[11px] text-[var(--text-muted)]">{dateOptions.find((day) => day.key === selectedDate)?.count || 0} fixtures</span>
+            </div>
+            <div className="no-scrollbar -mx-1 flex gap-2 overflow-x-auto px-1 pb-1">
+              {dateOptions.map((day) => {
+                const active = day.key === selectedDate;
+                return (
+                  <button
+                    key={day.key}
+                    type="button"
+                    onClick={() => { hapticFeedback('light'); setSelectedDate(day.key); }}
+                    aria-pressed={active}
+                    className={`flex min-w-[66px] shrink-0 flex-col items-center gap-1 rounded-2xl border px-3 py-3 transition-all active:scale-95 ${
+                      active ? 'border-[var(--primary)] bg-[var(--primary)] text-[var(--primary-foreground)] shadow-[0_6px_20px_rgba(204,255,0,0.12)]' : 'border-[var(--border)] bg-[var(--surface-1)] text-[var(--text-muted)] hover:border-[var(--text-subtle)]'
+                    }`}
+                  >
+                    <span className="text-[10px] font-semibold uppercase tracking-wide">{day.dayName}</span>
+                    <span className="tabular text-[20px] font-bold leading-none">{day.dayNumber}</span>
+                    <span className="text-[10px] opacity-75">{day.month}</span>
+                    <span className={`mt-0.5 h-1 w-1 rounded-full ${day.count ? (active ? 'bg-current' : 'bg-[var(--primary)]') : 'bg-transparent'}`} />
+                  </button>
+                );
+              })}
+            </div>
+          </section>
+        )}
+
         <div className="relative">
           <Search className="absolute left-4 top-1/2 -translate-y-1/2 h-4 w-4 text-[var(--text-subtle)]" />
           <input value={searchQuery} onChange={(e) => setSearchQuery(e.target.value)} placeholder="Search teams or leagues" className="w-full rounded-2xl border border-[var(--border)] bg-[var(--surface-1)] py-3.5 pl-11 pr-4 text-[14px] text-[var(--text-strong)] placeholder:text-[var(--text-subtle)] outline-none transition-colors focus:border-[var(--primary)]/50" />
@@ -186,7 +242,7 @@ export const Matches: React.FC<MatchesProps> = ({ onTabChange }) => {
                   <div>
                     <p className="text-[15px] font-semibold tracking-tight text-[var(--text-strong)]">No matches found</p>
                     <p className="text-zinc-500 text-xs mt-1 max-w-[240px] mx-auto leading-relaxed">
-                      {activeMatchType === 'live' ? 'There are no live fixtures at the moment. Try again shortly.' : 'Try another team or league, or check a different match day.'}
+                      {activeMatchType === 'live' ? 'There are no live fixtures at the moment. Try again shortly.' : (matches.some((match) => match.dateKey === selectedDate) ? 'No fixtures match your search. Try another team or league.' : 'No fixtures are scheduled for this day. Choose another date above.')}
                     </p>
                   </div>
                 </div>
