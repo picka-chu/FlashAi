@@ -1,10 +1,16 @@
+const MATCH_TIMEZONE = 'Africa/Addis_Ababa';
+
 export const localDateKey = (value?: Date | string | number | null) => {
   const date = value instanceof Date ? value : new Date(value ?? Date.now());
   if (Number.isNaN(date.getTime())) return '';
-  const year = date.getFullYear();
-  const month = String(date.getMonth() + 1).padStart(2, '0');
-  const day = String(date.getDate()).padStart(2, '0');
-  return `${year}-${month}-${day}`;
+  const parts = new Intl.DateTimeFormat('en-CA', {
+    timeZone: MATCH_TIMEZONE,
+    year: 'numeric',
+    month: '2-digit',
+    day: '2-digit',
+  }).formatToParts(date);
+  const part = (type: string) => parts.find((item) => item.type === type)?.value || '';
+  return `${part('year')}-${part('month')}-${part('day')}`;
 };
 
 export const dateFromKey = (key: string) => {
@@ -57,17 +63,20 @@ export const formatMatch = (m: any) => {
     league: leagueName,
     fixtureDate: matchDate.toISOString(),
     dateKey: localDateKey(matchDate),
-    time: matchDate.toLocaleTimeString('en-GB', { hour: '2-digit', minute: '2-digit' }),
+    time: matchDate.toLocaleTimeString('en-GB', { timeZone: MATCH_TIMEZONE, hour: '2-digit', minute: '2-digit' }),
     date: (() => {
-      const today = new Date();
+      const todayKey = localDateKey(new Date());
       const tomorrow = new Date();
-      tomorrow.setDate(today.getDate() + 1);
-
-      const matchDateStr = matchDate.toDateString();
-      if (matchDateStr === today.toDateString()) return 'Today';
-      if (matchDateStr === tomorrow.toDateString()) return 'Tomorrow';
-
-      return matchDate.toLocaleDateString('en-GB', { day: '2-digit', month: 'short' });
+      tomorrow.setDate(tomorrow.getDate() + 1);
+      const tomorrowKey = localDateKey(tomorrow);
+      const fixtureKey = localDateKey(matchDate);
+      if (fixtureKey === todayKey) return 'Today';
+      if (fixtureKey === tomorrowKey) return 'Tomorrow';
+      return new Intl.DateTimeFormat('en-GB', {
+        timeZone: MATCH_TIMEZONE,
+        day: '2-digit',
+        month: 'short',
+      }).format(matchDate);
     })(),
     status: m?.fixture?.status?.state === 'pre' ? 'Upcoming' : (m?.status || 'Live'),
   };
