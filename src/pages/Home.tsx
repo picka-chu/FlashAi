@@ -445,7 +445,10 @@ export const Home: React.FC<HomeProps> = ({ onTabChange }) => {
   const listMatches = (selectedMatches.length
     ? selectedMatches
     : upcomingMatches.filter((match: any) => match?.dateKey >= selectedDate)
-  ).slice(0, 5);
+  )
+    .slice()
+    .sort((a: any, b: any) => String(a?.fixtureDate || '').localeCompare(String(b?.fixtureDate || '')))
+    .slice(0, 4);
   const selectedCount = selectedMatches.length;
   const featuredIsNext = selectedCount === 0;
 
@@ -633,7 +636,7 @@ export const Home: React.FC<HomeProps> = ({ onTabChange }) => {
             <section className="space-y-3">
               <SectionHeader
                 title={selectedCount ? (isToday ? "Today's fixtures" : `${selectedLabel}`) : 'Upcoming fixtures'}
-                action="View all"
+                action={selectedCount > 4 || upcomingMatches.length > 4 ? 'View all' : undefined}
                 onAction={() => onTabChange('matches')}
               />
               {groupedList.length > 0 ? (
