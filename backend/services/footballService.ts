@@ -14,10 +14,18 @@ const BSD_HEADERS = BSD_API_KEY
 
 const ESPN_BASE = 'https://site.api.espn.com/apis/site/v2/sports/soccer';
 
+// Match days are calendar days in MATCH_TIMEZONE, not UTC. Using UTC made
+// "today" roll over at 03:00 in Addis Ababa and dropped same-day fixtures.
+const MATCH_TIMEZONE = process.env.MATCH_TIMEZONE || 'Africa/Addis_Ababa';
+const dayFormatter = new Intl.DateTimeFormat('en-CA', {
+  timeZone: MATCH_TIMEZONE,
+  year: 'numeric',
+  month: '2-digit',
+  day: '2-digit',
+});
+
 function getTodayDateString(offset = 0) {
-  const date = new Date();
-  if (offset !== 0) date.setUTCDate(date.getUTCDate() + offset);
-  return date.toISOString().slice(0, 10);
+  return dayFormatter.format(new Date(Date.now() + offset * 24 * 60 * 60 * 1000));
 }
 
 function safeIsoDate(value: any) {
@@ -277,18 +285,19 @@ export async function getUpcomingMatches(_topFixtures: string[] = []) {
 
   try {
     const [events, leagues] = await Promise.all([
+      // Window starts yesterday so users in any timezone near the day boundary
+      // still see their full "today", and includes matches already in play or
+      // finished. Filtering to status=notstarted hid today's games entirely.
       fetchBsdEvents('/events/', {
-        status: 'notstarted',
-        date_from: getTodayDateString(),
+        date_from: getTodayDateString(-1),
         date_to: getTodayDateString(7),
-      }, 2),
+      }, 4),
       getBsdLeagueMap().catch(() => ({} as Record<number, string>)),
     ]);
 
     const seen = new Set<string>();
     const matches = events
       .map((event: any) => mapBSDEvent(event, leagues[Number(event?.league_id)]))
-      .filter((match: any) => match?.fixture?.status?.state === 'pre')
       .filter((match: any) => {
         if (seen.has(match.fixture.id)) return false;
         seen.add(match.fixture.id);
