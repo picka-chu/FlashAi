@@ -159,44 +159,36 @@ export default function App() {
     setActiveTab(normalizedTab);
   }, []);
 
+  // Mount only the active screen. Previously every screen stayed mounted
+  // inside a hidden wrapper, so subscriptions, effects and animations on
+  // unrelated screens continued running and made navigation feel sluggish.
   const renderPage = () => {
-    return (
-      <>
-        <div className={activeTab === "home" ? "h-full" : "hidden"}>
-          <Home onTabChange={setActiveTab} />
-        </div>
-        <div className={activeTab === "matches" ? "h-full" : "hidden"}>
-          <Matches onTabChange={setActiveTab} />
-        </div>
-        <div className={activeTab === "analyze" ? "h-full" : "hidden"}>
-          <Analyze onTabChange={setActiveTab} />
-        </div>
-        <div className={activeTab === "history" ? "h-full" : "hidden"}>
-          <History />
-        </div>
-        <div className={activeTab === "profile" ? "h-full" : "hidden"}>
-          <Profile />
-        </div>
-        <div className={activeTab === "admin" ? "h-full" : "hidden"}>
-          <Admin />
-        </div>
-        <div className={activeTab === "livePreview" ? "h-full" : "hidden"}>
-          <LiveMatchPreview onBack={() => setActiveTab("matches")} onGoAnalyze={() => setActiveTab("analyze")} />
-        </div>
-        <div className={activeTab === "subscriptions" ? "h-full" : "hidden"}>
-          <SubscriptionPlansPage />
-        </div>
-        <div className={activeTab === "paymentMethods" ? "h-full" : "hidden"}>
-          <PaymentMethodsPage />
-        </div>
-        <div className={activeTab === "referralEarn" ? "h-full" : "hidden"}>
-          <ReferralEarnPage />
-        </div>
-        <div className={activeTab === "support" ? "h-full" : "hidden"}>
-          <SupportPage />
-        </div>
-      </>
-    );
+    switch (activeTab) {
+      case "home":
+        return <Home onTabChange={setActiveTab} />;
+      case "matches":
+        return <Matches onTabChange={setActiveTab} />;
+      case "analyze":
+        return <Analyze onTabChange={setActiveTab} />;
+      case "history":
+        return <History />;
+      case "profile":
+        return <Profile />;
+      case "admin":
+        return <Admin />;
+      case "livePreview":
+        return <LiveMatchPreview onBack={() => setActiveTab("matches")} onGoAnalyze={() => setActiveTab("analyze")} />;
+      case "subscriptions":
+        return <SubscriptionPlansPage />;
+      case "paymentMethods":
+        return <PaymentMethodsPage />;
+      case "referralEarn":
+        return <ReferralEarnPage />;
+      case "support":
+        return <SupportPage />;
+      default:
+        return <Home onTabChange={setActiveTab} />;
+    }
   };
 
   if (isLoading) {
