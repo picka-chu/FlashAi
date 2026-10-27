@@ -62,7 +62,11 @@ export const formatMatch = (m: any) => {
     minute: displayMinute,
     league: leagueName,
     fixtureDate: matchDate.toISOString(),
-    dateKey: localDateKey(matchDate),
+    // Prefer the provider's original calendar key when available. This avoids
+    // re-deriving a fixture day from a normalized ISO timestamp.
+    dateKey: typeof m?.fixture?.dateKey === 'string' && /^\d{4}-\d{2}-\d{2}$/.test(m.fixture.dateKey)
+      ? m.fixture.dateKey
+      : localDateKey(matchDate),
     time: matchDate.toLocaleTimeString('en-GB', { timeZone: MATCH_TIMEZONE, hour: '2-digit', minute: '2-digit' }),
     date: (() => {
       const todayKey = localDateKey(new Date());
