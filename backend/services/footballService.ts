@@ -42,11 +42,25 @@ function getTodayDateString(offset = 0) {
 }
 
 function safeIsoDate(value: any) {
-  if (!value) return new Date().toISOString();
+  if (!value) return '';
+  // Preserve date-only provider values as a stable instant inside that
+  // calendar day. UTC midnight can render as the previous day in negative
+  // offsets, while local midnight can shift in deployments with another TZ.
+  if (typeof value === 'string' && /^\d{4}-\d{2}-\d{2}$/.test(value)) {
+    return new Date(`${value}T12:00:00.000Z`).toISOString();
+  }
   const date = typeof value === 'number'
     ? new Date(value > 9999999999 ? value : value * 1000)
     : new Date(value);
-  return Number.isNaN(date.getTime()) ? new Date().toISOString() : date.toISOString();
+  return Number.isNaN(date.getTime()) ? '' : date.toISOString();
+}
+
+function fixtureCalendarKey(value: any) {
+  if (typeof value === 'string' && /^\d{4}-\d{2}-\d{2}$/.test(value)) return value;
+  const date = typeof value === 'number'
+    ? new Date(value > 9999999999 ? value : value * 1000)
+    : new Date(value);
+  return Number.isNaN(date.getTime()) ? '' : dayFormatter.format(date);
 }
 
 async function bsdGet(path: string, params: Record<string, any> = {}, timeout = 12_000) {
@@ -231,6 +245,7 @@ function mapBSDEvent(event: any, leagueName?: string) {
     fixture: {
       id: `bsd_${id}`,
       date: safeIsoDate(event?.event_date || event?.date || event?.kickoff),
+      dateKey: fixtureCalendarKey(event?.event_date || event?.date || event?.kickoff),
       status: {
         short: status.short,
         elapsed: Number.isFinite(currentMinute) && currentMinute > 0 ? currentMinute * 60 : 0,
@@ -315,8 +330,8 @@ export async function getUpcomingMatches(_topFixtures: string[] = []) {
       .map((event: any) => mapBSDEvent(event, leagues[Number(event?.league_id)]))
       .filter((match: any) => {
         const fixtureDate = new Date(match?.fixture?.date);
-        if (Number.isNaN(fixtureDate.getTime())) return false;
-        const fixtureKey = dayFormatter.format(fixtureDate);
+        const fixtureKey = String(match?.fixture?.dateKey || (Number.isNaN(fixtureDate.getTime()) ? '' : dayFormatter.format(fixtureDate)));
+        if (!fixtureKey) return false;
         // The provider range intentionally starts yesterday, but the public
         // upcoming feed must never include a fixture from a prior calendar day.
         if (fixtureKey < todayKey) return false;
