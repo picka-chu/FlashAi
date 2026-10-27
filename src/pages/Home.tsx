@@ -24,7 +24,7 @@ import { FootballNewsFeed } from '../components/FootballNewsFeed';
 import { useTelegram } from '../hooks/useTelegram';
 import { SignUpSheet } from '../components/SignUpSheet';
 import { TeamLogo } from '../components/TeamLogo';
-import { dateFromKey, formatMatch, localDateKey } from '../lib/matchUtils';
+import { formatMatch, localDateKey } from '../lib/matchUtils';
 
 interface HomeProps {
   onTabChange: (tab: any) => void;
@@ -201,7 +201,6 @@ export const Home: React.FC<HomeProps> = ({ onTabChange }) => {
   const [news, setNews] = useState<FootballNewsArticle[]>([]);
   const [newsLoading, setNewsLoading] = useState(true);
   const [isLoading, setIsLoading] = useState(true);
-  const [selectedDate, setSelectedDate] = useState(() => localDateKey(new Date()));
   const [isSignUpOpen, setIsSignUpOpen] = useState(false);
 
   const adsRef = React.useRef<HTMLDivElement>(null);
@@ -405,56 +404,16 @@ export const Home: React.FC<HomeProps> = ({ onTabChange }) => {
   };
 
   const todayKey = localDateKey(new Date());
-  const selectedDay = dateFromKey(selectedDate || todayKey);
-  const isToday = selectedDate === todayKey;
-  const selectedLabel = selectedDay.toLocaleDateString('en-GB', { weekday: 'long', day: 'numeric', month: 'short' });
   const hour = new Date().getHours();
   const greeting = hour < 12 ? 'Good morning' : hour < 18 ? 'Good afternoon' : 'Good evening';
   const firstName = user?.phone ? String(user?.name || 'there').split(' ')[0] : 'Guest';
 
-  const countByDate = useMemo(
-    () => upcomingMatches.reduce((counts: Record<string, number>, match: any) => {
-      if (match?.dateKey) counts[match.dateKey] = (counts[match.dateKey] || 0) + 1;
-      return counts;
-    }, {}),
-    [upcomingMatches],
-  );
-
-  const dayOptions = useMemo(() => {
-    const base = dateFromKey(todayKey);
-    return Array.from({ length: 7 }, (_, offset) => {
-      const date = new Date(base);
-      date.setDate(base.getDate() + offset);
-      const key = localDateKey(date);
-      return {
-        key,
-        dayName: date.toLocaleDateString('en-GB', { weekday: 'short' }),
-        dayNumber: date.getDate(),
-        isToday: key === todayKey,
-        count: countByDate[key] || 0,
-      };
-    });
-  }, [countByDate, todayKey]);
-
-  useEffect(() => {
-    const firstKey = localDateKey(new Date());
-    const lastKey = localDateKey(new Date(Date.now() + 6 * 24 * 60 * 60 * 1000));
-    setSelectedDate((current) => (!current || current < firstKey || current > lastKey ? firstKey : current));
-    const now = new Date();
-    const midnight = new Date(now);
-    midnight.setHours(24, 0, 5, 0);
-    const timer = window.setTimeout(() => setSelectedDate(localDateKey(new Date())), Math.max(1000, midnight.getTime() - now.getTime()));
-    return () => window.clearTimeout(timer);
-  }, [todayKey]);
-
   const selectedMatches = useMemo(
-    () => upcomingMatches.filter((match: any) => match?.dateKey === selectedDate),
-    [selectedDate, upcomingMatches],
+    () => upcomingMatches.filter((match: any) => match?.dateKey === todayKey),
+    [todayKey, upcomingMatches],
   );
-  // The selected calendar day is a strict filter: never substitute fixtures
-  // from a later date when this day has no scheduled matches.
+  // Home always features today's fixtures; date browsing lives on the Matches page.
   const featuredMatch = selectedMatches[0] || null;
-  // Preserve the backend's league-priority ranking within the selected day.
   const listMatches = selectedMatches.slice(0, 4);
   const selectedCount = selectedMatches.length;
   const featuredIsNext = selectedCount === 0;
@@ -522,51 +481,11 @@ export const Home: React.FC<HomeProps> = ({ onTabChange }) => {
           </div>
         ) : (
           <>
-            {/* Day selector */}
-            <section className="space-y-3">
-              <div className="flex items-end justify-between">
-                <div>
-                  <p className="eyebrow">Matches</p>
-                  <h2 className="mt-0.5 text-[22px] font-semibold tracking-tight text-[var(--text-strong)]">
-                    {isToday ? 'Today' : selectedLabel}
-                  </h2>
-                </div>
-                <button
-                  type="button"
-                  onClick={() => onTabChange('matches')}
-                  className="flex items-center gap-0.5 text-[13px] font-medium text-[var(--primary)]"
-                >
-                  All matches <ChevronRight className="h-4 w-4" />
-                </button>
-              </div>
-
-              <div className="no-scrollbar -mx-5 flex gap-2.5 overflow-x-auto px-5 pb-1">
-                {dayOptions.map((day) => {
-                  const active = day.key === selectedDate;
-                  return (
-                    <button
-                      key={day.key}
-                      type="button"
-                      onClick={() => { hapticFeedback('light'); setSelectedDate(day.key); }}
-                      aria-pressed={active}
-                      className={`flex w-[58px] shrink-0 flex-col items-center gap-1 rounded-2xl py-2.5 transition-colors active:scale-95 ${
-                        active ? 'bg-[var(--primary)] text-[var(--primary-foreground)]' : 'bg-[var(--surface-1)] text-[var(--text-muted)] border border-[var(--border)]'
-                      }`}
-                    >
-                      <span className="text-[11px] font-medium">{day.isToday ? 'Today' : day.dayName}</span>
-                      <span className="tabular text-[17px] font-semibold leading-none">{day.dayNumber}</span>
-                      <span className={`h-1 w-1 rounded-full ${day.count ? (active ? 'bg-current' : 'bg-[var(--primary)]') : 'bg-transparent'}`} />
-                    </button>
-                  );
-                })}
-              </div>
-            </section>
-
             {/* Featured */}
             {featuredMatch ? (
               <FeaturedMatch
                 match={featuredMatch}
-                eyebrow={featuredIsNext ? 'Next up' : isToday ? 'Top match' : 'Featured'}
+                eyebrow={featuredIsNext ? 'Next up' : 'Top match'}
                 onClick={() => handleAnalyze(featuredMatch)}
               />
             ) : (
@@ -581,7 +500,7 @@ export const Home: React.FC<HomeProps> = ({ onTabChange }) => {
                 <Info className="mt-0.5 h-4 w-4 shrink-0 text-[var(--text-muted)]" />
                 <div className="min-w-0">
                   <p className="text-[13px] font-medium text-[var(--text-strong)]">
-                    {isToday ? 'No more fixtures today' : `No fixtures on ${selectedLabel}`}
+                    'No more fixtures today'
                   </p>
                   <p className="mt-0.5 text-[12px] leading-relaxed text-[var(--text-muted)]">
                     Showing the next scheduled fixtures below.
@@ -642,7 +561,7 @@ export const Home: React.FC<HomeProps> = ({ onTabChange }) => {
             {/* Fixtures list */}
             <section className="space-y-3">
               <SectionHeader
-                title={selectedCount ? (isToday ? "Today's fixtures" : `${selectedLabel}`) : 'Upcoming fixtures'}
+                title={selectedCount ? "Today's fixtures" : 'Upcoming fixtures'}
                 action={selectedCount > 4 || upcomingMatches.length > 4 ? 'View all' : undefined}
                 onAction={() => onTabChange('matches')}
               />
