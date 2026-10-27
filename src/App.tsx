@@ -21,6 +21,12 @@ import { init, retrieveLaunchParams } from '@telegram-apps/sdk-react';
 
 export default function App() {
   const [activeTab, setActiveTab] = useState<TabType>("home");
+  // Mount screens on first visit, then keep them mounted so tab changes stay
+  // instant and in-progress work (especially analysis) is not discarded.
+  const [visitedTabs, setVisitedTabs] = useState<TabType[]>(["home"]);
+  useEffect(() => {
+    setVisitedTabs((visited) => visited.includes(activeTab) ? visited : [...visited, activeTab]);
+  }, [activeTab]);
   const { user: tgUser, isReady, initData, setHeaderColor, setBackgroundColor } = useTelegram();
   const { setUser, isLoading, setLoading } = useUserStore();
   const [loadError, setLoadError] = useState<string | null>(null);
@@ -159,11 +165,8 @@ export default function App() {
     setActiveTab(normalizedTab);
   }, []);
 
-  // Mount only the active screen. Previously every screen stayed mounted
-  // inside a hidden wrapper, so subscriptions, effects and animations on
-  // unrelated screens continued running and made navigation feel sluggish.
-  const renderPage = () => {
-    switch (activeTab) {
+  const renderTab = (tab: TabType) => {
+    switch (tab) {
       case "home":
         return <Home onTabChange={setActiveTab} />;
       case "matches":
@@ -187,7 +190,7 @@ export default function App() {
       case "support":
         return <SupportPage />;
       default:
-        return <Home onTabChange={setActiveTab} />;
+        return null;
     }
   };
 
@@ -233,8 +236,12 @@ export default function App() {
       activeTab={activeTab} 
       onTabChange={setActiveTab}
     >
-      <div className="h-full">
-        {renderPage()}
+      <div className="relative h-full">
+        {visitedTabs.map((tab) => (
+          <div key={tab} className={activeTab === tab ? "h-full" : "hidden"}>
+            {renderTab(tab)}
+          </div>
+        ))}
       </div>
     </MainLayout>
   );
