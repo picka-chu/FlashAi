@@ -23,8 +23,18 @@ export const formatMatch = (m: any) => {
   }
 
   const rawFixtureDate = m?.fixture?.date ?? m?.fixtureDate ?? m?.dateISO ?? null;
-  const parsedFixtureDate = rawFixtureDate ? new Date(rawFixtureDate) : new Date();
-  const matchDate = Number.isNaN(parsedFixtureDate.getTime()) ? new Date() : parsedFixtureDate;
+  // Date-only values are calendar dates, not UTC instants. Parsing YYYY-MM-DD
+  // with new Date() can move the fixture to the previous day in some timezones.
+  let parsedFixtureDate: Date;
+  if (typeof rawFixtureDate === 'string' && /^\d{4}-\d{2}-\d{2}$/.test(rawFixtureDate)) {
+    const [year, month, day] = rawFixtureDate.split('-').map(Number);
+    parsedFixtureDate = new Date(year, month - 1, day);
+  } else {
+    parsedFixtureDate = rawFixtureDate ? new Date(rawFixtureDate) : new Date(Number.NaN);
+  }
+  // Never silently turn a malformed fixture date into "today".
+  if (Number.isNaN(parsedFixtureDate.getTime())) return null;
+  const matchDate = parsedFixtureDate;
 
   const leagueName =
     typeof m.league === 'string'
