@@ -1,6 +1,6 @@
 import React, { useMemo, useState, useEffect } from 'react';
 import { motion, AnimatePresence } from 'motion/react';
-import { Search, Trophy, Zap, Radio, Lock } from 'lucide-react';
+import { Search, Trophy, Zap, Radio, Lock, CalendarDays, RefreshCw } from 'lucide-react';
 import { useUserStore } from '../store/useUserStore';
 import { Skeleton } from '../components/ui/Skeleton';
 import { getLiveMatches, getLiveMatchPreview, getUpcomingMatches, recordMatchClick } from '../services/footballService';
@@ -33,7 +33,7 @@ export const Matches: React.FC<MatchesProps> = ({ onTabChange }) => {
       setLoading(true);
       try {
         const upcoming = await getUpcomingMatches(initData || '');
-        setMatches(upcoming.map(formatMatch));
+        setMatches((Array.isArray(upcoming) ? upcoming : []).map(formatMatch).filter(Boolean));
       } catch (error) {
         console.error('Failed to fetch matches:', error);
       } finally {
@@ -53,7 +53,7 @@ export const Matches: React.FC<MatchesProps> = ({ onTabChange }) => {
       setLiveLoading(true);
       try {
         const live = await getLiveMatches(initData || '');
-        setLiveMatches((Array.isArray(live) ? live : []).map(formatMatch));
+        setLiveMatches((Array.isArray(live) ? live : []).map(formatMatch).filter(Boolean));
       } catch (error) {
         console.error('Failed to fetch live matches:', error);
         setLiveMatches([]);
@@ -121,9 +121,12 @@ export const Matches: React.FC<MatchesProps> = ({ onTabChange }) => {
   const activeList = activeMatchType === 'live' ? filteredLiveMatches : filteredUpcomingMatches;
 
   return (
-    <div className="h-full flex flex-col bg-black relative">
-      <div className="flex justify-between items-center px-4 pt-6 pb-2 z-50">
-        <h1 className="text-lg font-black text-white">Matches</h1>
+    <div className="relative flex h-full flex-col overflow-hidden bg-[var(--background)] text-[var(--foreground)]">
+      <div className="z-10 flex items-center justify-between px-5 pb-3 pt-5">
+        <div>
+          <p className="text-[11px] font-medium uppercase tracking-[0.14em] text-[var(--text-muted)]">Football centre</p>
+          <h1 className="mt-1 text-[25px] font-semibold tracking-tight text-[var(--text-strong)]">Matches</h1>
+        </div>
         {user?.phone && (
           <div className={`backdrop-blur-md border px-3 py-1.5 rounded-full flex items-center gap-1.5 shadow-[0_0_15px_rgba(204,255,0,0.1)] ${user.credits <= 0 ? 'bg-red-500/10 border-red-500/20' : 'bg-white/5 border-white/10'}`}>
             <Zap className={`w-3.5 h-3.5 ${user.credits <= 0 ? 'text-red-500' : 'text-[#ccff00]'}`} />
@@ -132,19 +135,19 @@ export const Matches: React.FC<MatchesProps> = ({ onTabChange }) => {
         )}
       </div>
 
-      <div className="flex-none p-4 space-y-4">
-        <div className="grid grid-cols-2 gap-2 p-1 rounded-2xl bg-zinc-900/60 border border-zinc-800">
-          <button onClick={() => setActiveMatchType('prematch')} className={`py-2.5 rounded-xl text-xs font-black uppercase tracking-wider ${activeMatchType === 'prematch' ? 'bg-[#ccff00] text-black' : 'text-zinc-400'}`}>Prematch</button>
-          <button onClick={() => setActiveMatchType('live')} className={`py-2.5 rounded-xl text-xs font-black uppercase tracking-wider flex items-center justify-center gap-1.5 ${activeMatchType === 'live' ? 'bg-red-500 text-white' : 'text-zinc-400'}`}><Radio className="w-3.5 h-3.5" /> Live</button>
+      <div className="flex-none space-y-4 px-5 pb-4 pt-2">
+        <div className="grid grid-cols-2 gap-1 rounded-2xl border border-[var(--border)] bg-[var(--surface-1)] p-1">
+          <button onClick={() => setActiveMatchType('prematch')} className={`rounded-xl py-3 text-[13px] font-semibold transition-colors ${activeMatchType === 'prematch' ? 'bg-[var(--primary)] text-[var(--primary-foreground)] shadow-sm' : 'text-[var(--text-muted)] hover:text-[var(--text-strong)]'}`}>Prematch</button>
+          <button onClick={() => setActiveMatchType('live')} className={`flex items-center justify-center gap-1.5 rounded-xl py-3 text-[13px] font-semibold transition-colors ${activeMatchType === 'live' ? 'bg-[var(--surface-3)] text-[var(--text-strong)] shadow-sm' : 'text-[var(--text-muted)] hover:text-[var(--text-strong)]'}`}><Radio className="w-3.5 h-3.5" /> Live</button>
         </div>
 
         <div className="relative">
-          <Search className="absolute left-4 top-1/2 -translate-y-1/2 w-4 h-4 text-zinc-600" />
-          <input value={searchQuery} onChange={(e) => setSearchQuery(e.target.value)} placeholder="Search teams or leagues..." className="w-full bg-zinc-900/50 border border-zinc-800 rounded-2xl pl-11 pr-4 py-3 text-sm text-white placeholder:text-zinc-600 focus:outline-none focus:border-[#ccff00]/50 transition-all" />
+          <Search className="absolute left-4 top-1/2 -translate-y-1/2 h-4 w-4 text-[var(--text-subtle)]" />
+          <input value={searchQuery} onChange={(e) => setSearchQuery(e.target.value)} placeholder="Search teams or leagues" className="w-full rounded-2xl border border-[var(--border)] bg-[var(--surface-1)] py-3.5 pl-11 pr-4 text-[14px] text-[var(--text-strong)] placeholder:text-[var(--text-subtle)] outline-none transition-colors focus:border-[var(--primary)]/50" />
         </div>
       </div>
 
-      <div className="flex-1 overflow-y-auto no-scrollbar p-4 space-y-4 pb-24">
+      <div className="no-scrollbar flex-1 space-y-4 overflow-y-auto px-5 pb-28">
         {(loading || (activeMatchType === 'live' && liveLoading)) ? (
           <div className="space-y-4">
             {[1, 2, 3].map((i) => (
@@ -157,8 +160,8 @@ export const Matches: React.FC<MatchesProps> = ({ onTabChange }) => {
         ) : (
           <>
             {activeMatchType === 'live' && !isSubscribed ? (
-              <div className="bg-zinc-900/80 border border-zinc-800 rounded-[28px] p-6 text-center space-y-3">
-                <Lock className="w-8 h-8 mx-auto text-[#ccff00]" />
+              <div className="space-y-3 rounded-[24px] border border-[var(--border)] bg-[var(--surface-1)] p-6 text-center">
+                <Lock className="mx-auto h-8 w-8 text-[var(--primary)]" />
                 <h3 className="text-sm font-black text-white uppercase tracking-wider">Live matches are premium only</h3>
                 <p className="text-xs text-zinc-500">Upgrade to Monthly Basic or Monthly Pro to view live match cards and run live AI analysis.</p>
               </div>
@@ -181,9 +184,9 @@ export const Matches: React.FC<MatchesProps> = ({ onTabChange }) => {
                     <Trophy className="w-8 h-8 text-zinc-600" />
                   </div>
                   <div>
-                    <p className="text-white text-sm font-black tracking-wide">No Matches Found</p>
+                    <p className="text-[15px] font-semibold tracking-tight text-[var(--text-strong)]">No matches found</p>
                     <p className="text-zinc-500 text-xs mt-1 max-w-[240px] mx-auto leading-relaxed">
-                      {activeMatchType === 'live' ? 'No live matches are available right now.' : 'No upcoming matches found for the selected criteria.'}
+                      {activeMatchType === 'live' ? 'There are no live fixtures at the moment. Try again shortly.' : 'Try another team or league, or check a different match day.'}
                     </p>
                   </div>
                 </div>
