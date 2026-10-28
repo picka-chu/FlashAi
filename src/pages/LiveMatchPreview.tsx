@@ -140,6 +140,7 @@ export const LiveMatchPreview: React.FC<{ onBack: () => void; onGoAnalyze: () =>
       }
     } finally {
       setAnalyzing(false);
+      setIsAnalyzing(false);
     }
   };
 
