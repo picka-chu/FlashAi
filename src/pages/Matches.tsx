@@ -55,7 +55,13 @@ export const Matches: React.FC<MatchesProps> = ({ onTabChange }) => {
       setLiveLoading(true);
       try {
         const live = await getLiveMatches(initData || '');
-        setLiveMatches((Array.isArray(live) ? live : []).map(formatMatch).filter(Boolean));
+        const formatted = (Array.isArray(live) ? live : []).map(formatMatch).filter(Boolean);
+        setLiveMatches((previous) => formatted.map((match: any) => {
+          const old = previous.find((item: any) => String(item.id) === String(match.id));
+          const oldElapsed = Number(old?.fixture?.status?.elapsed ?? -1);
+          const newElapsed = Number(match?.fixture?.status?.elapsed ?? -1);
+          return { ...match, __minuteAnchorAt: old && oldElapsed === newElapsed ? (old.__minuteAnchorAt || Date.now()) : Date.now() };
+        }));
       } catch (error) {
         console.error('Failed to fetch live matches:', error);
         setLiveMatches([]);
