@@ -1,6 +1,6 @@
 import React, { useMemo, useState, useEffect } from 'react';
 import { motion, AnimatePresence } from 'motion/react';
-import { Search, Trophy, Zap, Radio, Lock, CalendarDays } from 'lucide-react';
+import { Search, X, Trophy, Zap, Radio, Lock, CalendarDays } from 'lucide-react';
 import { useUserStore } from '../store/useUserStore';
 import { Skeleton } from '../components/ui/Skeleton';
 import { getLiveMatches, getLiveMatchPreview, getUpcomingMatches, recordMatchClick } from '../services/footballService';
@@ -17,6 +17,7 @@ interface MatchesProps {
 
 export const Matches: React.FC<MatchesProps> = ({ onTabChange }) => {
   const [searchQuery, setSearchQuery] = useState('');
+  const [searchOpen, setSearchOpen] = useState(false);
   const [matches, setMatches] = useState<any[]>([]);
   const [liveMatches, setLiveMatches] = useState<any[]>([]);
   const [activeMatchType, setActiveMatchType] = useState<MatchType>('prematch');
@@ -144,42 +145,46 @@ export const Matches: React.FC<MatchesProps> = ({ onTabChange }) => {
   const activeList = activeMatchType === 'live' ? filteredLiveMatches : filteredUpcomingMatches;
 
   return (
-    <div className="relative flex h-full flex-col overflow-hidden bg-[var(--background)] text-[var(--foreground)]">
-      <div className="z-10 flex items-center justify-between px-5 pb-3 pt-5">
+    <div className="relative flex h-full min-h-0 flex-col overflow-hidden bg-[var(--background)] text-[var(--foreground)]">
+      <div className="z-10 flex flex-none items-center justify-between px-5 pb-2 pt-4">
         <div>
           <h1 className="text-[25px] font-semibold tracking-tight text-[var(--text-strong)]">Matches</h1>
         </div>
-        {user?.phone && (
-          <div className={`backdrop-blur-md border px-3 py-1.5 rounded-full flex items-center gap-1.5 shadow-[0_0_15px_rgba(204,255,0,0.1)] ${user.credits <= 0 ? 'bg-red-500/10 border-red-500/20' : 'bg-white/5 border-white/10'}`}>
-            <Zap className={`w-3.5 h-3.5 ${user.credits <= 0 ? 'text-red-500' : 'text-[#ccff00]'}`} />
-            <span className={`text-xs font-black ${user.credits <= 0 ? 'text-red-500' : 'text-white'}`}>{user.credits}</span>
-          </div>
-        )}
+        <div className="flex items-center gap-2">
+          <button type="button" aria-label={searchOpen ? 'Close search' : 'Search matches'} onClick={() => { setSearchOpen((open) => !open); if (searchOpen) setSearchQuery(''); }} className={`flex h-10 w-10 items-center justify-center rounded-full border transition-colors ${searchOpen ? 'border-[var(--primary)]/40 bg-[var(--primary)]/10 text-[var(--primary)]' : 'border-[var(--border)] bg-[var(--surface-1)] text-[var(--text-muted)] hover:text-[var(--text-strong)]'}`}>
+            {searchOpen ? <X className="h-[18px] w-[18px]" /> : <Search className="h-[18px] w-[18px]" />}
+          </button>
+          {user?.phone && (
+            <div className={`backdrop-blur-md border px-3 py-1.5 rounded-full flex items-center gap-1.5 ${user.credits <= 0 ? 'bg-red-500/10 border-red-500/20' : 'bg-white/5 border-white/10'}`}>
+              <Zap className={`w-3.5 h-3.5 ${user.credits <= 0 ? 'text-red-500' : 'text-[#ccff00]'}`} />
+              <span className={`text-xs font-black ${user.credits <= 0 ? 'text-red-500' : 'text-white'}`}>{user.credits}</span>
+            </div>
+          )}
+        </div>
       </div>
 
-      <div className="flex-none space-y-4 px-5 pb-4 pt-2">
+      <div className="flex-none space-y-3 px-5 pb-3 pt-1">
         <div className="grid grid-cols-2 gap-1 rounded-2xl border border-[var(--border)] bg-[var(--surface-1)] p-1">
           <button onClick={() => setActiveMatchType('prematch')} className={`rounded-xl py-3 text-[13px] font-semibold transition-colors ${activeMatchType === 'prematch' ? 'bg-[var(--primary)] text-[var(--primary-foreground)] shadow-sm' : 'text-[var(--text-muted)] hover:text-[var(--text-strong)]'}`}>Prematch</button>
           <button onClick={() => setActiveMatchType('live')} className={`flex items-center justify-center gap-1.5 rounded-xl py-3 text-[13px] font-semibold transition-colors ${activeMatchType === 'live' ? 'bg-[var(--surface-3)] text-[var(--text-strong)] shadow-sm' : 'text-[var(--text-muted)] hover:text-[var(--text-strong)]'}`}><Radio className="w-3.5 h-3.5" /> Live</button>
         </div>
 
         {activeMatchType === 'prematch' && (
-          <section className="relative overflow-hidden rounded-[24px] border border-[var(--border)] bg-gradient-to-br from-[var(--surface-1)] via-[var(--surface-1)] to-[var(--surface-2)] p-3.5">
-            <div className="mb-3 flex items-center justify-between gap-3 px-1">
+          <section className="relative overflow-hidden rounded-[20px] border border-[var(--border)] bg-gradient-to-br from-[var(--surface-1)] via-[var(--surface-1)] to-[var(--surface-2)] p-2.5">
+            <div className="mb-2 flex items-center justify-between gap-3 px-1">
               <div className="flex items-center gap-2.5">
-                <span className="flex h-9 w-9 items-center justify-center rounded-xl bg-[var(--primary)]/12 text-[var(--primary)]">
-                  <CalendarDays className="h-[18px] w-[18px]" />
+                <span className="flex h-7 w-7 items-center justify-center rounded-lg bg-[var(--primary)]/12 text-[var(--primary)]">
+                  <CalendarDays className="h-4 w-4" />
                 </span>
                 <div>
-                  <p className="text-[14px] font-semibold text-[var(--text-strong)]">Match schedule</p>
-                  <p className="mt-0.5 text-[11px] text-[var(--text-muted)]">Pick a day to explore fixtures</p>
+                  <p className="text-[13px] font-semibold text-[var(--text-strong)]">Match schedule</p>
                 </div>
               </div>
-              <span className="rounded-full border border-[var(--border)] bg-[var(--surface-2)] px-2.5 py-1 text-[11px] font-semibold tabular text-[var(--text-muted)]">
+              <span className="rounded-full border border-[var(--border)] bg-[var(--surface-2)] px-2 py-1 text-[10px] font-semibold tabular text-[var(--text-muted)]">
                 {dateOptions.find((day) => day.key === selectedDate)?.count || 0} games
               </span>
             </div>
-            <div className="no-scrollbar -mx-1 flex gap-2 overflow-x-auto px-1 pb-1">
+            <div className="no-scrollbar -mx-1 flex gap-1.5 overflow-x-auto px-1 pb-0.5">
               {dateOptions.map((day) => {
                 const active = day.key === selectedDate;
                 return (
@@ -188,13 +193,13 @@ export const Matches: React.FC<MatchesProps> = ({ onTabChange }) => {
                     type="button"
                     onClick={() => { hapticFeedback('light'); setSelectedDate(day.key); }}
                     aria-pressed={active}
-                    className={`relative flex min-w-[68px] shrink-0 flex-col items-center gap-1.5 overflow-hidden rounded-[18px] border px-3 py-3 transition-all duration-200 active:scale-95 ${
+                    className={`relative flex min-w-[58px] shrink-0 flex-col items-center gap-1 overflow-hidden rounded-[14px] border px-2.5 py-2 transition-all duration-200 active:scale-95 ${
                       active ? 'border-[var(--primary)] bg-[var(--primary)] text-[var(--primary-foreground)] shadow-[0_8px_22px_rgba(204,255,0,0.16)]' : 'border-[var(--border)] bg-[var(--background)]/70 text-[var(--text-muted)] hover:border-[var(--primary)]/40 hover:bg-[var(--surface-2)]'
                     }`}
                   >
                     {active && <span className="absolute inset-x-3 top-0 h-[3px] rounded-b-full bg-current opacity-70" />}
                     <span className="text-[10px] font-bold uppercase tracking-wide">{day.dayName}</span>
-                    <span className="tabular text-[22px] font-bold leading-none">{day.dayNumber}</span>
+                    <span className="tabular text-[19px] font-bold leading-none">{day.dayNumber}</span>
                     <span className="text-[10px] font-medium opacity-75">{day.month}</span>
                     <span className={`h-1 w-1 rounded-full ${day.count ? (active ? 'bg-current' : 'bg-[var(--primary)]') : 'bg-transparent'}`} />
                   </button>
@@ -204,13 +209,15 @@ export const Matches: React.FC<MatchesProps> = ({ onTabChange }) => {
           </section>
         )}
 
-        <div className="relative">
-          <Search className="absolute left-4 top-1/2 -translate-y-1/2 h-4 w-4 text-[var(--text-subtle)]" />
-          <input value={searchQuery} onChange={(e) => setSearchQuery(e.target.value)} placeholder="Search teams or leagues" className="w-full rounded-2xl border border-[var(--border)] bg-[var(--surface-1)] py-3.5 pl-11 pr-4 text-[14px] text-[var(--text-strong)] placeholder:text-[var(--text-subtle)] outline-none transition-colors focus:border-[var(--primary)]/50" />
-        </div>
+        {searchOpen && (
+          <div className="relative">
+            <Search className="absolute left-3.5 top-1/2 h-4 w-4 -translate-y-1/2 text-[var(--text-subtle)]" />
+            <input autoFocus value={searchQuery} onChange={(e) => setSearchQuery(e.target.value)} placeholder="Search teams or leagues" aria-label="Search teams or leagues" className="w-full rounded-xl border border-[var(--border)] bg-[var(--surface-1)] py-3 pl-10 pr-4 text-[14px] text-[var(--text-strong)] placeholder:text-[var(--text-subtle)] outline-none transition-colors focus:border-[var(--primary)]/50" />
+          </div>
+        )}
       </div>
 
-      <div className="no-scrollbar flex-1 space-y-4 overflow-y-auto px-5 pb-28">
+      <div className="no-scrollbar min-h-0 flex-1 space-y-3 overflow-y-auto overscroll-y-contain touch-pan-y px-5 pb-28 pt-1">
         {(loading || (activeMatchType === 'live' && liveLoading)) ? (
           <div className="space-y-4">
             {[1, 2, 3].map((i) => (
