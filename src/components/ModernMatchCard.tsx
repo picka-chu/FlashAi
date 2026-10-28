@@ -100,11 +100,11 @@ export const ModernMatchCard: React.FC<ModernMatchCardProps> = ({ match, variant
           <div className="flex flex-col items-center gap-2.5 min-w-0">
             <div className="relative">
               <div className="absolute inset-0 bg-white/5 blur-xl rounded-full opacity-0 group-hover:opacity-100 transition-opacity" />
-              <div className="w-14 h-14 rounded-2xl bg-zinc-800/40 border border-zinc-700/30 p-2 flex items-center justify-center relative z-10 backdrop-blur-md shadow-inner overflow-hidden">
+              <div className="w-11 h-11 rounded-xl bg-zinc-800/50 border border-zinc-700/30 p-1.5 flex items-center justify-center relative z-10 backdrop-blur-md shadow-inner overflow-hidden">
                 <TeamLogo name={match.away} logo={match.awayLogo} textClassName="text-xs" />
               </div>
             </div>
-            <span className="text-[12px] font-bold text-zinc-100 text-center line-clamp-1 w-full tracking-tight">
+            <span className="text-[11px] font-semibold text-zinc-100 text-center line-clamp-2 min-h-[28px] w-full tracking-tight leading-tight">
               {match.away}
             </span>
           </div>
