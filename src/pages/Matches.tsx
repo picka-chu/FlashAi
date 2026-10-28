@@ -18,6 +18,7 @@ interface MatchesProps {
 export const Matches: React.FC<MatchesProps> = ({ onTabChange }) => {
   const [searchQuery, setSearchQuery] = useState('');
   const [searchOpen, setSearchOpen] = useState(false);
+  const [clockNow, setClockNow] = useState(Date.now());
   const [matches, setMatches] = useState<any[]>([]);
   const [liveMatches, setLiveMatches] = useState<any[]>([]);
   const [activeMatchType, setActiveMatchType] = useState<MatchType>('prematch');
@@ -71,7 +72,15 @@ export const Matches: React.FC<MatchesProps> = ({ onTabChange }) => {
     };
 
     fetchLive();
+    if (!isSubscribed) return;
+    const refreshId = window.setInterval(fetchLive, 15_000);
+    return () => window.clearInterval(refreshId);
   }, [isSubscribed, initData]);
+
+  useEffect(() => {
+    const clockId = window.setInterval(() => setClockNow(Date.now()), 1_000);
+    return () => window.clearInterval(clockId);
+  }, []);
 
   const todayKey = localDateKey(new Date());
   const dateOptions = useMemo(() => Array.from({ length: 8 }, (_, offset) => {
@@ -94,20 +103,32 @@ export const Matches: React.FC<MatchesProps> = ({ onTabChange }) => {
   }, [selectedDate, todayKey, dateOptions]);
 
   const normalizedQuery = searchQuery.trim().toLowerCase();
+  const isFinishedMatch = (match: any) => {
+    const status = String(match?.fixture?.status?.short || match?.status || '').toUpperCase();
+    return ['FT', 'AET', 'PEN', 'CANC', 'CANCELLED', 'ABD', 'AWD', 'WO', 'FINISHED', 'FULL TIME'].includes(status) || /finished|full.?time|cancelled|abandoned/i.test(status);
+  };
+  const withRunningMinute = (match: any) => {
+    const elapsed = Number(match?.fixture?.status?.elapsed);
+    const status = String(match?.fixture?.status?.short || match?.status || '').toUpperCase();
+    if (!Number.isFinite(elapsed) || elapsed < 1 || isFinishedMatch(match) || ['HT', 'BT', 'P', 'SUSP', 'INT'].includes(status)) return match;
+    const anchor = Number(match?.__minuteAnchorAt || 0);
+    const extraMinutes = anchor > 0 ? Math.floor(Math.max(0, clockNow - anchor) / 60_000) : 0;
+    return { ...match, minute: `${elapsed + extraMinutes}'` };
+  };
 
   const filteredUpcomingMatches = useMemo(() => matches.filter((m) =>
-    m.dateKey === selectedDate && (
+    !isFinishedMatch(m) && m.dateKey === selectedDate && (
       m.home.toLowerCase().includes(normalizedQuery) ||
       m.away.toLowerCase().includes(normalizedQuery) ||
       m.league.toLowerCase().includes(normalizedQuery)
     )
-  ), [matches, normalizedQuery, selectedDate]);
+  ).map(withRunningMinute), [matches, normalizedQuery, selectedDate, clockNow]);
 
   const filteredLiveMatches = useMemo(() => liveMatches.filter((m) =>
-    m.home.toLowerCase().includes(normalizedQuery) ||
+    !isFinishedMatch(m) && (m.home.toLowerCase().includes(normalizedQuery) ||
     m.away.toLowerCase().includes(normalizedQuery) ||
-    m.league.toLowerCase().includes(normalizedQuery)
-  ), [liveMatches, normalizedQuery]);
+    m.league.toLowerCase().includes(normalizedQuery))
+  ).map(withRunningMinute), [liveMatches, normalizedQuery, clockNow]);
 
   const handleAnalyzePrematch = (match: any) => {
     if (!user?.phone) {
@@ -149,6 +170,30 @@ export const Matches: React.FC<MatchesProps> = ({ onTabChange }) => {
   };
 
   const activeList = activeMatchType === 'live' ? filteredLiveMatches : filteredUpcomingMatches;
+  const searchResults = [...filteredLiveMatches, ...matches.filter((match) =>
+    !isFinishedMatch(match) && (match.home.toLowerCase().includes(normalizedQuery) || match.away.toLowerCase().includes(normalizedQuery) || match.league.toLowerCase().includes(normalizedQuery))
+  ).map(withRunningMinute)].filter((match, index, all) => all.findIndex((item) => String(item.id) === String(match.id)) === index);
+
+  if (searchOpen) {
+    return (
+      <div className="relative flex h-full min-h-0 flex-col overflow-hidden bg-[var(--background)] text-[var(--foreground)]">
+        <div className="flex flex-none items-center gap-3 border-b border-[var(--border)] px-4 pb-3 pt-4">
+          <button type="button" onClick={() => { setSearchOpen(false); setSearchQuery(''); }} aria-label="Back to matches" className="flex h-10 w-10 shrink-0 items-center justify-center rounded-full border border-[var(--border)] bg-[var(--surface-1)] text-[var(--text-strong)]"><X className="h-5 w-5" /></button>
+          <div className="relative min-w-0 flex-1">
+            <Search className="absolute left-3.5 top-1/2 h-4 w-4 -translate-y-1/2 text-[var(--text-subtle)]" />
+            <input autoFocus value={searchQuery} onChange={(e) => setSearchQuery(e.target.value)} placeholder="Search teams, leagues, fixtures" aria-label="Search teams, leagues, fixtures" className="w-full rounded-2xl border border-[var(--border)] bg-[var(--surface-1)] py-3 pl-10 pr-4 text-sm text-[var(--text-strong)] outline-none placeholder:text-[var(--text-subtle)] focus:border-[var(--primary)]/50" />
+          </div>
+          {searchQuery && <button type="button" onClick={() => setSearchQuery('')} aria-label="Clear search" className="flex h-9 w-9 shrink-0 items-center justify-center rounded-full text-[var(--text-muted)]"><X className="h-4 w-4" /></button>}
+        </div>
+        <div className="min-h-0 flex-1 overflow-y-auto overscroll-y-contain touch-pan-y px-4 pb-24 pt-4">
+          {!normalizedQuery ? <div className="flex h-full min-h-[240px] flex-col items-center justify-center text-center"><div className="mb-4 flex h-16 w-16 items-center justify-center rounded-2xl border border-[var(--border)] bg-[var(--surface-1)]"><Search className="h-7 w-7 text-[var(--text-muted)]" /></div><p className="text-base font-semibold text-[var(--text-strong)]">Find a match</p><p className="mt-1 max-w-[240px] text-sm text-[var(--text-muted)]">Search by team name or competition. Finished matches are hidden.</p></div>
+          : searchResults.length ? <div className="space-y-3"><div className="px-1 text-xs font-semibold uppercase tracking-wider text-[var(--text-muted)]">{searchResults.length} matching {searchResults.length === 1 ? 'fixture' : 'fixtures'}</div>{searchResults.map((match: any, index) => { const isLiveResult = liveMatches.some((live) => String(live.id) === String(match.id)); return <motion.div key={match.id || index} initial={{ opacity: 0, y: 8 }} animate={{ opacity: 1, y: 0 }}><ModernMatchCard match={match} variant={isLiveResult ? 'live' : 'prematch'} onClick={() => { setSearchOpen(false); if (isLiveResult) handleOpenLivePreview(match); else handleAnalyzePrematch(match); }} /></motion.div>; })}</div>
+          : <div className="py-20 text-center"><Trophy className="mx-auto mb-3 h-8 w-8 text-[var(--text-muted)]" /><p className="font-semibold text-[var(--text-strong)]">No matching fixtures</p><p className="mt-1 text-sm text-[var(--text-muted)]">Try another team or league name.</p></div>}
+        </div>
+        <SignUpSheet isOpen={isSignUpOpen} onClose={() => setIsSignUpOpen(false)} />
+      </div>
+    );
+  }
 
   return (
     <div className="relative flex h-full min-h-0 flex-col overflow-hidden bg-[var(--background)] text-[var(--foreground)]">
@@ -157,7 +202,7 @@ export const Matches: React.FC<MatchesProps> = ({ onTabChange }) => {
           <h1 className="text-[25px] font-semibold tracking-tight text-[var(--text-strong)]">Matches</h1>
         </div>
         <div className="flex items-center gap-2">
-          <button type="button" aria-label={searchOpen ? 'Close search' : 'Search matches'} onClick={() => { setSearchOpen((open) => !open); if (searchOpen) setSearchQuery(''); }} className={`flex h-10 w-10 items-center justify-center rounded-full border transition-colors ${searchOpen ? 'border-[var(--primary)]/40 bg-[var(--primary)]/10 text-[var(--primary)]' : 'border-[var(--border)] bg-[var(--surface-1)] text-[var(--text-muted)] hover:text-[var(--text-strong)]'}`}>
+          <button type="button" aria-label={searchOpen ? 'Close search' : 'Search matches'} onClick={() => { setSearchOpen(true); setSearchQuery(''); }} className={`flex h-10 w-10 items-center justify-center rounded-full border transition-colors ${searchOpen ? 'border-[var(--primary)]/40 bg-[var(--primary)]/10 text-[var(--primary)]' : 'border-[var(--border)] bg-[var(--surface-1)] text-[var(--text-muted)] hover:text-[var(--text-strong)]'}`}>
             {searchOpen ? <X className="h-[18px] w-[18px]" /> : <Search className="h-[18px] w-[18px]" />}
           </button>
           {user?.phone && (
