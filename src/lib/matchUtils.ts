@@ -21,11 +21,11 @@ export const dateFromKey = (key: string) => {
 export const formatMatch = (m: any) => {
   if (!m) return null;
   const elapsed = Number(m?.fixture?.status?.elapsed || 0);
-  let displayMinute = m?.fixture?.status?.short || '--';
-  if (elapsed > 0) {
-    const minutes = Math.floor(elapsed / 60);
-    const seconds = Math.floor(elapsed % 60);
-    displayMinute = `${minutes}:${String(seconds).padStart(2, '0')}`;
+  const statusShort = String(m?.fixture?.status?.short || '').toUpperCase();
+  let displayMinute = m?.fixture?.status?.short || m?.minute || '--';
+  if (elapsed > 0 && !['FT', 'AET', 'PEN', 'HT', 'BT', 'P', 'SUSP', 'INT'].includes(statusShort)) {
+    const extra = Number(m?.fixture?.status?.extra || 0);
+    displayMinute = extra > 0 ? `${elapsed}+${extra}'` : `${elapsed}'`;
   }
 
   const rawFixtureDate = m?.fixture?.date ?? m?.fixtureDate ?? m?.dateISO ?? null;
@@ -82,6 +82,6 @@ export const formatMatch = (m: any) => {
         month: 'short',
       }).format(matchDate);
     })(),
-    status: m?.fixture?.status?.state === 'pre' ? 'Upcoming' : (m?.status || 'Live'),
+    status: m?.fixture?.status?.state === 'pre' ? 'Upcoming' : (m?.fixture?.status?.long || m?.status || 'Live'),
   };
 };
