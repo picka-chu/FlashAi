@@ -20,12 +20,19 @@ export const LiveMatchPreview: React.FC<{ onBack: () => void; onGoAnalyze: () =>
   const [analyzing, setAnalyzing] = useState(false);
   const [analyzeError, setAnalyzeError] = useState<string | null>(null);
   const [attemptCount, setAttemptCount] = useState(0);
+  const [clockNow, setClockNow] = useState(Date.now());
+  const [minuteSync, setMinuteSync] = useState({ elapsed: 0, at: Date.now(), status: '' });
 
   const fixtureId =
     livePreviewMatch?.id ??
     livePreviewMatch?.fixture_id ??
     livePreviewMatch?.fixture?.id ??
     null;
+
+  useEffect(() => {
+    const ticker = window.setInterval(() => setClockNow(Date.now()), 1_000);
+    return () => window.clearInterval(ticker);
+  }, []);
 
   useEffect(() => {
     if (!fixtureId) return;
@@ -38,7 +45,10 @@ export const LiveMatchPreview: React.FC<{ onBack: () => void; onGoAnalyze: () =>
         if (mounted && data) {
           // Format the raw backend data before merging into state
           const formatted = formatMatch(data);
-          setLivePreviewMatch({ ...livePreviewMatch, ...formatted });
+          const status = String(data?.fixture?.status?.short || data?.status || '').toUpperCase();
+          const elapsed = Number(data?.fixture?.status?.elapsed ?? 0);
+          setLivePreviewMatch({ ...(useUserStore.getState().livePreviewMatch || {}), ...formatted });
+          setMinuteSync({ elapsed: Number.isFinite(elapsed) ? elapsed : 0, at: Date.now(), status });
         }
       } catch {
         // keep last snapshot — don't show error for background refresh failures
@@ -48,12 +58,18 @@ export const LiveMatchPreview: React.FC<{ onBack: () => void; onGoAnalyze: () =>
     };
 
     loadData();
-    const interval = setInterval(loadData, 20_000);
+    const interval = setInterval(loadData, 15_000);
     return () => {
       mounted = false;
       clearInterval(interval);
     };
   }, [fixtureId]);
+
+  const minuteStatus = String(minuteSync.status || livePreviewMatch?.fixture?.status?.short || '').toUpperCase();
+  const clockRuns = minuteSync.elapsed > 0 && !['HT', 'BT', 'FT', 'AET', 'PEN', 'P', 'SUSP', 'INT', 'CANC', 'ABD'].includes(minuteStatus);
+  const liveMinute = clockRuns
+    ? `${minuteSync.elapsed + Math.floor(Math.max(0, clockNow - minuteSync.at) / 60_000)}'`
+    : (livePreviewMatch?.fixture?.status?.long || livePreviewMatch?.minute || minuteStatus || 'LIVE');
 
   const rows = useMemo(() => {
     const stats = livePreviewMatch?.stats || {};
@@ -151,7 +167,7 @@ export const LiveMatchPreview: React.FC<{ onBack: () => void; onGoAnalyze: () =>
             </div>
             <div className="text-center">
               <div className="text-4xl font-black text-[#8fff00]">{(livePreviewMatch.score || '0-0').replace('-', ':')}</div>
-              <div className="text-xs text-red-400 font-black uppercase mt-1">{livePreviewMatch.minute || 'LIVE'}</div>
+              <div className="text-xs text-red-400 font-black uppercase mt-1">{liveMinute}</div>
             </div>
             <div className="text-center">
               <div className="w-16 h-16 mx-auto rounded-2xl bg-zinc-800 border border-zinc-700 p-2 overflow-hidden">
@@ -204,7 +220,7 @@ export const LiveMatchPreview: React.FC<{ onBack: () => void; onGoAnalyze: () =>
       </button>
 
       <div className="fixed bottom-10 left-1/2 -translate-x-1/2 text-[10px] text-zinc-500 inline-flex items-center gap-1 bg-zinc-900/80 border border-zinc-800 rounded-full px-3 py-1">
-        <Sparkles className="w-3 h-3" /> Auto-refresh every 20s
+        <Sparkles className="w-3 h-3" /> Live data refreshes every 15s
       </div>
     </div>
   );
