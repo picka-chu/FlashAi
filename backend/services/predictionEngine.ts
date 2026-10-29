@@ -602,6 +602,12 @@ export function enrichMatchDataFromBSD(matchData: MatchData, bsdEvent: any): Mat
       xG: { home: Number(bsdEvent.xG.home) || 0, away: Number(bsdEvent.xG.away) || 0 },
     };
   }
+  if (bsdEvent.bsdPredictions) {
+    enriched.deepContext = {
+      ...enriched.deepContext,
+      bsdPredictions: bsdEvent.bsdPredictions,
+    };
+  }
 
   if (bsdEvent.odds) {
     const o = bsdEvent.odds;
@@ -677,7 +683,7 @@ export async function runPrediction(
   const valueBets = [
     ...calculateValue(adjustedProbs as any, enrichedData.odds ?? {}),
     ...calculateBsdSupplementalValueBets(
-      enrichedData.deepContext?.bsd?.bsdPredictions,
+      enrichedData.deepContext?.bsdPredictions ?? enrichedData.deepContext?.bsd?.bsdPredictions,
       enrichedData.odds ?? {}
     ),
   ].sort((a, b) => (b.ev ?? b.modelProb * b.odds - 1) - (a.ev ?? a.modelProb * a.odds - 1));
