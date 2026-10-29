@@ -186,62 +186,75 @@ export function calculatePoissonProbabilities(
   csHome: number;
   csAway: number;
 } {
-  const MAX_GOALS = 10;
+  // Defensive bounds prevent malformed upstream data from producing NaN,
+  // negative probabilities, or factorial overflow.
+  const MAX_GOALS = 12;
+  const safeLambda = (value: number) =>
+    Number.isFinite(value) ? Math.min(5.5, Math.max(0.01, value)) : 1.25;
+  const lh = safeLambda(lambdaHome);
+  const la = safeLambda(lambdaAway);
 
-  const factCache: number[] = [1];
-  for (let i = 1; i <= MAX_GOALS; i++) factCache[i] = factCache[i - 1] * i;
+  const factorial = [1];
+  for (let i = 1; i <= MAX_GOALS; i++) factorial[i] = factorial[i - 1] * i;
+  const poisson = (k: number, lambda: number) =>
+    (Math.pow(lambda, k) * Math.exp(-lambda)) / factorial[k];
 
-  const poisson = (k: number, λ: number) =>
-    (Math.pow(λ, k) * Math.exp(-λ)) / factCache[k];
+  // Build and normalise the entire score matrix, not only 1X2. This ensures
+  // the Dixon–Coles low-score correction is reflected consistently in every
+  // market derived from the same distribution.
+  const matrix: { h: number; a: number; p: number }[] = [];
+  let matrixTotal = 0;
+  for (let h = 0; h <= MAX_GOALS; h++) {
+    for (let a = 0; a <= MAX_GOALS; a++) {
+      const raw = poisson(h, lh) * poisson(a, la) *
+        dixonColesCorrection(h, a, lh, la);
+      const p = Number.isFinite(raw) ? Math.max(0, raw) : 0;
+      matrix.push({ h, a, p });
+      matrixTotal += p;
+    }
+  }
+  const denominator = matrixTotal > 0 ? matrixTotal : 1;
 
   let homeWin = 0, draw = 0, awayWin = 0;
   let bttsYes = 0, over15 = 0, over25 = 0, over35 = 0, over45 = 0;
   let csHome = 0, csAway = 0;
+  for (const { h, a, p: rawP } of matrix) {
+    const p = rawP / denominator;
+    if (h > a) homeWin += p;
+    else if (h < a) awayWin += p;
+    else draw += p;
 
-  for (let h = 0; h <= MAX_GOALS; h++) {
-    for (let a = 0; a <= MAX_GOALS; a++) {
-      const p =
-        poisson(h, lambdaHome) *
-        poisson(a, lambdaAway) *
-        dixonColesCorrection(h, a, lambdaHome, lambdaAway);
-
-      if (h > a)      homeWin += p;
-      else if (h < a) awayWin += p;
-      else            draw    += p;
-
-      if (h > 0 && a > 0) bttsYes += p;
-      if (h + a > 1.5)    over15  += p;
-      if (h + a > 2.5)    over25  += p;
-      if (h + a > 3.5)    over35  += p;
-      if (h + a > 4.5)    over45  += p;
-      if (a === 0)         csHome  += p;
-      if (h === 0)         csAway  += p;
-    }
+    if (h > 0 && a > 0) bttsYes += p;
+    if (h + a >= 2) over15 += p;
+    if (h + a >= 3) over25 += p;
+    if (h + a >= 4) over35 += p;
+    if (h + a >= 5) over45 += p;
+    if (a === 0) csHome += p;
+    if (h === 0) csAway += p;
   }
 
-  // Normalise (DC correction perturbs sum slightly)
-  const total = homeWin + draw + awayWin || 1;
-  homeWin /= total;
-  draw    /= total;
-  awayWin /= total;
-
-  const dnb1 = homeWin / (homeWin + awayWin || 1);
-  const dnb2 = awayWin / (homeWin + awayWin || 1);
+  const outcomeTotal = homeWin + draw + awayWin || 1;
+  homeWin /= outcomeTotal;
+  draw /= outcomeTotal;
+  awayWin /= outcomeTotal;
+  const nonDraw = homeWin + awayWin || 1;
 
   return {
     homeWin, draw, awayWin,
     dc1X: homeWin + draw,
     dcX2: awayWin + draw,
     dc12: homeWin + awayWin,
-    over15,  under15:  1 - over15,
-    over25,  under25:  1 - over25,
-    over35,  under35:  1 - over35,
-    bttsYes, bttsNo:   1 - bttsYes,
-    dnb1,    dnb2,
-    over45,  under45:  1 - over45,
-    csHome,  csAway,
+    over15, under15: 1 - over15,
+    over25, under25: 1 - over25,
+    over35, under35: 1 - over35,
+    bttsYes, bttsNo: 1 - bttsYes,
+    dnb1: homeWin / nonDraw,
+    dnb2: awayWin / nonDraw,
+    over45, under45: 1 - over45,
+    csHome, csAway,
   };
 }
+
 
 // ─────────────────────────────────────────────────────────────────────────────
 // PART 4 — ELITE CONTEXT ADJUSTMENT
@@ -258,83 +271,58 @@ export function adjustProbabilities(
     away_key_absentee?: string;
   }
 ): Probabilities {
-  let homeAdj = 1.0;
-  let awayAdj = 1.0;
+  // Context is deliberately a restrained adjustment layer. Subjective factors
+  // are kept small; unsupported narrative signals must not overwhelm the
+  // statistical prior. Goal-market probabilities are left unchanged because
+  // scaling them independently would break their relationship to the score model.
+  const bounded = (value: number, min: number, max: number) =>
+    Math.min(max, Math.max(min, Number.isFinite(value) ? value : 1));
+  const motivation: Record<string, number> = { HIGH: 1.04, MEDIUM: 1, LOW: 0.97 };
+  let homeAdj = 1;
+  let awayAdj = 1;
 
-  // ── Injury penalty (-4% per confirmed absentee, capped at -30%) ───────────
-  if ((context.home_missing ?? 0) >= 1)
-    homeAdj *= Math.max(0.70, 1 - (context.home_missing ?? 0) * 0.04);
-  if ((context.away_missing ?? 0) >= 1)
-    awayAdj *= Math.max(0.70, 1 - (context.away_missing ?? 0) * 0.04);
+  const homeMissing = bounded(context.home_missing ?? 0, 0, 11);
+  const awayMissing = bounded(context.away_missing ?? 0, 0, 11);
+  homeAdj *= Math.max(0.82, 1 - homeMissing * 0.018);
+  awayAdj *= Math.max(0.82, 1 - awayMissing * 0.018);
 
-  // ── KEY absentee: extra -6% if the missing player is named (i.e., confirmed important) ─
-  if (context.home_key_absentee && context.home_key_absentee.trim().length > 0)
-    homeAdj *= 0.94;
-  if (context.away_key_absentee && context.away_key_absentee.trim().length > 0)
-    awayAdj *= 0.94;
+  // A named absentee is only a small additional modifier; do not double-count
+  // an entire player penalty as though every named player has equal value.
+  if (context.home_key_absentee?.trim()) homeAdj *= 0.97;
+  if (context.away_key_absentee?.trim()) awayAdj *= 0.97;
+  homeAdj *= motivation[context.home_motivation] ?? 1;
+  awayAdj *= motivation[context.away_motivation] ?? 1;
+  if (context.home_fatigue) homeAdj *= 0.97;
+  if (context.away_fatigue) awayAdj *= 0.97;
 
-  // ── Motivation ──────────────────────────────────────────────────────────────
-  const motivMap: Record<string, number> = { HIGH: 1.12, MEDIUM: 1.0, LOW: 0.90 };
-  homeAdj *= motivMap[context.home_motivation] ?? 1.0;
-  awayAdj *= motivMap[context.away_motivation] ?? 1.0;
-
-  // ── Fatigue ─────────────────────────────────────────────────────────────────
-  if (context.home_fatigue) homeAdj *= 0.94;
-  if (context.away_fatigue) awayAdj *= 0.94;
-
-  // ── Home crowd effect when highly motivated ──────────────────────────────
-  if (context.home_motivation === "HIGH") homeAdj *= 1.04;
-
-  // ── Derby bonus (both teams lift — suppress draw slightly) ───────────────
-  if (context.is_derby) {
-    homeAdj *= 1.03;
-    awayAdj *= 1.03;
+  // League position and derby status are not reliable enough on their own to
+  // assert a directional advantage, so they are not given arbitrary boosts.
+  let homeWin = Math.max(0, probs.homeWin * homeAdj);
+  let draw = Math.max(0, probs.draw);
+  let awayWin = Math.max(0, probs.awayWin * awayAdj);
+  const total = homeWin + draw + awayWin;
+  if (!(total > 0) || !Number.isFinite(total)) {
+    homeWin = probs.homeWin;
+    draw = probs.draw;
+    awayWin = probs.awayWin;
+  } else {
+    homeWin /= total;
+    draw /= total;
+    awayWin /= total;
   }
-
-  // ── League position: relegation-threatened team boost (desperation effect) ─
-  const homeLPos = context.home_league_position ?? 0;
-  const awayLPos = context.away_league_position ?? 0;
-  if (homeLPos >= 17) homeAdj *= 1.06; // bottom 4 = desperation
-  if (awayLPos >= 17) awayAdj *= 1.06;
-
-  // ── 1X2 normalisation ────────────────────────────────────────────────────
-  let homeWin = probs.homeWin * homeAdj;
-  let awayWin = probs.awayWin * awayAdj;
-  let draw    = probs.draw;
-
-  // Draw less likely when one side has a strong edge
-  const pressureDiff = Math.abs(homeAdj - awayAdj);
-  draw *= Math.max(0.80, 1 - pressureDiff * 0.5);
-
-  const total = homeWin + draw + awayWin || 1;
-  homeWin /= total;
-  draw    /= total;
-  awayWin /= total;
-
-  // ── Goals markets — fewer goals when there are significant injuries ────────
-  const injuryPenalty = Math.max(
-    0,
-    ((context.home_missing ?? 0) + (context.away_missing ?? 0)) * 0.025
-  );
-  const goalsMod = Math.max(0.82, 1 - injuryPenalty);
+  const nonDraw = homeWin + awayWin || 1;
 
   return {
+    ...probs,
     homeWin, draw, awayWin,
     dc1X: homeWin + draw,
     dcX2: awayWin + draw,
     dc12: homeWin + awayWin,
-    over15:  Math.min(probs.over15  * goalsMod, 0.99),
-    under15: 1 - Math.min(probs.over15  * goalsMod, 0.99),
-    over25:  Math.min(probs.over25  * goalsMod, 0.97),
-    under25: 1 - Math.min(probs.over25  * goalsMod, 0.97),
-    over35:  Math.min(probs.over35  * goalsMod, 0.93),
-    under35: 1 - Math.min(probs.over35  * goalsMod, 0.93),
-    bttsYes: Math.min(probs.bttsYes * goalsMod, 0.94),
-    bttsNo:  1 - Math.min(probs.bttsYes * goalsMod, 0.94),
-    dnb1:    homeWin / (homeWin + awayWin || 1),
-    dnb2:    awayWin / (homeWin + awayWin || 1),
+    dnb1: homeWin / nonDraw,
+    dnb2: awayWin / nonDraw,
   };
 }
+
 
 // ─────────────────────────────────────────────────────────────────────────────
 // PART 5 — ODDS & VALUE ENGINE (Kelly Criterion aware)
@@ -349,46 +337,60 @@ export function calculateValue(
   },
   odds: MatchData["odds"]
 ): (ValueBet & { ev: number; kellyFraction: number })[] {
-  const MARKETS: { name: string; prob: number; oddsKeys: string[] }[] = [
-    { name: "Home Win",       prob: probs.homeWin, oddsKeys: ["home", "1"]        },
-    { name: "Draw",           prob: probs.draw,    oddsKeys: ["draw", "X"]        },
-    { name: "Away Win",       prob: probs.awayWin, oddsKeys: ["away", "2"]        },
-    { name: "1X",             prob: probs.dc1X,    oddsKeys: ["dc1X", "1X"]       },
-    { name: "X2",             prob: probs.dcX2,    oddsKeys: ["dcX2", "X2"]       },
-    { name: "12",             prob: probs.dc12,    oddsKeys: ["dc12", "12"]       },
-    { name: "Over 1.5 Goals", prob: probs.over15,  oddsKeys: ["over15","Over 1.5"]},
-    { name: "Under 1.5",      prob: probs.under15, oddsKeys: ["under15","Under 1.5"]},
-    { name: "Over 2.5 Goals", prob: probs.over25,  oddsKeys: ["over25","Over 2.5"]},
-    { name: "Under 2.5",      prob: probs.under25, oddsKeys: ["under25","Under 2.5"]},
-    { name: "Over 3.5 Goals", prob: probs.over35,  oddsKeys: ["over35","Over 3.5"]},
-    { name: "Under 3.5",      prob: probs.under35, oddsKeys: ["under35","Under 3.5"]},
-    { name: "Over 4.5 Goals", prob: probs.over45 ?? 0, oddsKeys: ["over45","Over 4.5"]},
-    { name: "BTTS - Yes",     prob: probs.bttsYes, oddsKeys: ["bttsYes","BTTS - Yes"]},
-    { name: "BTTS - No",      prob: probs.bttsNo,  oddsKeys: ["bttsNo","BTTS - No"] },
-    { name: "DNB Home",       prob: probs.dnb1,    oddsKeys: ["dnb1","DNB 1"]     },
-    { name: "DNB Away",       prob: probs.dnb2,    oddsKeys: ["dnb2","DNB 2"]     },
-    { name: "Clean Sheet Home", prob: probs.csHome ?? 0, oddsKeys: ["csHome"]    },
-    { name: "Clean Sheet Away", prob: probs.csAway ?? 0, oddsKeys: ["csAway"]    },
+  const markets: { name: string; prob: number; oddsKeys: string[] }[] = [
+    { name: "Home Win", prob: probs.homeWin, oddsKeys: ["home", "1"] },
+    { name: "Draw", prob: probs.draw, oddsKeys: ["draw", "X"] },
+    { name: "Away Win", prob: probs.awayWin, oddsKeys: ["away", "2"] },
+    { name: "1X", prob: probs.dc1X, oddsKeys: ["dc1X", "1X"] },
+    { name: "X2", prob: probs.dcX2, oddsKeys: ["dcX2", "X2"] },
+    { name: "12", prob: probs.dc12, oddsKeys: ["dc12", "12"] },
+    { name: "Over 1.5 Goals", prob: probs.over15, oddsKeys: ["over15", "Over 1.5"] },
+    { name: "Under 1.5", prob: probs.under15, oddsKeys: ["under15", "Under 1.5"] },
+    { name: "Over 2.5 Goals", prob: probs.over25, oddsKeys: ["over25", "Over 2.5"] },
+    { name: "Under 2.5", prob: probs.under25, oddsKeys: ["under25", "Under 2.5"] },
+    { name: "Over 3.5 Goals", prob: probs.over35, oddsKeys: ["over35", "Over 3.5"] },
+    { name: "Under 3.5", prob: probs.under35, oddsKeys: ["under35", "Under 3.5"] },
+    { name: "Over 4.5 Goals", prob: probs.over45 ?? 0, oddsKeys: ["over45", "Over 4.5"] },
+    { name: "Under 4.5 Goals", prob: probs.under45 ?? 0, oddsKeys: ["under45", "Under 4.5"] },
+    { name: "BTTS - Yes", prob: probs.bttsYes, oddsKeys: ["bttsYes", "BTTS - Yes"] },
+    { name: "BTTS - No", prob: probs.bttsNo, oddsKeys: ["bttsNo", "BTTS - No"] },
+    { name: "DNB Home", prob: probs.dnb1, oddsKeys: ["dnb1", "DNB 1"] },
+    { name: "DNB Away", prob: probs.dnb2, oddsKeys: ["dnb2", "DNB 2"] },
+    { name: "Clean Sheet Home", prob: probs.csHome ?? 0, oddsKeys: ["csHome"] },
+    { name: "Clean Sheet Away", prob: probs.csAway ?? 0, oddsKeys: ["csAway"] },
   ];
 
-  return MARKETS.map((m) => {
-    const o = m.oddsKeys.reduce<number | undefined>(
-      (found, key) => found ?? (odds[key] > 1.01 ? odds[key] : undefined),
-      undefined
-    );
-    if (!o || o <= 1.01 || m.prob <= 0) return null;
+  const results: (ValueBet & { ev: number; kellyFraction: number })[] = [];
+  for (const market of markets) {
+    const probability = market.prob;
+    if (!Number.isFinite(probability) || probability <= 0 || probability >= 1) continue;
+    const price = market.oddsKeys
+      .map((key) => Number(odds?.[key]))
+      .find((value) => Number.isFinite(value) && value > 1.01 && value <= 100);
+    if (price === undefined) continue;
 
-    const impliedProb    = 1 / o;
-    const edge           = m.prob - impliedProb;
-    const ev             = m.prob * o - 1;
-    const kellyFraction  = Math.max(0, edge / (o - 1));
+    const impliedProb = 1 / price;
+    const edge = probability - impliedProb;
+    const ev = probability * price - 1;
+    // Standard Kelly: (b*p - q)/b = (p*odds - 1)/(odds - 1).
+    // Report quarter Kelly as a conservative sizing reference, never a promise.
+    const fullKelly = Math.max(0, ev / (price - 1));
+    const kellyFraction = Math.min(0.25, fullKelly * 0.25);
+    if (edge <= 0.01 || ev <= 0.01) continue;
 
-    return { market: m.name, modelProb: m.prob, impliedProb, value: edge, odds: o, ev, kellyFraction };
-  }).filter(
-    (v): v is ValueBet & { ev: number; kellyFraction: number } =>
-      v !== null && v.value > 0.01
-  );
+    results.push({
+      market: market.name,
+      modelProb: probability,
+      impliedProb,
+      value: edge,
+      odds: price,
+      ev,
+      kellyFraction,
+    });
+  }
+  return results.sort((a, b) => b.ev - a.ev);
 }
+
 
 // ─────────────────────────────────────────────────────────────────────────────
 // PART 6 — CONFIDENCE ENGINE
@@ -396,28 +398,33 @@ export function calculateValue(
 // Hard cap at 95 — 100% confidence is always wrong in football.
 // ─────────────────────────────────────────────────────────────────────────────
 export function calculateConfidence(
-  prob:         number,
-  value:        number,
-  dataQuality:  number,
-  formScore?:   number,
-  aiConfidence?: number,
-  searchDataUsed?: boolean
+  prob: number,
+  value: number,
+  dataQuality: number,
+  formScore?: number,
+  _aiConfidence?: number,
+  _searchDataUsed?: boolean
 ): number {
-  const probScore    = Math.min(prob * 42, 42);                        // 0-42
-  const valueScore   = Math.min(value * 250, 25);                      // 0-25
-  const qualScore    = dataQuality * 18;                               // 0-18
-  const formBonus    = formScore ? Math.min(formScore * 10, 10) : 5;  // 0-10
-  const aiBonus      = aiConfidence
-    ? Math.min((aiConfidence / 100) * 4, 4)
-    : 0;                                                               // 0-4
-  const searchBonus  = searchDataUsed ? 3 : 0;                        // 0-3 (real-time grounding)
+  // This is a model-signal score, not a calibrated probability of winning.
+  // Search grounding and an LLM's self-reported confidence are not evidence
+  // that an outcome is more likely, so they intentionally do not add points.
+  const p = Number.isFinite(prob) ? Math.min(1, Math.max(0, prob)) : 0;
+  const edge = Number.isFinite(value) ? Math.max(0, value) : 0;
+  const quality = Number.isFinite(dataQuality)
+    ? Math.min(1, Math.max(0, dataQuality))
+    : 0;
+  const form = Number.isFinite(formScore)
+    ? Math.min(1, Math.max(0, formScore as number))
+    : 0.5;
 
-  // If data quality is very low, cap max confidence (don't report 85% on AI-guessed data)
-  const rawScore = probScore + valueScore + qualScore + formBonus + aiBonus + searchBonus;
-  const maxAllowed = dataQuality < 0.45 ? 70 : 95;
-
-  return Math.min(Math.max(Math.round(rawScore), 5), maxAllowed);
+  const raw = 35 * p + 20 * Math.min(edge / 0.10, 1) +
+    30 * quality + 15 * form;
+  // Until historical calibration exists, cap the displayed score so it cannot
+  // be mistaken for a statistically validated 90–95% win probability.
+  const qualityCap = quality < 0.35 ? 45 : quality < 0.60 ? 55 : 70;
+  return Math.round(Math.min(qualityCap, Math.max(5, raw)));
 }
+
 
 // ─────────────────────────────────────────────────────────────────────────────
 // PART 7 — DECISION ENGINE
@@ -426,67 +433,79 @@ export function calculateConfidence(
 // ─────────────────────────────────────────────────────────────────────────────
 export function selectBestBet(
   valueBets: (ValueBet & { ev?: number; kellyFraction?: number })[],
-  probs: Probabilities
+  _probs: Probabilities
 ): ValueBet | null {
-  if (valueBets.length === 0) {
-    // No value found — fall back to highest-probability safe market
-    const safe = [
-      { market: "Over 1.5 Goals",  prob: probs.over15  },
-      { market: "Home Win or Draw", prob: probs.dc1X    },
-      { market: "Away Win or Draw", prob: probs.dcX2    },
-      { market: "BTTS - Yes",       prob: probs.bttsYes },
-      { market: "Home Win",         prob: probs.homeWin },
-      { market: "Away Win",         prob: probs.awayWin },
-    ].sort((a, b) => b.prob - a.prob)[0];
-    return { market: safe.market, modelProb: safe.prob, impliedProb: 0, value: 0, odds: 0 };
-  }
-
-  const scored = valueBets.map((b) => ({
-    ...b,
-    compositeScore:
-      (b.ev ?? 0)   * 0.40 +
-      b.modelProb    * 0.35 +
-      b.value        * 0.25,
-  }));
-
-  const qualified = scored.filter(
-    (b) => b.modelProb >= 0.42 && b.value >= 0.02 && b.odds >= 1.15
+  // No qualifying positive-EV market means no bet recommendation. Selecting a
+  // high-hit-rate market without odds is not evidence of value.
+  const qualified = valueBets.filter((bet) =>
+    Number.isFinite(bet.modelProb) &&
+    Number.isFinite(bet.value) &&
+    Number.isFinite(bet.odds) &&
+    bet.modelProb > 0 && bet.modelProb < 1 &&
+    bet.odds > 1.01 &&
+    bet.value >= 0.02 &&
+    (bet.ev ?? (bet.modelProb * bet.odds - 1)) > 0.01
   );
+  if (qualified.length === 0) return null;
 
-  return (qualified.length > 0 ? qualified : scored).sort(
-    (a, b) => b.compositeScore - a.compositeScore
-  )[0];
+  return [...qualified].sort((a, b) => {
+    const evA = a.ev ?? a.modelProb * a.odds - 1;
+    const evB = b.ev ?? b.modelProb * b.odds - 1;
+    // Prioritise expected return, with modest preference for larger edge;
+    // probability alone should not dominate value selection.
+    return (evB + b.value * 0.15) - (evA + a.value * 0.15);
+  })[0];
 }
+
 
 // ─────────────────────────────────────────────────────────────────────────────
 // PART 8 — LIVE MATCH PREDICTOR
 // xG pressure signals, possession dominance, set-piece danger.
 // ─────────────────────────────────────────────────────────────────────────────
 export function analyzeLiveMatch(liveStats: {
-  minute:       number;
-  score:        string;
+  minute: number;
+  score: string;
   shotsOnTarget: number;
-  xG:           number;
-  possession?:  number;
-  corners?:     number;
+  xG: number;
+  possession?: number;
+  corners?: number;
 }) {
-  const { minute, xG, shotsOnTarget, possession = 50, corners = 0 } = liveStats;
-  const [homeGoals = 0, awayGoals = 0] = liveStats.score.split("-").map(Number);
+  const minute = Math.min(130, Math.max(0, Number(liveStats.minute) || 0));
+  const xG = Math.max(0, Number(liveStats.xG) || 0);
+  const shotsOnTarget = Math.max(0, Number(liveStats.shotsOnTarget) || 0);
+  const possession = Math.min(100, Math.max(0, Number(liveStats.possession ?? 50) || 0));
+  const corners = Math.max(0, Number(liveStats.corners) || 0);
+  const scoreParts = String(liveStats.score ?? "").split("-").map((value) => Number(value.trim()));
+  const homeGoals = Number.isFinite(scoreParts[0]) ? Math.max(0, scoreParts[0]) : 0;
+  const awayGoals = Number.isFinite(scoreParts[1]) ? Math.max(0, scoreParts[1]) : 0;
+  const totalGoals = homeGoals + awayGoals;
 
-  if (minute > 70 && xG > 2.0 && shotsOnTarget > 6)
-    return { signal: "GOAL_PRESSURE_HIGH", confidence: 90, reasoning: `${xG.toFixed(2)} xG with ${shotsOnTarget} shots on target past 70' — goal imminent.` };
-
-  if (minute > 60 && xG > 1.5 && shotsOnTarget > 5)
-    return { signal: "GOAL_LIKELY", confidence: 78, reasoning: `Sustained pressure with ${xG.toFixed(2)} xG — goal within 15 min is the statistical expectation.` };
-
-  if (possession > 65 && corners > 6 && minute > 45)
-    return { signal: "SET_PIECE_DANGER", confidence: 72, reasoning: `${possession}% possession + ${corners} corners — set piece threat elevated.` };
-
-  if (minute > 60 && homeGoals + awayGoals === 0 && xG > 1.8)
-    return { signal: "LATE_GOAL_WINDOW", confidence: 82, reasoning: `0-0 with ${xG.toFixed(2)} accumulated xG — statistical pressure for a late goal.` };
-
+  // Observational alerts only. Without a calibrated hazard model, do not label
+  // an event "imminent", promise a goal within 15 minutes, or invent confidence.
+  if (minute >= 60 && xG >= 1.8 && shotsOnTarget >= 5) {
+    return {
+      signal: "SUSTAINED_ATTACKING_PRESSURE",
+      confidence: 0,
+      reasoning: `Elevated attacking activity: ${xG.toFixed(2)} combined xG and ${shotsOnTarget} shots on target by ${Math.round(minute)}'. This is a descriptive signal, not a calibrated goal forecast.`,
+    };
+  }
+  if (minute >= 45 && possession >= 65 && corners >= 6) {
+    return {
+      signal: "TERRITORIAL_AND_SET_PIECE_PRESSURE",
+      confidence: 0,
+      reasoning: `${Math.round(possession)}% possession and ${corners} corners indicate territorial/set-piece pressure. This alone does not establish that a goal is likely.`,
+    };
+  }
+  if (minute >= 60 && totalGoals === 0 && xG >= 1.5) {
+    return {
+      signal: "HIGH_CHANCE_VOLUME_SCORELESS",
+      confidence: 0,
+      reasoning: `The match remains 0-0 despite ${xG.toFixed(2)} combined xG at ${Math.round(minute)}'. Chance quality and the remaining-time model should be reviewed; no goal probability is inferred from this threshold alone.`,
+    };
+  }
   return null;
 }
+
 
 // ─────────────────────────────────────────────────────────────────────────────
 // PART 9 — BSD API ENRICHMENT LAYER
