@@ -424,6 +424,55 @@ export function calculateValue(
 }
 
 
+/**
+ * Evaluate BSD-only supplemental markets with their own provider forecast.
+ * These probabilities are never inferred from the goal-score matrix: corners
+ * require a separate model, and markets without a BSD probability or real price
+ * are skipped rather than guessed.
+ */
+function calculateBsdSupplementalValueBets(
+  bsdPredictions: any,
+  odds: MatchData["odds"]
+): (ValueBet & { ev: number; kellyFraction: number })[] {
+  if (bsdPredictions?.source !== "bsd" || !bsdPredictions?.corners) return [];
+  const cornerLines = [
+    { line: "7.5", key: "75", over: bsdPredictions.corners.over75 },
+    { line: "8.5", key: "85", over: bsdPredictions.corners.over85 },
+    { line: "9.5", key: "95", over: bsdPredictions.corners.over95 },
+    { line: "10.5", key: "105", over: bsdPredictions.corners.over105 },
+    { line: "11.5", key: "115", over: bsdPredictions.corners.over115 },
+  ];
+  const results: (ValueBet & { ev: number; kellyFraction: number })[] = [];
+  for (const market of cornerLines) {
+    if (!Number.isFinite(market.over) || market.over <= 0 || market.over >= 1) continue;
+    for (const side of ["Over", "Under"] as const) {
+      const probability = side === "Over" ? market.over : 1 - market.over;
+      const aliases = [
+        `corners${side}${market.key}`,
+        `total_corners_${market.key}_${side.toLowerCase()}_ft`,
+        `total_corners_${market.key}_${side.toLowerCase()}`,
+      ];
+      const price = aliases.map((key) => Number(odds?.[key]))
+        .find((value) => Number.isFinite(value) && value > 1.01 && value <= 100);
+      if (price === undefined) continue;
+      const impliedProb = 1 / price;
+      const value = probability - impliedProb;
+      const ev = probability * price - 1;
+      if (value <= 0.01 || ev <= 0.01) continue;
+      results.push({
+        market: `Corners ${side} ${market.line}`,
+        modelProb: probability,
+        impliedProb,
+        value,
+        odds: price,
+        ev,
+        kellyFraction: Math.min(0.25, Math.max(0, ev / (price - 1)) * 0.25),
+      });
+    }
+  }
+  return results;
+}
+
 // ─────────────────────────────────────────────────────────────────────────────
 // PART 6 — CONFIDENCE ENGINE
 // Combines probability, edge, data quality, form, AI grounding signal.
@@ -625,7 +674,13 @@ export async function runPrediction(
   const adjustedProbs = adjustProbabilities(baseProbs, context as any);
 
   // ── 6. Value / EV engine ───────────────────────────────────────────────
-  const valueBets = calculateValue(adjustedProbs as any, enrichedData.odds ?? {});
+  const valueBets = [
+    ...calculateValue(adjustedProbs as any, enrichedData.odds ?? {}),
+    ...calculateBsdSupplementalValueBets(
+      enrichedData.deepContext?.bsd?.bsdPredictions,
+      enrichedData.odds ?? {}
+    ),
+  ].sort((a, b) => (b.ev ?? b.modelProb * b.odds - 1) - (a.ev ?? a.modelProb * a.odds - 1));
 
   // ── 7. Best bet selection ──────────────────────────────────────────────
   const bestBet = selectBestBet(valueBets, adjustedProbs);
