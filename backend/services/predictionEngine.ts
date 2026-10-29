@@ -160,8 +160,13 @@ function computeDataQuality(data: MatchData): number {
   ).length;
   if (validOdds >= 3) score += 0.08;
 
-  if ((data as any).dataSource === "gemini_search") score -= 0.15;
-  if ((data as any).dataQualityWarning) score -= 0.10;
+  const context = data.deepContext ?? {};
+  const source = (data as any).dataSource ?? context.dataSource;
+  const warning = (data as any).dataQualityWarning ?? context.dataQualityWarning;
+  if (source === "gemini_search") score -= 0.15;
+  if (warning) score -= 0.10;
+  if (context.oddsAvailable === false) score -= 0.08;
+  if (context.statsAvailable === false) score -= 0.10;
   if (homePlayed === 0 || awayPlayed === 0) score -= 0.15;
 
   return Math.min(1, Math.max(0, score));
