@@ -602,7 +602,7 @@ export async function getLiveMatchPreview(fixtureId: string) {
         source: 'bsd',
         model: forecast?.model ?? null,
         corners: {
-          over75: asProbability(corners.prob_over_75 ?? corners.prob_over_75),
+          over75: asProbability(corners.prob_over_75),
           over85: asProbability(corners.prob_over_85),
           over95: asProbability(corners.prob_over_95),
           over105: asProbability(corners.prob_over_105),
