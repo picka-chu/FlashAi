@@ -228,6 +228,8 @@ export function calculatePoissonProbabilities(
   let homeWin = 0, draw = 0, awayWin = 0;
   let bttsYes = 0, over05 = 0, over15 = 0, over25 = 0, over35 = 0, over45 = 0, over55 = 0;
   let homeScores = 0, awayScores = 0, csHome = 0, csAway = 0;
+  const scoreProbabilities: Record<string, number> = {};
+  const handicapProbabilities: Record<string, number> = { ahHomeM15: 0, ahHomeM05: 0, ahHomeP05: 0, ahHomeP15: 0, ahAwayM15: 0, ahAwayM05: 0, ahAwayP05: 0, ahAwayP15: 0 };
   for (const { h, a, p: rawP } of matrix) {
     const p = rawP / denominator;
     if (h > a) homeWin += p;
