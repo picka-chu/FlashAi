@@ -515,11 +515,10 @@ export async function getLiveMatchPreview(fixtureId: string) {
   try {
     // Fetch independent provider resources concurrently to keep match analysis
     // fast while still enriching it with prices, in-play statistics and H2H.
-    const [event, oddsResult, statsResult, h2h, leagues] = await Promise.all([
+    const [event, oddsResult, statsResult, leagues] = await Promise.all([
       fetchBsdEventDetail(normalizedId),
       bsdGet(`/events/${normalizedId}/odds/`).catch(() => null),
       bsdGet(`/events/${normalizedId}/stats/`).catch(() => null),
-      getBsdH2H(normalizedId).catch(() => null),
       getBsdLeagueMap().catch(() => ({} as Record<number, string>)),
     ]);
     if (!event || typeof event !== 'object') return null;
@@ -532,7 +531,6 @@ export async function getLiveMatchPreview(fixtureId: string) {
     if (stats) mapped.stats = stats;
     const xg = mapBsdXg(statsResult);
     if (xg) mapped.xG = xg;
-    if (h2h) mapped.h2h = h2h;
     mapped.statsAvailable = Boolean(stats);
     mapped.xGAvailable = Boolean(xg);
     mapped.oddsAvailable = Boolean(odds && Object.keys(odds).length);
@@ -621,12 +619,10 @@ export async function getMatchDetails(fixtureId: number | string, match?: any): 
           elapsed: Math.floor(Number(bsdMatch.fixture?.status?.elapsed || 0) / 60),
           league: bsdMatch.league?.name,
           round: bsdMatch.round,
-          h2h: bsdMatch.h2h ?? null,
           dataSource: 'bsd',
           oddsAvailable: Boolean(bsdMatch.oddsAvailable && bsdMatch.odds && Object.keys(bsdMatch.odds).length),
           statsAvailable: Boolean(bsdMatch.statsAvailable),
           xGAvailable: Boolean(bsdMatch.xGAvailable),
-          h2hAvailable: Boolean(bsdMatch.h2h),
           fetchedAt: new Date().toISOString(),
           dataQualityWarning: !bsdMatch.odds || !Object.keys(bsdMatch.odds).length
             ? 'No bookmaker odds returned by the provider; value bets are unavailable for unpriced markets.'
