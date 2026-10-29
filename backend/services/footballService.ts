@@ -135,29 +135,70 @@ function bsdStatus(event: any): { state: 'pre' | 'in' | 'post'; short: string } 
   return { state: 'in', short: 'LIVE' };
 }
 
-function normaliseBsdOdds(odds: any) {
-  if (!odds || typeof odds !== 'object') return null;
+function normaliseBsdOdds(payload: any) {
+  if (!payload || typeof payload !== 'object') return null;
+  // Providers vary in naming and sometimes wrap prices under an "odds" key.
+  // Flatten numeric leaves without inventing prices or treating market labels as odds.
+  const source = payload.odds && typeof payload.odds === 'object' ? payload.odds : payload;
+  const flattened: Record<string, number> = {};
+  const normaliseKey = (key: string) => key.toLowerCase().replace(/[^a-z0-9]+/g, '_').replace(/^_|_$/g, '');
+  const visit = (value: any, prefix = '') => {
+    if (!value || typeof value !== 'object') return;
+    for (const [rawKey, child] of Object.entries(value)) {
+      const key = normaliseKey(rawKey);
+      const fullKey = prefix ? `${prefix}_${key}` : key;
+      if (typeof child === 'number' || (typeof child === 'string' && child.trim() !== '')) {
+        const price = Number(child);
+        if (Number.isFinite(price) && price > 1.01 && price <= 100) {
+          flattened[fullKey] = price;
+          if (!(key in flattened)) flattened[key] = price;
+        }
+      } else if (child && typeof child === 'object' && !Array.isArray(child)) {
+        visit(child, fullKey);
+      }
+    }
+  };
+  visit(source);
   const pick = (...keys: string[]) => {
     for (const key of keys) {
-      const value = Number(odds[key]);
-      if (Number.isFinite(value) && value > 0) return value;
+      const value = Number(source[key] ?? flattened[normaliseKey(key)]);
+      if (Number.isFinite(value) && value > 1.01 && value <= 100) return value;
     }
     return undefined;
   };
 
-  return {
-    home: pick('home_win', 'home', '1'),
-    draw: pick('draw', 'X'),
-    away: pick('away_win', 'away', '2'),
-    over15: pick('over_15_goals', 'over15', 'Over 1.5'),
-    under15: pick('under_15_goals', 'under15', 'Under 1.5'),
-    over25: pick('over_25_goals', 'over25', 'Over 2.5'),
-    under25: pick('under_25_goals', 'under25', 'Under 2.5'),
-    over35: pick('over_35_goals', 'over35', 'Over 3.5'),
-    under35: pick('under_35_goals', 'under35', 'Under 3.5'),
-    bttsYes: pick('btts_yes', 'bttsYes', 'BTTS Yes'),
-    bttsNo: pick('btts_no', 'bttsNo', 'BTTS No'),
+  const mapped: Record<string, number> = { ...flattened };
+  const aliases: Record<string, string[]> = {
+    home: ['home_win', 'home', '1'],
+    draw: ['draw', 'x'],
+    away: ['away_win', 'away', '2'],
+    over05: ['over_05_goals', 'over05', 'over_0_5'],
+    under05: ['under_05_goals', 'under05', 'under_0_5'],
+    over15: ['over_15_goals', 'over15', 'over_1_5'],
+    under15: ['under_15_goals', 'under15', 'under_1_5'],
+    over25: ['over_25_goals', 'over25', 'over_2_5'],
+    under25: ['under_25_goals', 'under25', 'under_2_5'],
+    over35: ['over_35_goals', 'over35', 'over_3_5'],
+    under35: ['under_35_goals', 'under35', 'under_3_5'],
+    over45: ['over_45_goals', 'over45', 'over_4_5'],
+    under45: ['under_45_goals', 'under45', 'under_4_5'],
+    over55: ['over_55_goals', 'over55', 'over_5_5'],
+    under55: ['under_55_goals', 'under55', 'under_5_5'],
+    bttsYes: ['btts_yes', 'bttsyes', 'both_teams_to_score_yes'],
+    bttsNo: ['btts_no', 'bttsno', 'both_teams_to_score_no'],
+    dc1X: ['double_chance_1x', 'dc1x', '1x'],
+    dcX2: ['double_chance_x2', 'dcx2', 'x2'],
+    dc12: ['double_chance_12', 'dc12', '12'],
+    dnb1: ['draw_no_bet_home', 'dnb1'],
+    dnb2: ['draw_no_bet_away', 'dnb2'],
+    homeScores: ['home_team_to_score', 'home_to_score', 'home_team_over_05'],
+    awayScores: ['away_team_to_score', 'away_to_score', 'away_team_over_05'],
   };
+  for (const [market, keys] of Object.entries(aliases)) {
+    const price = pick(...keys);
+    if (price !== undefined) mapped[market] = price;
+  }
+  return Object.keys(mapped).length ? mapped : null;
 }
 
 function mapBsdStats(payload: any) {
@@ -546,18 +587,9 @@ export async function getMatchDetails(fixtureId: number | string, match?: any): 
     last5: { goalsScored: 0, goalsConceded: 0, results: [] },
     season: { played: 0, goalsScored: 0, goalsConceded: 0 },
   };
-  const defaultOdds = {
-    home: 2.1,
-    draw: 3.3,
-    away: 3.4,
-    over25: 1.9,
-    under25: 1.9,
-    bttsYes: 1.8,
-    dc1X: 1.3,
-    dcX2: 1.7,
-    over15: 1.3,
-    over35: 3.2,
-  };
+  // Never synthesize bookmaker prices: missing odds must remain missing so
+  // the value engine cannot mistake assumptions for a real market quote.
+  const noOdds: Record<string, number> = {};
 
   try {
     const bsdMatch = /^bsd_\d+$/.test(idStr) || /^\d+$/.test(idStr)
@@ -570,12 +602,7 @@ export async function getMatchDetails(fixtureId: number | string, match?: any): 
         home: { ...homeStats, name: bsdMatch?.teams?.home?.name || homeName },
         away: { ...awayStats, name: bsdMatch?.teams?.away?.name || awayName },
         leagueAvgGoals: 2.6,
-        odds: {
-          ...defaultOdds,
-          ...(bsdMatch.odds || {}),
-          dc1X: 1.3,
-          dcX2: 1.7,
-        },
+        odds: { ...(bsdMatch.odds || {}) },
         deepContext: {
           bsd: bsdMatch,
           xG: bsdMatch.xG,
@@ -584,6 +611,13 @@ export async function getMatchDetails(fixtureId: number | string, match?: any): 
           elapsed: Math.floor(Number(bsdMatch.fixture?.status?.elapsed || 0) / 60),
           league: bsdMatch.league?.name,
           round: bsdMatch.round,
+          dataSource: 'bsd',
+          oddsAvailable: Boolean(bsdMatch.odds && Object.keys(bsdMatch.odds).length),
+          statsAvailable: Boolean(bsdMatch.stats || bsdMatch.xG),
+          fetchedAt: new Date().toISOString(),
+          dataQualityWarning: !bsdMatch.odds || !Object.keys(bsdMatch.odds).length
+            ? 'No bookmaker odds returned by the provider; value bets are unavailable for unpriced markets.'
+            : undefined,
         },
       };
     }
@@ -596,8 +630,14 @@ export async function getMatchDetails(fixtureId: number | string, match?: any): 
     home: homeStats,
     away: awayStats,
     leagueAvgGoals: 2.6,
-    odds: defaultOdds,
-    deepContext: {},
+    odds: noOdds,
+    deepContext: {
+      dataQualityWarning: 'Official match data unavailable; team statistics and bookmaker odds were not verified.',
+      dataSource: 'unavailable',
+      oddsAvailable: false,
+      statsAvailable: false,
+      fetchedAt: new Date().toISOString(),
+    },
   };
 }
 
