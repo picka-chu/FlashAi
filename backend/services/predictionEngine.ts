@@ -247,6 +247,16 @@ export function calculatePoissonProbabilities(
     if (h + a >= 6) over55 += p;
     if (a === 0) csHome += p;
     if (h === 0) csAway += p;
+    scoreProbabilities[`cs${h}${a}`] = p;
+    const diff = h - a;
+    if (diff > 1) handicapProbabilities.ahHomeM15 += p;
+    if (diff >= 1) handicapProbabilities.ahHomeM05 += p;
+    if (diff >= 0) handicapProbabilities.ahHomeP05 += p;
+    if (diff >= -1) handicapProbabilities.ahHomeP15 += p;
+    if (diff < -1) handicapProbabilities.ahAwayM15 += p;
+    if (diff <= -1) handicapProbabilities.ahAwayM05 += p;
+    if (diff <= 0) handicapProbabilities.ahAwayP05 += p;
+    if (diff <= 1) handicapProbabilities.ahAwayP15 += p;
   }
 
   const outcomeTotal = homeWin + draw + awayWin || 1;
