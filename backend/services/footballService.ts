@@ -241,8 +241,16 @@ function mapBsdStats(payload: any) {
 function mapBsdXg(payload: any) {
   const stats = payload?.stats || payload;
   if (!stats?.home && !stats?.away) return null;
-  const xg = (side: any) => Number(side?.xg?.actual ?? side?.expected_goals ?? side?.xg ?? 0) || 0;
-  return { home: xg(stats.home), away: xg(stats.away) };
+  const hasXg = (side: any) =>
+    side?.xg?.actual !== undefined || side?.expected_goals !== undefined || side?.xg !== undefined;
+  if (!hasXg(stats.home) || !hasXg(stats.away)) return null;
+  const xg = (side: any) => {
+    const raw = Number(side?.xg?.actual ?? side?.expected_goals ?? side?.xg);
+    return Number.isFinite(raw) && raw >= 0 ? raw : null;
+  };
+  const home = xg(stats.home);
+  const away = xg(stats.away);
+  return home === null || away === null ? null : { home, away };
 }
 
 function mapBSDEvent(event: any, leagueName?: string) {
@@ -514,7 +522,7 @@ export async function getLiveMatchPreview(fixtureId: string) {
 
   try {
     // Fetch independent provider resources concurrently to keep match analysis
-    // fast while still enriching it with prices, in-play statistics and H2H.
+    // fast while enriching it with real odds and available match statistics.
     const [event, oddsResult, statsResult, leagues] = await Promise.all([
       fetchBsdEventDetail(normalizedId),
       bsdGet(`/events/${normalizedId}/odds/`).catch(() => null),
