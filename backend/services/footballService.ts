@@ -137,6 +137,56 @@ function bsdStatus(event: any): { state: 'pre' | 'in' | 'post'; short: string } 
 
 function normaliseBsdOdds(payload: any) {
   if (!payload || typeof payload !== 'object') return null;
+  // BSD odds endpoints can return either a nested event object or rows with
+  // market/outcome/line/period/decimal_odds. Preserve market identity instead
+  // of flattening row indexes into meaningless numeric keys.
+  const rowPrices: Record<string, number> = {};
+  const normaliseKey = (key: string) => key.toLowerCase().replace(/[^a-z0-9]+/g, '_').replace(/^_|_$/g, '');
+  const rows = Array.isArray(payload) ? payload : null;
+  if (rows) {
+    for (const row of rows) {
+      if (!row || typeof row !== 'object') continue;
+      const price = Number(row.decimal_odds ?? row.odds ?? row.price ?? row.value);
+      if (!Number.isFinite(price) || price <= 1.01 || price > 100) continue;
+      const market = normaliseKey(String(row.market ?? row.market_name ?? row.market_type ?? ''));
+      const outcome = normaliseKey(String(row.outcome ?? row.selection ?? row.name ?? ''));
+      const line = row.line ?? row.handicap ?? row.total;
+      const period = normaliseKey(String(row.period ?? row.period_name ?? 'ft')) || 'ft';
+      if (!market || !outcome) continue;
+      const lineKey = line !== undefined && line !== null && line !== '' ? normaliseKey(String(line)) : '';
+      rowPrices[`${market}${lineKey ? `_${lineKey}` : ''}_${outcome}_${period}`] = price;
+      rowPrices[`${market}${lineKey ? `_${lineKey}` : ''}_${outcome}`] = price;
+      // Canonical aliases used by the model-based markets below.
+      if (/^(1x2|match_result|match_winner)$/.test(market)) {
+        if (/^(home|home_win|1)$/.test(outcome)) rowPrices.home = price;
+        if (/^(draw|x)$/.test(outcome)) rowPrices.draw = price;
+        if (/^(away|away_win|2)$/.test(outcome)) rowPrices.away = price;
+      }
+      if (/^(btts|both_teams_to_score)$/.test(market)) {
+        if (/^(yes|true)$/.test(outcome)) rowPrices.bttsYes = price;
+        if (/^(no|false)$/.test(outcome)) rowPrices.bttsNo = price;
+      }
+      if (/^(double_chance|dc)$/.test(market) && /^(1x|x2|12)$/.test(outcome)) {
+        rowPrices[outcome === '1x' ? 'dc1X' : outcome === 'x2' ? 'dcX2' : 'dc12'] = price;
+      }
+      if (/^(draw_no_bet|dnb)$/.test(market)) {
+        if (/^(home|home_win|1)$/.test(outcome)) rowPrices.dnb1 = price;
+        if (/^(away|away_win|2)$/.test(outcome)) rowPrices.dnb2 = price;
+      }
+      if (/^(total_corners|corners|corner_total)$/.test(market) && lineKey) {
+        const over = /^(over|o)$/.test(outcome);
+        const under = /^(under|u)$/.test(outcome);
+        if (over) rowPrices[`cornersOver${lineKey.replace(/_/g, '')}`] = price;
+        if (under) rowPrices[`cornersUnder${lineKey.replace(/_/g, '')}`] = price;
+      }
+      if (/^(over_under|total_goals|goals)$/.test(market) && lineKey) {
+        const lineDigits = lineKey.replace(/_/g, '');
+        if (/^(over|o)$/.test(outcome)) rowPrices[`over${lineDigits}`] = price;
+        if (/^(under|u)$/.test(outcome)) rowPrices[`under${lineDigits}`] = price;
+      }
+    }
+    return Object.keys(rowPrices).length ? rowPrices : null;
+  }
   // Providers vary in naming and sometimes wrap prices under an "odds" key.
   // Flatten numeric leaves without inventing prices or treating market labels as odds.
   const source = payload.odds && typeof payload.odds === 'object' ? payload.odds : payload;
@@ -523,17 +573,44 @@ export async function getLiveMatchPreview(fixtureId: string) {
   try {
     // Fetch independent provider resources concurrently to keep match analysis
     // fast while enriching it with real odds and available match statistics.
-    const [event, oddsResult, statsResult, leagues] = await Promise.all([
+    const [event, oddsResult, statsResult, predictionResult, leagues] = await Promise.all([
       fetchBsdEventDetail(normalizedId),
       bsdGet(`/events/${normalizedId}/odds/`).catch(() => null),
       bsdGet(`/events/${normalizedId}/stats/`).catch(() => null),
+      bsdGet(`/events/${normalizedId}/prediction/`).catch(() => null),
       getBsdLeagueMap().catch(() => ({} as Record<number, string>)),
     ]);
     if (!event || typeof event !== 'object') return null;
 
     const mapped: any = mapBSDEvent(event, leagues[Number(event?.league_id)]);
-    const odds = normaliseBsdOdds(oddsResult?.odds);
+    const odds = normaliseBsdOdds(oddsResult?.odds ?? oddsResult?.results ?? oddsResult);
     if (odds) mapped.odds = odds;
+
+    // BSD's forecast endpoint supplies market-specific probabilities (including
+    // corners) that must not be fabricated from the goals Poisson model.
+    const forecast = predictionResult?.prediction ?? predictionResult?.data ?? predictionResult;
+    const markets = forecast?.markets;
+    if (markets && typeof markets === 'object') {
+      const asProbability = (value: any) => {
+        const n = Number(value);
+        if (!Number.isFinite(n)) return undefined;
+        const probability = n > 1 ? n / 100 : n;
+        return probability > 0 && probability < 1 ? probability : undefined;
+      };
+      const corners = markets.corners ?? {};
+      mapped.bsdPredictions = {
+        source: 'bsd',
+        model: forecast?.model ?? null,
+        corners: {
+          over75: asProbability(corners.prob_over_75 ?? corners.prob_over_75),
+          over85: asProbability(corners.prob_over_85),
+          over95: asProbability(corners.prob_over_95),
+          over105: asProbability(corners.prob_over_105),
+          over115: asProbability(corners.prob_over_115),
+        },
+        rawMarkets: markets,
+      };
+    }
 
     const stats = mapBsdStats(statsResult);
     if (stats) mapped.stats = stats;
