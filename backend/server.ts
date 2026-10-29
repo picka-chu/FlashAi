@@ -855,6 +855,22 @@ async function resolveHistoryItemResult(item: UserHistoryItem): Promise<UserHist
     return null;
   };
 
+  // BSD fixtures: settle straight from the provider's final score.
+  if (item.fixtureId?.startsWith("bsd_")) {
+    try {
+      const preview = await getLiveMatchPreview(item.fixtureId);
+      const state = preview?.fixture?.status?.state;
+      if (state !== "post") return item;
+      const homeGoals = Number(preview?.goals?.home ?? 0);
+      const awayGoals = Number(preview?.goals?.away ?? 0);
+      const result = evaluatePredictionMarket(item.predictionMarket, homeGoals, awayGoals);
+      if (result === "pending") return item;
+      return { ...item, status: result, resolved_at: new Date().toISOString() };
+    } catch {
+      // Fall through to ESPN scoreboard matching below.
+    }
+  }
+
   try {
     if (item.fixtureId?.startsWith("espn_")) {
       const parts = item.fixtureId.split("_");
@@ -1795,11 +1811,72 @@ function extractTelegramChannelFromTaskUrl(taskUrl: string): string | null {
         }, 402);
       }
 
-      // 2. Perform Analysis
+      // 2. Build statistical + market context (BSD odds/stats/H2H + Dixon-Coles model)
+      let structuredContext = "";
+      let modelBlock: any = null;
+      let bsdPreview: any = null;
+      let h2hData: any = null;
+      try {
+        const { computeMarketModel, buildMarketContextBlock } = await import(
+          "./services/marketModelService.js"
+        );
+        const { getMatchDetails } = await import("./services/footballService.js");
+
+        const idStr = String(matchId || "");
+        if (/^bsd_\d+$/.test(idStr) || /^\d+$/.test(idStr)) {
+          bsdPreview = await getLiveMatchPreview(idStr).catch(() => null);
+        }
+        if (!bsdPreview) {
+          const [homeNameRaw, awayNameRaw] = matchString.split(/\s+vs\.?\s+/i);
+          if (homeNameRaw && awayNameRaw) {
+            const { fetchBsdMatchStatsByName } = await import("./services/footballService.js");
+            bsdPreview = await fetchBsdMatchStatsByName(homeNameRaw.trim(), awayNameRaw.trim()).catch(() => null);
+          }
+        }
+        if (bsdPreview) {
+          const bsdId = String(bsdPreview?.fixture?.id || idStr || "");
+          h2hData = bsdId ? await getBsdH2H(bsdId, bsdPreview?.teams?.home?.name, bsdPreview?.teams?.away?.name).catch(() => null) : null;
+          const matchData = await getMatchDetails(bsdId || idStr || "unknown", {
+            home: bsdPreview?.teams?.home?.name,
+            away: bsdPreview?.teams?.away?.name,
+          });
+          // Feed H2H last-5 into the feature table when BSD provided it
+          if (h2hData?.last5?.length && Array.isArray(h2hData.last5)) {
+            const wins = h2hData.last5.filter((r: string) => r === "W").length;
+            const draws = h2hData.last5.filter((r: string) => r === "D").length;
+            const losses = h2hData.last5.filter((r: string) => r === "L").length;
+            matchData.home.last5.results = h2hData.last5.slice(0, 5) as any;
+            matchData.home.last5.goalsScored = wins * 1.4 + draws * 0.8;
+            matchData.home.last5.goalsConceded = losses * 1.3 + draws * 0.8;
+            matchData.away.last5.results = h2hData.last5.slice(0, 5) as any;
+            matchData.away.last5.goalsScored = losses * 1.2 + draws * 0.7;
+            matchData.away.last5.goalsConceded = wins * 1.4 + draws * 0.7;
+          }
+          const model = computeMarketModel(matchData, { bsdMatch: bsdPreview, h2h: h2hData });
+          structuredContext = buildMarketContextBlock(matchData, model, { h2h: h2hData, bsdMatch: bsdPreview });
+          modelBlock = {
+            lambdaHome: model.lambdaHome,
+            lambdaAway: model.lambdaAway,
+            dataQuality: model.dataQuality,
+            probs: model.probs,
+            bestBet: model.bestBet,
+            valueBets: model.valueBets.slice(0, 8),
+            scorelines: model.scorelines,
+            htFt: model.htFt.slice(0, 5),
+            corners: model.corners,
+            cards: model.cards,
+            correctScore: model.correctScore,
+          };
+        }
+      } catch (contextError: any) {
+        console.warn("[analyze] Market model context skipped:", contextError?.message || contextError);
+      }
+
+      // 2b. AI analysis (Gemini + Search), grounded by the market model
       const { analyzeMatchWithSearch } = await import("./services/geminiService.js");
       const runTimedAnalysis = () => Promise.race([
-        analyzeMatchWithSearch(matchString),
-        new Promise((_, reject) => setTimeout(() => reject(new Error("AI analysis timeout")), 45_000))
+        analyzeMatchWithSearch(matchString, structuredContext || undefined),
+        new Promise((_, reject) => setTimeout(() => reject(new Error("AI analysis timeout")), 50_000))
       ]) as Promise<any>;
 
       let result: any = null;
@@ -1836,10 +1913,13 @@ function extractTelegramChannelFromTaskUrl(taskUrl: string): string | null {
         console.error("Error shaping match analysis result:", shapeError);
       }
 
+      if (result && modelBlock) {
+        result.model = modelBlock;
+      }
       const topPrediction = result?.predictions?.[0];
-      let home = "Home";
-      let away = "Away";
-      if (matchId) {
+      let home = bsdPreview?.teams?.home?.name || "Home";
+      let away = bsdPreview?.teams?.away?.name || "Away";
+      if ((home === "Home" && away === "Away") && matchId) {
         try {
           const fixtureDetails = await getMatchDetails(matchId);
           home = fixtureDetails?.home?.name || home;
@@ -1848,9 +1928,12 @@ function extractTelegramChannelFromTaskUrl(taskUrl: string): string | null {
           // Fallback to generic names if fixture lookup fails.
         }
       }
+      const storedFixtureId = bsdPreview?.fixture?.id
+        ? String(bsdPreview.fixture.id)
+        : (String(matchId || "").startsWith("espn_") ? String(matchId) : (String(matchId || "").startsWith("bsd_") ? String(matchId) : null));
       const newHistoryItem: UserHistoryItem = {
         id: crypto.randomUUID(),
-        fixtureId: String(matchId || "").startsWith("espn_") ? String(matchId) : null,
+        fixtureId: storedFixtureId,
         match: matchString,
         home,
         away,
@@ -3654,6 +3737,82 @@ function extractTelegramChannelFromTaskUrl(taskUrl: string): string | null {
       return c.json({ reply });
     } catch (e: any) {
       console.error("Support chat error:", e?.message || e);
+      return c.json(
+        { reply: "I'm having trouble responding right now. Please try again in a moment." },
+        500
+      );
+    }
+  });
+
+  // ── Analyst chat (multi-turn, match-aware) ────────────────────────────────
+  app.post("/api/analyze/chat", async (c) => {
+    const initData = c.req.header("X-TG-Init-Data");
+    const tgUserForRateLimit = initData ? getTelegramUserFromInitData(initData) : null;
+    const rateIdentifier = `analyze-chat:${tgUserForRateLimit?.id || getRequestIp(c)}`;
+    if (isRateLimited(rateIdentifier)) {
+      return c.json({ error: "Too many chat requests. Please wait a moment." }, 429);
+    }
+    if (!hasValidTelegramAuth(initData)) {
+      return c.json({ error: "Invalid Telegram authentication" }, 401);
+    }
+    if (guardExpensiveEndpoint(c)) {
+      return c.json({ error: "Too many chat requests. Please wait a moment." }, 429);
+    }
+
+    try {
+      const body = await c.req.json();
+      const message = typeof body?.message === "string" ? body.message.trim() : "";
+      const history = Array.isArray(body?.history) ? body.history : [];
+      const matchId = typeof body?.matchId === "string" ? body.matchId : "";
+      const matchString = typeof body?.matchString === "string" ? body.matchString.slice(0, 200) : "";
+
+      if (!message || message.length > 2000) {
+        return c.json({ error: "Message is required." }, 400);
+      }
+
+      const tgUser = initData ? getTelegramUserFromInitData(initData) : null;
+      if (!tgUser?.id) return c.json({ error: "User not identified." }, 401);
+      const { data: user } = await supabase
+        .from("users")
+        .select("plan, phone")
+        .eq("telegram_id", tgUser.id)
+        .maybeSingle();
+      if (!user?.phone) {
+        return c.json({ error: "Complete signup first by sharing your contact." }, 403);
+      }
+      const plan = user?.plan || "free";
+      if (plan === "free") {
+        return c.json({ error: "AI chat is available on paid plans. Please upgrade to continue." }, 403);
+      }
+
+      let matchContext = matchString ? `Match: ${matchString}` : "";
+      try {
+        if (matchId && (/^bsd_\d+$/.test(matchId) || /^\d+$/.test(matchId))) {
+          const preview = await getLiveMatchPreview(matchId);
+          if (preview) {
+            matchContext += [
+              `League: ${preview?.league?.name || "n/a"}`,
+              `Teams: ${preview?.teams?.home?.name} vs ${preview?.teams?.away?.name}`,
+              `Kickoff: ${preview?.fixture?.date}`,
+              `Status: ${preview?.fixture?.status?.short}`,
+              preview?.goals?.home !== null && preview?.goals?.home !== undefined
+                ? `Score: ${preview.goals.home}-${preview.goals.away}`
+                : "",
+              preview?.odds
+                ? `Odds: 1=${preview.odds.home ?? "-"} X=${preview.odds.draw ?? "-"} 2=${preview.odds.away ?? "-"}; O2.5=${preview.odds.over25 ?? "-"} U2.5=${preview.odds.under25 ?? "-"}; BTTS Y=${preview.odds.bttsYes ?? "-"}`
+                : "",
+            ].filter(Boolean).join("\n");
+          }
+        }
+      } catch {
+        // Chat still works without match context.
+      }
+
+      const { chatWithAnalyst } = await import("./services/analysisChatService.js");
+      const reply = await chatWithAnalyst({ message, history, matchContext });
+      return c.json({ reply });
+    } catch (e: any) {
+      console.error("Analyst chat error:", e?.message || e);
       return c.json(
         { reply: "I'm having trouble responding right now. Please try again in a moment." },
         500

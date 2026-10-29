@@ -108,29 +108,113 @@ function bsdStatus(event: any): { state: 'pre' | 'in' | 'post'; short: string } 
   return { state: 'in', short: 'LIVE' };
 }
 
+function flattenBsdMarketPayload(odds: any): Record<string, number> {
+  const out: Record<string, number> = {};
+  const push = (key: any, value: any) => {
+    if (key === undefined || key === null) return;
+    const n = Number(value);
+    if (!Number.isFinite(n) || n <= 1) return;
+    out[String(key).trim()] = n;
+  };
+  const walk = (node: any, depth = 0) => {
+    if (node === null || node === undefined || depth > 4) return;
+    if (Array.isArray(node)) {
+      for (const item of node) walk(item, depth + 1);
+      return;
+    }
+    if (typeof node === 'number') return;
+    if (typeof node !== 'object') return;
+    const name = node.market_name ?? node.market ?? node.name ?? node.title ?? node.type ?? node.league_name;
+    const value = node.value ?? node.odd ?? node.odds ?? node.price;
+    if (name !== undefined && value !== undefined) {
+      push(`${name}`, value);
+      push(`${name}_${node.selection ?? node.outcome ?? node.side ?? ''}`.replace(/_$/, ''), value);
+    }
+    for (const [k, v] of Object.entries(node)) {
+      if (v && typeof v === 'object') walk(v, depth + 1);
+      else if (typeof v === 'number' || typeof v === 'string') push(k, v);
+    }
+  };
+  walk(odds);
+  return out;
+}
+
 function normaliseBsdOdds(odds: any) {
   if (!odds || typeof odds !== 'object') return null;
+  const flat = flattenBsdMarketPayload(odds);
   const pick = (...keys: string[]) => {
     for (const key of keys) {
-      const value = Number(odds[key]);
-      if (Number.isFinite(value) && value > 0) return value;
+      const value = Number(odds[key] ?? flat[key]);
+      if (Number.isFinite(value) && value > 1.01) return value;
     }
     return undefined;
   };
 
-  return {
-    home: pick('home_win', 'home', '1'),
-    draw: pick('draw', 'X'),
-    away: pick('away_win', 'away', '2'),
-    over15: pick('over_15_goals', 'over15', 'Over 1.5'),
-    under15: pick('under_15_goals', 'under15', 'Under 1.5'),
-    over25: pick('over_25_goals', 'over25', 'Over 2.5'),
-    under25: pick('under_25_goals', 'under25', 'Under 2.5'),
-    over35: pick('over_35_goals', 'over35', 'Over 3.5'),
-    under35: pick('under_35_goals', 'under35', 'Under 3.5'),
-    bttsYes: pick('btts_yes', 'bttsYes', 'BTTS Yes'),
-    bttsNo: pick('btts_no', 'bttsNo', 'BTTS No'),
+  const normalised = {
+    home: pick('home_win', 'home', '1', 'match_winner_home'),
+    draw: pick('draw', 'X', 'match_winner_draw'),
+    away: pick('away_win', 'away', '2', 'match_winner_away'),
+    dc1X: pick('double_chance_1x', 'dc_1x', '1x', 'double_chance_home_draw'),
+    dcX2: pick('double_chance_x2', 'dc_x2', 'x2', 'double_chance_draw_away'),
+    dc12: pick('double_chance_12', 'dc_12', '12', 'double_chance_home_away'),
+    over15: pick('over_15_goals', 'over15', 'Over 1.5', 'total_goals_over_1.5'),
+    under15: pick('under_15_goals', 'under15', 'Under 1.5', 'total_goals_under_1.5'),
+    over25: pick('over_25_goals', 'over25', 'Over 2.5', 'total_goals_over_2.5'),
+    under25: pick('under_25_goals', 'under25', 'Under 2.5', 'total_goals_under_2.5'),
+    over35: pick('over_35_goals', 'over35', 'Over 3.5', 'total_goals_over_3.5'),
+    under35: pick('under_35_goals', 'under35', 'Under 3.5', 'total_goals_under_3.5'),
+    over45: pick('over_45_goals', 'over45', 'Over 4.5'),
+    under45: pick('under_45_goals', 'under45', 'Under 4.5'),
+    bttsYes: pick('btts_yes', 'bttsYes', 'BTTS Yes', 'both_teams_to_score_yes'),
+    bttsNo: pick('btts_no', 'bttsNo', 'BTTS No', 'both_teams_to_score_no'),
+    dnb1: pick('dnb_home', 'dnb1', 'draw_no_bet_home', 'dnb_1'),
+    dnb2: pick('dnb_away', 'dnb2', 'draw_no_bet_away', 'dnb_2'),
+    htFtHomeHome: pick('halftime_fulltime_home_home', 'ht_ft_hh', '1_1', 'halftime_fulltime_1_1'),
+    htFtHomeDraw: pick('halftime_fulltime_home_draw', 'ht_ft_hd', '1_x'),
+    htFtHomeAway: pick('halftime_fulltime_home_away', 'ht_ft_ha', '1_2'),
+    htFtDrawHome: pick('halftime_fulltime_draw_home', 'ht_ft_dh', 'x_1'),
+    htFtDrawDraw: pick('halftime_fulltime_draw_draw', 'ht_ft_dd', 'x_x'),
+    htFtDrawAway: pick('halftime_fulltime_draw_away', 'ht_ft_da', 'x_2'),
+    htFtAwayHome: pick('halftime_fulltime_away_home', 'ht_ft_ah', '2_1'),
+    htFtAwayDraw: pick('halftime_fulltime_away_draw', 'ht_ft_ad', '2_x'),
+    htFtAwayAway: pick('halftime_fulltime_away_away', 'ht_ft_aa', '2_2'),
+    cornersOver85: pick('corners_over_8.5', 'corner_over_8.5', 'total_corners_over_8.5', 'over_8.5_corners'),
+    cornersUnder85: pick('corners_under_8.5', 'corner_under_8.5', 'total_corners_under_8.5', 'under_8.5_corners'),
+    cornersOver95: pick('corners_over_9.5', 'corner_over_9.5', 'total_corners_over_9.5', 'over_9.5_corners'),
+    cornersUnder95: pick('corners_under_9.5', 'corner_under_9.5', 'total_corners_under_9.5', 'under_9.5_corners'),
+    cornersOver105: pick('corners_over_10.5', 'corner_over_10.5', 'total_corners_over_10.5', 'over_10.5_corners'),
+    cornersUnder105: pick('corners_under_10.5', 'corner_under_10.5', 'total_corners_under_10.5', 'under_10.5_corners'),
+    cardsOver35: pick('cards_over_3.5', 'total_cards_over_3.5', 'over_3.5_cards', 'booking_over_3.5'),
+    cardsUnder35: pick('cards_under_3.5', 'total_cards_under_3.5', 'under_3.5_cards', 'booking_under_3.5'),
+    cardsOver45: pick('cards_over_4.5', 'total_cards_over_4.5', 'over_4.5_cards', 'booking_over_4.5'),
+    cardsUnder45: pick('cards_under_4.5', 'total_cards_under_4.5', 'under_4.5_cards', 'booking_under_4.5'),
+    yellowOver25: pick('yellow_cards_over_2.5', 'over_2.5_yellow_cards', 'yellow_over_2.5'),
+    yellowUnder25: pick('yellow_cards_under_2.5', 'under_2.5_yellow_cards', 'yellow_under_2.5'),
+    yellowOver35: pick('yellow_cards_over_3.5', 'over_3.5_yellow_cards', 'yellow_over_3.5'),
+    yellowUnder35: pick('yellow_cards_under_3.5', 'under_3.5_yellow_cards', 'yellow_under_3.5'),
+    cleanSheetHome: pick('clean_sheet_home', 'cs_home', 'home_clean_sheet'),
+    cleanSheetAway: pick('clean_sheet_away', 'cs_away', 'away_clean_sheet'),
   };
+
+  const present = Object.fromEntries(
+    Object.entries(normalised).filter(([, v]) => typeof v === 'number'),
+  );
+  if (!Object.keys(present).length) return null;
+  return { ...present, _raw: flat };
+}
+
+/** Best-effort view of every distinct market BSD exposed for this event. */
+export function summariseBsdMarkets(odds: any): { name: string; odds: Record<string, number> }[] {
+  const flat = flattenBsdMarketPayload(odds);
+  const buckets = new Map<string, Record<string, number>>();
+  for (const [key, value] of Object.entries(flat)) {
+    const match = key.match(/^(.*?)[_-]?(home|away|draw|yes|no|1x|x2|12|over|under|1|2|x)$/i);
+    const groupName = match ? match[1] : key;
+    const bucket = buckets.get(groupName) || {};
+    bucket[key] = value;
+    buckets.set(groupName, bucket);
+  }
+  return Array.from(buckets.entries()).map(([name, o]) => ({ name, odds: o })).slice(0, 60);
 }
 
 function mapBsdStats(payload: any) {
@@ -166,6 +250,30 @@ function mapBsdStats(payload: any) {
     corners: {
       home: String(value(home, 'corner_kicks', 'corners')),
       away: String(value(away, 'corner_kicks', 'corners')),
+    },
+    yellowCards: {
+      home: String(value(home, 'yellow_cards', 'yellowcards', 'bookings')),
+      away: String(value(away, 'yellow_cards', 'yellowcards', 'bookings')),
+    },
+    redCards: {
+      home: String(value(home, 'red_cards', 'redcards')),
+      away: String(value(away, 'red_cards', 'redcards')),
+    },
+    fouls: {
+      home: String(value(home, 'fouls', 'fouls_committed')),
+      away: String(value(away, 'fouls', 'fouls_committed')),
+    },
+    offsides: {
+      home: String(value(home, 'offsides', 'offside')),
+      away: String(value(away, 'offsides', 'offside')),
+    },
+    assists: {
+      home: String(value(home, 'assists')),
+      away: String(value(away, 'assists')),
+    },
+    saves: {
+      home: String(value(home, 'saves', 'goalkeeper_saves')),
+      away: String(value(away, 'saves', 'goalkeeper_saves')),
     },
   };
 }
@@ -236,6 +344,12 @@ function mapBSDEvent(event: any, leagueName?: string) {
       shotsOnTarget: { home: '0', away: '0' },
       shots: { home: '0', away: '0' },
       corners: { home: '0', away: '0' },
+      yellowCards: { home: '0', away: '0' },
+      redCards: { home: '0', away: '0' },
+      fouls: { home: '0', away: '0' },
+      offsides: { home: '0', away: '0' },
+      assists: { home: '0', away: '0' },
+      saves: { home: '0', away: '0' },
     },
     xG: mappedXg || { home: 0, away: 0 },
     ...(odds ? { odds } : {}),
@@ -413,8 +527,10 @@ export async function getLiveMatchPreview(fixtureId: string) {
     if (!event || typeof event !== 'object') return null;
 
     const mapped: any = mapBSDEvent(event, leagues[Number(event?.league_id)]);
-    const odds = normaliseBsdOdds(oddsResult?.odds);
+    const odds = normaliseBsdOdds(oddsResult?.odds ?? oddsResult);
     if (odds) mapped.odds = odds;
+    const marketSummary = summariseBsdMarkets(oddsResult?.odds ?? oddsResult);
+    if (marketSummary.length) mapped.marketBoard = marketSummary;
 
     const stats = mapBsdStats(statsResult);
     if (stats) mapped.stats = stats;
@@ -508,8 +624,6 @@ export async function getMatchDetails(fixtureId: number | string, match?: any): 
         odds: {
           ...defaultOdds,
           ...(bsdMatch.odds || {}),
-          dc1X: 1.3,
-          dcX2: 1.7,
         },
         deepContext: {
           bsd: bsdMatch,

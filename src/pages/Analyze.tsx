@@ -1,7 +1,7 @@
 import React, { useState, useRef, useEffect } from 'react';
 import { motion, AnimatePresence } from 'motion/react';
 import { Skeleton } from '../components/ui/Skeleton';
-import { 
+import { MessageCircle, 
   Sparkles, 
   BrainCircuit, 
   Image as ImageIcon, 
@@ -40,6 +40,8 @@ export const Analyze: React.FC<{ onTabChange?: (tab: string) => void }> = ({ onT
   const [showInsufficientSheet, setShowInsufficientSheet] = useState(false);
   const [creditMeta, setCreditMeta] = useState({ required: 1, current: 0 });
   const [loadingMessageIndex, setLoadingMessageIndex] = useState(0);
+  const [chatMessages, setChatMessages] = useState<{ role: 'user' | 'assistant'; text: string }[]>([]);
+  const [chatBusy, setChatBusy] = useState(false);
   const fileInputRef = useRef<HTMLInputElement>(null);
   const scrollRef = useRef<HTMLDivElement>(null);
 
@@ -65,6 +67,12 @@ export const Analyze: React.FC<{ onTabChange?: (tab: string) => void }> = ({ onT
   } = useUserStore();
 
   const { hapticFeedback, initData, tg, showAlert } = useTelegram();
+
+  useEffect(() => {
+    if ((chatMessages.length || chatBusy) && scrollRef.current) {
+      scrollRef.current.scrollTo({ top: scrollRef.current.scrollHeight, behavior: 'smooth' });
+    }
+  }, [chatMessages, chatBusy]);
 
   useEffect(() => {
     let interval: NodeJS.Timeout;
@@ -187,6 +195,7 @@ export const Analyze: React.FC<{ onTabChange?: (tab: string) => void }> = ({ onT
     if (selectedMatch) {
       setError(null);
       setAnalysisResult(null);
+      setChatMessages([]);
       setIsAnalyzing(true);
       return;
     }
@@ -214,7 +223,8 @@ export const Analyze: React.FC<{ onTabChange?: (tab: string) => void }> = ({ onT
     }
     
     setError(null);
-    setIsAnalyzing(true);
+    const isChatTurn = Boolean(selectedMatch && analysisResult && input.trim() && images.length === 0);
+    if (!isChatTurn) setIsAnalyzing(true);
 
     if (images.length > 0) {
       setBetSlipResult(null);
@@ -257,9 +267,47 @@ export const Analyze: React.FC<{ onTabChange?: (tab: string) => void }> = ({ onT
         setIsAnalyzing(false);
         setImages([]);
       }
+    } else if (selectedMatch && analysisResult && input.trim()) {
+      // Multi-turn analyst chat about the current fixture
+      const userText = input.trim();
+      setInput('');
+      setChatMessages((prev) => [...prev, { role: 'user', text: userText }]);
+      setChatBusy(true);
+      try {
+        const res = await fetch('/api/analyze/chat', {
+          method: 'POST',
+          headers: {
+            'Content-Type': 'application/json',
+            'X-TG-Init-Data': initData || '',
+          },
+          body: JSON.stringify({
+            message: userText,
+            history: chatMessages.slice(-10).map((m) => ({ role: m.role, text: m.text })),
+            matchId: selectedMatch.id,
+            matchString: `${selectedMatch.home} vs ${selectedMatch.away}`,
+          }),
+        });
+        const data = await res.json();
+        if (!res.ok) {
+          setChatMessages((prev) => [
+            ...prev,
+            { role: 'assistant', text: data.reply || data.error || 'Chat failed. Please try again.' },
+          ]);
+          return;
+        }
+        setChatMessages((prev) => [...prev, { role: 'assistant', text: data.reply || 'No reply.' }]);
+      } catch {
+        setChatMessages((prev) => [
+          ...prev,
+          { role: 'assistant', text: 'Chat failed. Check your connection and try again.' },
+        ]);
+      } finally {
+        setChatBusy(false);
+      }
     } else if (selectedMatch) {
       // Trigger analysis for the selected match
       setAnalysisResult(null);
+      setChatMessages([]);
       setIsAnalyzing(true);
       setInput('');
     } else if (input.trim()) {
@@ -469,6 +517,7 @@ export const Analyze: React.FC<{ onTabChange?: (tab: string) => void }> = ({ onT
                     onClick={() => {
                       setSelectedMatch(null);
                       setAnalysisResult(null);
+                      setChatMessages([]);
                       setError(null);
                     }}
                     className="p-1.5 bg-zinc-800/50 rounded-lg hover:bg-zinc-700/50 transition-colors"
@@ -961,6 +1010,38 @@ export const Analyze: React.FC<{ onTabChange?: (tab: string) => void }> = ({ onT
             </motion.div>
           )}
         </AnimatePresence>
+
+        {selectedMatch && analysisResult && (chatMessages.length > 0 || chatBusy) && (
+          <div className="mt-8 space-y-3 pb-4">
+            <p className="text-[10px] font-black text-zinc-500 tracking-widest flex items-center gap-2">
+              <MessageCircle className="w-3 h-3" />
+              Analyst chat
+            </p>
+            {chatMessages.map((msg, i) => (
+              <div
+                key={i}
+                className={`flex ${msg.role === 'user' ? 'justify-end' : 'justify-start'}`}
+              >
+                <div
+                  className={`max-w-[85%] rounded-2xl px-4 py-2.5 text-[13px] leading-relaxed whitespace-pre-wrap ${
+                    msg.role === 'user'
+                      ? 'bg-[#ccff00] text-black font-medium rounded-br-md'
+                      : 'bg-zinc-900/70 border border-zinc-800/60 text-zinc-200 rounded-bl-md'
+                  }`}
+                >
+                  {msg.text}
+                </div>
+              </div>
+            ))}
+            {chatBusy && (
+              <div className="flex justify-start">
+                <div className="bg-zinc-900/70 border border-zinc-800/60 rounded-2xl rounded-bl-md px-4 py-3">
+                  <Loader2 className="w-4 h-4 text-[#ccff00] animate-spin" />
+                </div>
+              </div>
+            )}
+          </div>
+        )}
       </div>
 
       {/* Floating Bottom Input Bar */}

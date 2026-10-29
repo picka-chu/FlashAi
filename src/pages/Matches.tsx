@@ -87,6 +87,7 @@ export const Matches: React.FC<MatchesProps> = ({ onTabChange }) => {
               : offset === 1
                 ? 'Tomorrow'
                 : date.toLocaleDateString('en-GB', { weekday: 'short', day: 'numeric' }),
+          fullLabel: date.toLocaleDateString('en-GB', { weekday: 'long', day: 'numeric', month: 'short' }),
         };
       }),
     [todayKey],
@@ -110,33 +111,32 @@ export const Matches: React.FC<MatchesProps> = ({ onTabChange }) => {
     String(m.away).toLowerCase().includes(query) ||
     String(m.league).toLowerCase().includes(query);
 
-  const upcomingList = useMemo(
-    () =>
-      matches
-        .filter((m) => (isSearching ? true : m.dateKey === selectedDate))
-        .filter(matchesQuery)
-        .sort((a, b) => (isSearching ? a.dateKey.localeCompare(b.dateKey) : 0) || compareByPriority(a, b)),
-    [matches, selectedDate, query, isSearching],
-  );
+  const upcomingList = useMemo(() => {
+    if (searchOpen && !query) return [];
+    return matches
+      .filter((m) => (searchOpen ? true : m.dateKey === selectedDate))
+      .filter(matchesQuery)
+      .sort((a, b) => (searchOpen ? a.dateKey.localeCompare(b.dateKey) : 0) || compareByPriority(a, b));
+  }, [matches, selectedDate, query, searchOpen]);
 
   const liveList = useMemo(
     () => liveMatches.filter(matchesQuery).sort(compareByPriority),
     [liveMatches, query],
   );
 
-  const activeList = activeMatchType === 'live' ? liveList : upcomingList;
+  const activeList = searchOpen ? upcomingList : activeMatchType === 'live' ? liveList : upcomingList;
 
   const groups = useMemo(() => {
     const map = new Map<string, { label: string; rows: any[] }>();
     for (const m of activeList) {
       const league = m.league || 'Other competitions';
-      const key = isSearching && activeMatchType === 'prematch' ? `${m.dateKey}|${league}` : league;
-      const label = isSearching && activeMatchType === 'prematch' ? `${dayLabelFor(m.dateKey)} · ${league}` : league;
+      const key = searchOpen ? `${m.dateKey}|${league}` : league;
+      const label = searchOpen ? `${dayLabelFor(m.dateKey)} · ${league}` : league;
       if (!map.has(key)) map.set(key, { label, rows: [] });
       map.get(key)!.rows.push(m);
     }
     return Array.from(map.values());
-  }, [activeList, isSearching, activeMatchType, todayKey]);
+  }, [activeList, searchOpen, dateOptions]);
 
   const handleAnalyzePrematch = (match: any) => {
     if (!user?.phone) {
@@ -177,40 +177,63 @@ export const Matches: React.FC<MatchesProps> = ({ onTabChange }) => {
     setSearchQuery('');
   };
 
-  const isLoading = loading || (activeMatchType === 'live' && liveLoading);
-  const showLiveGate = activeMatchType === 'live' && !isSubscribed;
+  const isLoading = loading || (!searchOpen && activeMatchType === 'live' && liveLoading);
+  const showLiveGate = !searchOpen && activeMatchType === 'live' && !isSubscribed;
   const selectedLabel = dayLabelFor(selectedDate);
+  const emptyTitle = searchOpen
+    ? query
+      ? 'No results'
+      : 'Search fixtures'
+    : activeMatchType === 'live'
+      ? 'No live matches'
+      : `No fixtures on ${selectedLabel}`;
+  const emptyText = searchOpen
+    ? query
+      ? `Nothing matches “${searchQuery.trim()}”. Try another team or league.`
+      : 'Find a team or competition across the next 8 days.'
+    : activeMatchType === 'live'
+      ? 'There are no live fixtures right now. Check back shortly.'
+      : 'Choose another day above.';
 
   return (
     <div className="flex h-full min-h-0 flex-col overflow-hidden bg-[var(--background)] text-[var(--foreground)]">
-      <header className="flex-none space-y-4 px-5 pb-0 pt-5">
-        <div className="flex h-10 items-center gap-3">
+      <header className="relative z-10 flex-none border-b border-[var(--border)] bg-[var(--background)] px-5 pt-3">
+        <div className="flex h-9 items-center gap-2">
           {searchOpen ? (
             <>
               <div className="relative min-w-0 flex-1">
-                <Search className="pointer-events-none absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-[var(--text-subtle)]" />
+                <Search className="pointer-events-none absolute left-3 top-1/2 h-3.5 w-3.5 -translate-y-1/2 text-[var(--text-subtle)]" />
                 <input
                   ref={searchInputRef}
                   value={searchQuery}
                   onChange={(e) => setSearchQuery(e.target.value)}
                   placeholder="Search teams or leagues"
-                  className="h-10 w-full rounded-xl border border-[var(--border)] bg-[var(--surface-1)] pl-9 pr-3 text-[14px] text-[var(--text-strong)] placeholder:text-[var(--text-subtle)] outline-none transition-colors focus:border-[var(--primary)]/50"
+                  className="h-9 w-full rounded-lg border border-[var(--border)] bg-[var(--surface-1)] pl-9 pr-9 text-[13px] text-[var(--text-strong)] placeholder:text-[var(--text-subtle)] outline-none transition-colors focus:border-[var(--primary)]/50"
                 />
+                {searchQuery && (
+                  <button
+                    type="button"
+                    onClick={() => setSearchQuery('')}
+                    aria-label="Clear search"
+                    className="absolute right-1.5 top-1/2 flex h-6 w-6 -translate-y-1/2 items-center justify-center rounded-md text-[var(--text-subtle)] hover:text-[var(--text-strong)]"
+                  >
+                    <X className="h-3.5 w-3.5" />
+                  </button>
+                )}
               </div>
               <button
                 type="button"
                 onClick={closeSearch}
-                aria-label="Close search"
-                className="flex h-10 w-10 shrink-0 items-center justify-center rounded-xl text-[var(--text-muted)] hover:text-[var(--text-strong)]"
+                className="h-9 shrink-0 px-1 text-[13px] font-medium text-[var(--primary)]"
               >
-                <X className="h-4 w-4" />
+                Cancel
               </button>
             </>
           ) : (
             <>
-              <h1 className="min-w-0 flex-1 truncate text-[22px] font-semibold tracking-tight text-[var(--text-strong)]">Matches</h1>
+              <h1 className="min-w-0 flex-1 truncate text-[20px] font-semibold tracking-tight text-[var(--text-strong)]">Matches</h1>
               {user?.phone && (
-                <span className="flex items-center gap-1.5 text-[13px] text-[var(--text-muted)]">
+                <span className="flex items-center gap-1 text-[12px] text-[var(--text-muted)]">
                   <Zap className={`h-3.5 w-3.5 ${user.credits <= 0 ? 'text-[var(--danger)]' : 'text-[var(--primary)]'}`} fill="currentColor" />
                   <span className={`tabular font-medium ${user.credits <= 0 ? 'text-[var(--danger)]' : 'text-[var(--text-strong)]'}`}>{user.credits}</span>
                 </span>
@@ -219,70 +242,75 @@ export const Matches: React.FC<MatchesProps> = ({ onTabChange }) => {
                 type="button"
                 onClick={() => { hapticFeedback('light'); setSearchOpen(true); }}
                 aria-label="Search matches"
-                className="flex h-10 w-10 shrink-0 items-center justify-center rounded-xl text-[var(--text-muted)] transition-colors hover:bg-white/[0.05] hover:text-[var(--text-strong)]"
+                className="flex h-9 w-9 shrink-0 items-center justify-center rounded-lg text-[var(--text-muted)] transition-colors hover:bg-white/[0.05] hover:text-[var(--text-strong)]"
               >
-                <Search className="h-[18px] w-[18px]" />
+                <Search className="h-[17px] w-[17px]" />
               </button>
             </>
           )}
         </div>
 
-        <div role="tablist" className="flex gap-6 border-b border-[var(--border)]">
-          {([
-            ['prematch', 'Upcoming'],
-            ['live', 'Live'],
-          ] as const).map(([value, label]) => {
-            const active = activeMatchType === value;
-            return (
-              <button
-                key={value}
-                type="button"
-                role="tab"
-                aria-selected={active}
-                onClick={() => setActiveMatchType(value)}
-                className={`-mb-px border-b-2 pb-3 text-[14px] font-medium transition-colors ${
-                  active ? 'border-[var(--primary)] text-[var(--text-strong)]' : 'border-transparent text-[var(--text-subtle)] hover:text-[var(--text-muted)]'
-                }`}
-              >
-                {label}
-              </button>
-            );
-          })}
-        </div>
+        {!searchOpen && (
+          <>
+            <div role="tablist" className="mt-1 flex gap-5 border-b border-[var(--border)]">
+              {([
+                ['prematch', 'Upcoming'],
+                ['live', 'Live'],
+              ] as const).map(([value, label]) => {
+                const active = activeMatchType === value;
+                return (
+                  <button
+                    key={value}
+                    type="button"
+                    role="tab"
+                    aria-selected={active}
+                    onClick={() => setActiveMatchType(value)}
+                    className={`-mb-px border-b-2 pb-2 text-[13px] font-medium transition-colors ${
+                      active ? 'border-[var(--primary)] text-[var(--text-strong)]' : 'border-transparent text-[var(--text-subtle)] hover:text-[var(--text-muted)]'
+                    }`}
+                  >
+                    {label}
+                  </button>
+                );
+              })}
+            </div>
 
-        {activeMatchType === 'prematch' && !isSearching && (
-          <div className="no-scrollbar -mx-5 flex gap-1.5 overflow-x-auto px-5 pb-4">
-            {dateOptions.map((day) => {
-              const active = day.key === selectedDate;
-              return (
-                <button
-                  key={day.key}
-                  type="button"
-                  onClick={() => { hapticFeedback('light'); setSelectedDate(day.key); }}
-                  aria-pressed={active}
-                  className={`h-9 shrink-0 rounded-lg px-3.5 text-[13px] font-medium transition-colors ${
-                    active
-                      ? 'bg-[var(--surface-3)] text-[var(--text-strong)] ring-1 ring-[var(--primary)]/50'
-                      : 'text-[var(--text-muted)] hover:bg-white/[0.04] hover:text-[var(--text-strong)]'
-                  }`}
-                >
-                  {day.label}
-                </button>
-              );
-            })}
-          </div>
+            {activeMatchType === 'prematch' && (
+              <div className="no-scrollbar -mx-5 flex gap-1.5 overflow-x-auto px-5 py-2.5">
+                {dateOptions.map((day) => {
+                  const active = day.key === selectedDate;
+                  return (
+                    <button
+                      key={day.key}
+                      type="button"
+                      onClick={() => { hapticFeedback('light'); setSelectedDate(day.key); }}
+                      aria-pressed={active}
+                      aria-label={day.fullLabel}
+                      className={`h-8 shrink-0 rounded-full px-3 text-[12px] font-medium transition-colors ${
+                        active
+                          ? 'bg-[var(--primary)] text-[var(--primary-foreground)]'
+                          : 'border border-[var(--border)] bg-[var(--surface-1)] text-[var(--text-muted)] hover:text-[var(--text-strong)]'
+                      }`}
+                    >
+                      {day.label}
+                    </button>
+                  );
+                })}
+              </div>
+            )}
+          </>
         )}
       </header>
 
-      <div className="no-scrollbar min-h-0 flex-1 overflow-y-auto px-5 pb-28 pt-4">
+      <div className="no-scrollbar min-h-0 flex-1 overflow-y-auto overscroll-contain px-5 pb-6 pt-3">
         {isLoading ? (
-          <div className="space-y-3">
-            <Skeleton className="h-[72px] w-full rounded-2xl" />
-            <Skeleton className="h-[72px] w-full rounded-2xl" />
-            <Skeleton className="h-[72px] w-full rounded-2xl" />
+          <div className="space-y-2.5">
+            <Skeleton className="h-16 w-full rounded-2xl" />
+            <Skeleton className="h-16 w-full rounded-2xl" />
+            <Skeleton className="h-16 w-full rounded-2xl" />
           </div>
         ) : showLiveGate ? (
-          <div className="space-y-3 rounded-[20px] border border-[var(--border)] bg-[var(--surface-1)] p-6">
+          <div className="space-y-3 rounded-2xl border border-[var(--border)] bg-[var(--surface-1)] p-5">
             <Lock className="h-5 w-5 text-[var(--text-muted)]" />
             <h3 className="text-[15px] font-semibold text-[var(--text-strong)]">Live matches are on paid plans</h3>
             <p className="text-[13px] leading-relaxed text-[var(--text-muted)]">
@@ -290,20 +318,21 @@ export const Matches: React.FC<MatchesProps> = ({ onTabChange }) => {
             </p>
           </div>
         ) : groups.length > 0 ? (
-          <div className="space-y-5">
+          <div className="space-y-4">
             {groups.map((group) => (
-              <section key={group.label} className="space-y-2">
-                <div className="flex items-center justify-between px-1">
-                  <p className="truncate text-[13px] font-medium text-[var(--text-muted)]">{group.label}</p>
-                  <span className="tabular text-[12px] text-[var(--text-subtle)]">{group.rows.length}</span>
+              <section key={group.label} className="space-y-1.5">
+                <div className="flex items-center gap-2 px-1">
+                  <p className="truncate text-[11px] font-semibold uppercase tracking-[0.08em] text-[var(--text-subtle)]">{group.label}</p>
+                  <span className="h-px flex-1 bg-[var(--border)]" />
+                  <span className="tabular text-[11px] text-[var(--text-subtle)]">{group.rows.length}</span>
                 </div>
-                <div className="overflow-hidden rounded-[20px] border border-[var(--border)] bg-[var(--surface-1)]">
+                <div className="overflow-hidden rounded-2xl border border-[var(--border)] bg-[var(--surface-1)]">
                   {group.rows.map((match: any, idx: number) => (
                     <FixtureRow
                       key={match.id || `${group.label}-${idx}`}
                       match={match}
                       isLast={idx === group.rows.length - 1}
-                      onClick={() => (activeMatchType === 'live' ? handleOpenLivePreview(match) : handleAnalyzePrematch(match))}
+                      onClick={() => (activeMatchType === 'live' && !searchOpen ? handleOpenLivePreview(match) : handleAnalyzePrematch(match))}
                     />
                   ))}
                 </div>
@@ -312,16 +341,8 @@ export const Matches: React.FC<MatchesProps> = ({ onTabChange }) => {
           </div>
         ) : (
           <div className="py-16 text-center">
-            <p className="text-[15px] font-semibold text-[var(--text-strong)]">
-              {activeMatchType === 'live' ? 'No live matches' : isSearching ? 'No results' : `No fixtures on ${selectedLabel}`}
-            </p>
-            <p className="mx-auto mt-1 max-w-[260px] text-[13px] leading-relaxed text-[var(--text-muted)]">
-              {activeMatchType === 'live'
-                ? 'There are no live fixtures right now. Check back shortly.'
-                : isSearching
-                  ? `Nothing matches “${searchQuery.trim()}”. Try a different team or league.`
-                  : 'Choose another day above.'}
-            </p>
+            <p className="text-[15px] font-semibold text-[var(--text-strong)]">{emptyTitle}</p>
+            <p className="mx-auto mt-1 max-w-[260px] text-[13px] leading-relaxed text-[var(--text-muted)]">{emptyText}</p>
           </div>
         )}
       </div>
