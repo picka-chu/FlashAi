@@ -178,8 +178,16 @@ export function calculatePoissonProbabilities(
   lambdaHome: number,
   lambdaAway: number
 ): Probabilities & {
+  over05: number;
+  under05: number;
   over45: number;
   under45: number;
+  over55: number;
+  under55: number;
+  homeScores: number;
+  awayScores: number;
+  homeOver05: number;
+  awayOver05: number;
   csHome: number;
   csAway: number;
 } {
@@ -213,19 +221,23 @@ export function calculatePoissonProbabilities(
   const denominator = matrixTotal > 0 ? matrixTotal : 1;
 
   let homeWin = 0, draw = 0, awayWin = 0;
-  let bttsYes = 0, over15 = 0, over25 = 0, over35 = 0, over45 = 0;
-  let csHome = 0, csAway = 0;
+  let bttsYes = 0, over05 = 0, over15 = 0, over25 = 0, over35 = 0, over45 = 0, over55 = 0;
+  let homeScores = 0, awayScores = 0, csHome = 0, csAway = 0;
   for (const { h, a, p: rawP } of matrix) {
     const p = rawP / denominator;
     if (h > a) homeWin += p;
     else if (h < a) awayWin += p;
     else draw += p;
 
+    if (h > 0) homeScores += p;
+    if (a > 0) awayScores += p;
+    if (h + a >= 1) over05 += p;
     if (h > 0 && a > 0) bttsYes += p;
     if (h + a >= 2) over15 += p;
     if (h + a >= 3) over25 += p;
     if (h + a >= 4) over35 += p;
     if (h + a >= 5) over45 += p;
+    if (h + a >= 6) over55 += p;
     if (a === 0) csHome += p;
     if (h === 0) csAway += p;
   }
@@ -241,6 +253,7 @@ export function calculatePoissonProbabilities(
     dc1X: homeWin + draw,
     dcX2: awayWin + draw,
     dc12: homeWin + awayWin,
+    over05, under05: 1 - over05,
     over15, under15: 1 - over15,
     over25, under25: 1 - over25,
     over35, under35: 1 - over35,
@@ -248,6 +261,9 @@ export function calculatePoissonProbabilities(
     dnb1: homeWin / nonDraw,
     dnb2: awayWin / nonDraw,
     over45, under45: 1 - over45,
+    over55, under55: 1 - over55,
+    homeScores, awayScores,
+    homeOver05: homeScores, awayOver05: awayScores,
     csHome, csAway,
   };
 }
@@ -331,6 +347,14 @@ export function calculateValue(
     under45?: number;
     csHome?: number;
     csAway?: number;
+    over05?: number;
+    under05?: number;
+    over55?: number;
+    under55?: number;
+    homeScores?: number;
+    awayScores?: number;
+    homeOver05?: number;
+    awayOver05?: number;
   },
   odds: MatchData["odds"]
 ): (ValueBet & { ev: number; kellyFraction: number })[] {
@@ -341,6 +365,8 @@ export function calculateValue(
     { name: "1X", prob: probs.dc1X, oddsKeys: ["dc1X", "1X"] },
     { name: "X2", prob: probs.dcX2, oddsKeys: ["dcX2", "X2"] },
     { name: "12", prob: probs.dc12, oddsKeys: ["dc12", "12"] },
+    { name: "Over 0.5 Goals", prob: probs.over05 ?? 0, oddsKeys: ["over05", "over_05_goals", "over_0_5", "Over 0.5"] },
+    { name: "Under 0.5 Goals", prob: probs.under05 ?? 0, oddsKeys: ["under05", "under_05_goals", "under_0_5", "Under 0.5"] },
     { name: "Over 1.5 Goals", prob: probs.over15, oddsKeys: ["over15", "Over 1.5"] },
     { name: "Under 1.5", prob: probs.under15, oddsKeys: ["under15", "Under 1.5"] },
     { name: "Over 2.5 Goals", prob: probs.over25, oddsKeys: ["over25", "Over 2.5"] },
