@@ -52,92 +52,82 @@ function dixonColesCorrection(
 // Home advantage +8% (consistent across top European leagues).
 // ─────────────────────────────────────────────────────────────────────────────
 export function computeFeatures(data: MatchData) {
+  const finiteNonNegative = (value: unknown, fallback = 0) =>
+    typeof value === "number" && Number.isFinite(value) && value >= 0 ? value : fallback;
   const safeDiv = (a: number, b: number, fallback = 1.0) =>
     b > 0 ? a / b : fallback;
 
-  // ── Season averages ────────────────────────────────────────────────────────
-  const homePlayed  = data.home.season.played  || 1;
-  const awayPlayed  = data.away.season.played  || 1;
+  const homePlayed = finiteNonNegative(data.home?.season?.played);
+  const awayPlayed = finiteNonNegative(data.away?.season?.played);
+  const homeScored = finiteNonNegative(data.home?.season?.goalsScored);
+  const awayScored = finiteNonNegative(data.away?.season?.goalsScored);
+  const homeConceded = finiteNonNegative(data.home?.season?.goalsConceded);
+  const awayConceded = finiteNonNegative(data.away?.season?.goalsConceded);
 
-  const homeAttackSeason  = safeDiv(data.home.season.goalsScored,   homePlayed);
-  const awayAttackSeason  = safeDiv(data.away.season.goalsScored,   awayPlayed);
-  const homeDefenseSeason = safeDiv(data.home.season.goalsConceded, homePlayed);
-  const awayDefenseSeason = safeDiv(data.away.season.goalsConceded, awayPlayed);
+  // Do not manufacture season averages from a zero-game denominator. The
+  // conservative fallback is used only to keep the model finite; data quality
+  // is reduced below so the UI can communicate that uncertainty.
+  const homeAttackSeason = safeDiv(homeScored, homePlayed, 1.25);
+  const awayAttackSeason = safeDiv(awayScored, awayPlayed, 1.10);
+  const homeDefenseSeason = safeDiv(homeConceded, homePlayed, 1.25);
+  const awayDefenseSeason = safeDiv(awayConceded, awayPlayed, 1.25);
 
-  // ── Form decay (last 5, newest = highest weight) ──────────────────────────
   const FORM_WEIGHTS = [5, 4, 3, 2, 1];
-  const WEIGHT_SUM   = FORM_WEIGHTS.reduce((a, b) => a + b, 0);
-
+  const WEIGHT_SUM = FORM_WEIGHTS.reduce((sum, weight) => sum + weight, 0);
   const computeFormMetrics = (
     goalsScored: number,
     goalsConceded: number,
     results: string[]
   ) => {
-    const games = Math.max(results.length, 1);
-    const formScore =
-      results
-        .slice(0, 5)
-        .reduce((acc, r, i) => acc + (r === "W" ? 3 : r === "D" ? 1 : 0) * (FORM_WEIGHTS[i] ?? 1), 0) /
-      (WEIGHT_SUM * 3); // normalised 0-1
-
+    const recentResults = Array.isArray(results) ? results.slice(0, 5) : [];
+    const games = Math.max(Math.min(recentResults.length, 5), 1);
+    const formScore = recentResults.reduce((sum, result, index) =>
+      sum + (result === "W" ? 3 : result === "D" ? 1 : 0) *
+        (FORM_WEIGHTS[index] ?? 1), 0) / (WEIGHT_SUM * 3);
     return {
-      attack:    safeDiv(goalsScored,   games),
-      defense:   safeDiv(goalsConceded, games),
-      formScore,
+      attack: safeDiv(finiteNonNegative(goalsScored), games, 1.1),
+      defense: safeDiv(finiteNonNegative(goalsConceded), games, 1.25),
+      formScore: Math.min(1, Math.max(0, formScore)),
     };
   };
 
+  const homeResults = data.home?.last5?.results ?? [];
+  const awayResults = data.away?.last5?.results ?? [];
   const homeForm = computeFormMetrics(
-    data.home.last5.goalsScored,
-    data.home.last5.goalsConceded,
-    data.home.last5.results
+    data.home?.last5?.goalsScored ?? 0,
+    data.home?.last5?.goalsConceded ?? 0,
+    homeResults
   );
   const awayForm = computeFormMetrics(
-    data.away.last5.goalsScored,
-    data.away.last5.goalsConceded,
-    data.away.last5.results
+    data.away?.last5?.goalsScored ?? 0,
+    data.away?.last5?.goalsConceded ?? 0,
+    awayResults
   );
 
-  // ── Blend season (60%) + recent form (40%) ─────────────────────────────────
-  const homeAttack  = homeAttackSeason  * 0.6 + homeForm.attack  * 0.4;
-  const awayAttack  = awayAttackSeason  * 0.6 + awayForm.attack  * 0.4;
-  const homeDefense = homeDefenseSeason * 0.6 + homeForm.defense * 0.4;
-  const awayDefense = awayDefenseSeason * 0.6 + awayForm.defense * 0.4;
+  const homeAttack = homeAttackSeason * 0.65 + homeForm.attack * 0.35;
+  const awayAttack = awayAttackSeason * 0.65 + awayForm.attack * 0.35;
+  const homeDefense = homeDefenseSeason * 0.65 + homeForm.defense * 0.35;
+  const awayDefense = awayDefenseSeason * 0.65 + awayForm.defense * 0.35;
 
-  // ── League average with sensible defaults ─────────────────────────────────
-  const league = data.leagueAvgGoals && data.leagueAvgGoals > 0.5
-    ? data.leagueAvgGoals
-    : 2.65; // European average
+  const rawLeague = finiteNonNegative(data.leagueAvgGoals, 2.65);
+  const league = rawLeague >= 1.5 && rawLeague <= 4.5 ? rawLeague : 2.65;
 
-  // ── Dixon-Coles lambdas ────────────────────────────────────────────────────
-  let lambdaHome =
-    safeDiv(homeAttack,  league) *
-    safeDiv(awayDefense, league) *
-    league;
+  let lambdaHome = safeDiv(homeAttack, league) * safeDiv(awayDefense, league) * league;
+  let lambdaAway = safeDiv(awayAttack, league) * safeDiv(homeDefense, league) * league;
 
-  let lambdaAway =
-    safeDiv(awayAttack,  league) *
-    safeDiv(homeDefense, league) *
-    league;
-
-  // ── xG overlay (BSD live data, 30% weight) ────────────────────────────────
-  const homeXG = data.deepContext?.xG?.home;
-  const awayXG = data.deepContext?.xG?.away;
-  if (homeXG && awayXG && homeXG > 0 && awayXG > 0) {
-    lambdaHome = lambdaHome * 0.70 + homeXG * 0.30;
-    lambdaAway = lambdaAway * 0.70 + awayXG * 0.30;
+  // Only use explicitly labelled pre-match expected-goal estimates. Accumulated
+  // live xG is not a full-match lambda and must not be mixed into pre-match
+  // expectations; doing so double-counts elapsed match information.
+  const expectedHomeXG = finiteNonNegative(data.deepContext?.expectedGoals?.home, -1);
+  const expectedAwayXG = finiteNonNegative(data.deepContext?.expectedGoals?.away, -1);
+  if (expectedHomeXG > 0 && expectedAwayXG > 0) {
+    lambdaHome = lambdaHome * 0.8 + expectedHomeXG * 0.2;
+    lambdaAway = lambdaAway * 0.8 + expectedAwayXG * 0.2;
   }
 
-  // ── Home advantage +8% ────────────────────────────────────────────────────
   lambdaHome *= 1.08;
-
-  // ── Form momentum boost (hot teams) ──────────────────────────────────────
-  if (homeForm.formScore > 0.75) lambdaHome *= 1.05;
-  if (awayForm.formScore > 0.75) lambdaAway *= 1.05;
-
-  // ── Sanity bounds ─────────────────────────────────────────────────────────
-  lambdaHome = Math.max(0.30, Math.min(lambdaHome, 5.0));
-  lambdaAway = Math.max(0.30, Math.min(lambdaAway, 5.0));
+  lambdaHome = Math.min(5, Math.max(0.3, Number.isFinite(lambdaHome) ? lambdaHome : 1.35));
+  lambdaAway = Math.min(5, Math.max(0.3, Number.isFinite(lambdaAway) ? lambdaAway : 1.10));
 
   return {
     lambdaHome,
@@ -150,29 +140,36 @@ export function computeFeatures(data: MatchData) {
 
 // ─── Data quality score ───────────────────────────────────────────────────────
 function computeDataQuality(data: MatchData): number {
-  let score = 0.40; // base
+  let score = 0.20;
 
-  // Season data depth
-  if (data.home.season.played >= 5)  score += 0.05;
-  if (data.home.season.played >= 10) score += 0.10;
-  if (data.away.season.played >= 5)  score += 0.05;
-  if (data.away.season.played >= 10) score += 0.10;
+  const homePlayed = finiteDataNumber(data.home?.season?.played);
+  const awayPlayed = finiteDataNumber(data.away?.season?.played);
+  if (homePlayed >= 5) score += 0.10;
+  if (homePlayed >= 10) score += 0.08;
+  if (awayPlayed >= 5) score += 0.10;
+  if (awayPlayed >= 10) score += 0.08;
 
-  // Form data
-  if (data.home.last5.results.length >= 5) score += 0.05;
-  if (data.away.last5.results.length >= 5) score += 0.05;
+  if ((data.home?.last5?.results?.length ?? 0) >= 3) score += 0.07;
+  if ((data.home?.last5?.results?.length ?? 0) >= 5) score += 0.04;
+  if ((data.away?.last5?.results?.length ?? 0) >= 3) score += 0.07;
+  if ((data.away?.last5?.results?.length ?? 0) >= 5) score += 0.04;
 
-  // Live data bonuses
-  if (data.deepContext?.xG)                     score += 0.08;
-  if (data.odds && Object.keys(data.odds).length > 4) score += 0.07;
+  // Odds add market context, but are not a substitute for complete team data.
+  const validOdds = Object.values(data.odds ?? {}).filter((odd) =>
+    typeof odd === "number" && Number.isFinite(odd) && odd > 1.01 && odd <= 100
+  ).length;
+  if (validOdds >= 3) score += 0.08;
 
-  // Penalty if data came from AI fallback (not real sports API)
   if ((data as any).dataSource === "gemini_search") score -= 0.15;
-  if ((data as any).dataQualityWarning)              score -= 0.10;
+  if ((data as any).dataQualityWarning) score -= 0.10;
+  if (homePlayed === 0 || awayPlayed === 0) score -= 0.15;
 
-  return Math.min(Math.max(score, 0.0), 1.0);
+  return Math.min(1, Math.max(0, score));
 }
 
+function finiteDataNumber(value: unknown): number {
+  return typeof value === "number" && Number.isFinite(value) && value >= 0 ? value : 0;
+}
 // ─────────────────────────────────────────────────────────────────────────────
 // PART 3 — ELITE POISSON MODEL WITH DIXON-COLES
 // Scores computed up to 10 for accurate tail capture.
