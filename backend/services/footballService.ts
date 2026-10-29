@@ -191,7 +191,7 @@ function normaliseBsdOdds(payload: any) {
   // Flatten numeric leaves without inventing prices or treating market labels as odds.
   const source = payload.odds && typeof payload.odds === 'object' ? payload.odds : payload;
   const flattened: Record<string, number> = {};
-  const normaliseKey = (key: string) => key.toLowerCase().replace(/[^a-z0-9]+/g, '_').replace(/^_|_$/g, '');
+
   const visit = (value: any, prefix = '') => {
     if (!value || typeof value !== 'object') return;
     for (const [rawKey, child] of Object.entries(value)) {
