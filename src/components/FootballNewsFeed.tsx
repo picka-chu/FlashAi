@@ -42,15 +42,11 @@ export const FootballNewsFeed: React.FC<FootballNewsFeedProps> = ({ articles, lo
       {loading
         ? [1, 2, 3].map((i) => <NewsSkeleton key={i} />)
         : articles.map((article) => (
-            <div
+            <button
               key={article.id}
-              role="button"
-              tabIndex={0}
+              type="button"
               onClick={() => onOpen(article.url)}
-              onKeyDown={(event) => {
-                if (event.key === 'Enter' || event.key === ' ') onOpen(article.url);
-              }}
-              className="shrink-0 w-[280px] snap-center rounded-[22px] overflow-hidden border border-white/10 bg-[#141414] active:scale-[0.98] transition-transform cursor-pointer group"
+              className="shrink-0 w-[280px] snap-center rounded-[22px] overflow-hidden border border-white/10 bg-[#141414] text-left active:scale-[0.98] transition-transform cursor-pointer group focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[#ccff00] focus-visible:ring-offset-2 focus-visible:ring-offset-black"
             >
               <div className="relative h-[150px] bg-zinc-900 overflow-hidden">
                 {article.image ? (
@@ -96,7 +92,7 @@ export const FootballNewsFeed: React.FC<FootballNewsFeedProps> = ({ articles, lo
                   </p>
                 ) : null}
               </div>
-            </div>
+            </button>
           ))}
     </div>
   );
