@@ -64,8 +64,8 @@ export const Matches: React.FC<MatchesProps> = ({ onTabChange }) => {
           return { ...match, __minuteAnchorAt: old && oldElapsed === newElapsed ? (old.__minuteAnchorAt || Date.now()) : Date.now() };
         }));
       } catch (error) {
-        console.error('Failed to fetch live matches:', error);
-        setLiveMatches([]);
+        // Keep the last successful snapshot visible during transient network errors.
+        console.error('Failed to refresh live matches; retaining the previous snapshot:', error);
       } finally {
         setLiveLoading(false);
       }
