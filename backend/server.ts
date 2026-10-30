@@ -2324,7 +2324,13 @@ function extractTelegramChannelFromTaskUrl(taskUrl: string): string | null {
         odds: liveData.odds,
       });
 
-      const { analyzeMatchWithSearch } = await import("./services/geminiService.js");
+      // Fast in-play analysis: skips Google Search because the live snapshot
+      // already carries score, minute, stats, xG and odds — so replies arrive
+      // in seconds instead of tripping the old 30s search timeout (which is
+      // what used to force the fake "no edge" fallback on every request).
+      // On genuine failure: return a retryable error WITHOUT charging credits
+      // and never show a fabricated prediction to the user.
+      const { analyzeLiveMatchNow } = await import("./services/geminiService.js");
       let result: any;
       try {
         const withTimeout = <T,>(promise: Promise<T>, timeoutMs: number): Promise<T> => {
@@ -2342,25 +2348,19 @@ function extractTelegramChannelFromTaskUrl(taskUrl: string): string | null {
           });
         };
 
-        result = await withTimeout(analyzeMatchWithSearch(`${matchString} (LIVE)`, structuredContext), 30_000);
+        result = await withTimeout(analyzeLiveMatchNow(`${matchString} (LIVE)`, structuredContext), 45_000);
       } catch (analysisError: any) {
-        const reason = analysisError?.message || "Unknown analysis error";
-        console.warn(`Live AI analysis fallback engaged: ${reason}`);
-        result = {
-          matchId: matchString,
-          predictions: [
-            {
-              market: "No strong edge detected",
-              confidence: 55,
-              reasoning: "Live model was temporarily unavailable. Please retry shortly for a deeper AI read."
-            }
-          ],
-          overallReasoning: "Live AI is under heavy demand. Core live data is available, but advanced reasoning is temporarily degraded.",
-          teamData: {
-            home: { name: liveData.teams.home.name, form: "LIVE", injuries: [], keyStats: [] },
-            away: { name: liveData.teams.away.name, form: "LIVE", injuries: [], keyStats: [] }
-          }
-        };
+        console.error(`Live analysis failed: ${analysisError?.message || analysisError}`);
+        return c.json(
+          { error: "The live analyst is busy right now. Nothing was charged — please retry in a moment." },
+          503,
+        );
+      }
+      if (!result?.predictions?.length) {
+        return c.json(
+          { error: "Live analysis returned no predictions. Nothing was charged — please retry." },
+          503,
+        );
       }
 
       const { data: updatedUser, error: updateError } = await supabase

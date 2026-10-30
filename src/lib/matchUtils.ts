@@ -15,11 +15,18 @@ export const dateFromKey = (key: string) => {
 export const formatMatch = (m: any) => {
   if (!m) return null;
   const elapsed = Number(m?.fixture?.status?.elapsed || 0);
-  let displayMinute = m?.fixture?.status?.short || '--';
-  if (elapsed > 0) {
-    const minutes = Math.floor(elapsed / 60);
-    const seconds = Math.floor(elapsed % 60);
-    displayMinute = `${minutes}:${String(seconds).padStart(2, '0')}`;
+  const statusShort = String(m?.fixture?.status?.short || '');
+  const statusState = m?.fixture?.status?.state;
+  // Non-clock states show their label (HT, FT, ET, PENS…); running states show
+  // a proper match clock in whole minutes — BSD minute precision has no seconds.
+  const HOLDING_SHORTS = new Set(['HT', 'FT', 'AET', 'PENS', 'ET', 'CANC', 'PP', 'TBD', 'ABAN', 'SUSP', 'PST']);
+  let displayMinute = statusShort || '--';
+  if (statusState === 'in' && !HOLDING_SHORTS.has(statusShort) && elapsed > 0) {
+    // BSD stores elapsed as minutes × 60 (i.e. seconds); tolerate feeds that
+    // already send seconds or whole minutes, and never render absurd values.
+    let minutes = elapsed >= 60 ? Math.round(elapsed / 60) : Math.round(elapsed);
+    if (minutes > 135) minutes = Math.round(minutes / 60);
+    displayMinute = `${Math.max(1, minutes)}'`;
   }
 
   const rawFixtureDate = m?.fixture?.date ?? m?.fixtureDate ?? m?.dateISO ?? null;

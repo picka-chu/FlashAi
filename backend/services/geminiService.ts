@@ -211,6 +211,110 @@ Return ONLY a valid JSON object (no markdown, no explanation outside the JSON):
   });
 }
 
+/**
+ * BACKEND ONLY: Fast in-play analysis. Skips Google Search — the live
+ * snapshot already carries score, minute, stats, xG and odds — so replies
+ * land in seconds instead of tripping the live endpoint timeout (which is
+ * what previously forced the generic fallback on every request).
+ */
+export async function analyzeLiveMatchNow(
+  matchString: string,
+  structuredContext?: string,
+): Promise<PredictionResult> {
+  return executeWithRetry(async (apiKey) => {
+    for (const model of PREDICTION_MODELS) {
+      try {
+        const ai = new GoogleGenAI({ apiKey });
+        const today = new Date().toISOString().split("T")[0];
+        const prompt = `
+You are an in-play analyst at a professional football betting syndicate.
+Today: ${today}. Live fixture: **${matchString}**
+
+CURRENT LIVE SNAPSHOT (the only source you need — do NOT search the web):
+${structuredContext || "Live snapshot unavailable."}
+
+Read the live state (scoreline, elapsed minute, shots, xG, possession, corners, odds) and produce exactly 6 predictions.
+ALL predictions must be FULL-MATCH markets that settle against the FINAL score:
+1. Match Winner (1, X, 2)
+2. Double Chance (1X, X2, or 12)
+3. Over/Under 2.5 total goals (respect the current scoreline and time remaining)
+4. Both Teams to Score (Yes/No)
+5. Most Likely Correct Score at full time (e.g. "Correct Score 2-1")
+6. Best value bet from the provided odds (only if a real edge exists)
+
+CONFIDENCE SCORING:
+- 85-95: live state + stats + odds value all aligned.
+- 70-84: clear live signal.
+- 55-69: mixed or thin signal.
+- Below 55: speculative — still include, flag it in the reasoning.
+
+RULES:
+- Weight the current score and minute heavily (a 2-0 lead at 70' reshapes every goals market).
+- Cite actual live stats (shots, xG, possession, corners) in every reasoning field.
+- Rank predictions by confidence descending.
+
+Return ONLY valid JSON (no markdown, no commentary outside the JSON):
+{
+  "predictions": [
+    {
+      "market": "<exact market name>",
+      "confidence": <integer 50-95>,
+      "reasoning": "<2-3 sentences citing the live stats and current game state>"
+    }
+  ],
+  "overallReasoning": "<4-6 sentences: game state, momentum from live stats, tactical outlook, sharpest live read.>",
+  "teamData": {
+    "home": {
+      "name": "<team name>",
+      "form": "<live momentum e.g. 'Dominant'>",
+      "injuries": [],
+      "keyStats": ["<specific live stat>"]
+    },
+    "away": {
+      "name": "<team name>",
+      "form": "<live momentum>",
+      "injuries": [],
+      "keyStats": ["<specific live stat>"]
+    }
+  }
+}
+        `;
+
+        const result = await ai.models.generateContent({
+          model,
+          contents: [{ role: "user", parts: [{ text: prompt }] }],
+          config: {} as any,
+        });
+
+        const rawText = result.text || "";
+        const parsed = parseJsonFromText(rawText);
+        if (!parsed?.predictions || !Array.isArray(parsed.predictions)) {
+          throw new Error(
+            `Live analysis parse failed: ${rawText.substring(0, 180)}`,
+          );
+        }
+
+        const topPredictions = parsed.predictions
+          .sort((a: any, b: any) => (b.confidence || 0) - (a.confidence || 0))
+          .slice(0, 6);
+
+        return {
+          matchId: matchString,
+          predictions: topPredictions,
+          overallReasoning: parsed.overallReasoning || "Live analysis ready.",
+          teamData: parsed.teamData || {
+            home: { name: "Home", form: "LIVE", injuries: [], keyStats: [] },
+            away: { name: "Away", form: "LIVE", injuries: [], keyStats: [] },
+          },
+        };
+      } catch (error: any) {
+        if (!isRetryableGeminiError(error)) throw error;
+      }
+    }
+    throw new Error("All models failed");
+  }, { maxRetries: 3 });
+}
+
 export async function fetchContextData(matchName: string): Promise<ContextData> {
   return multiAgentService.fetchContextData(matchName);
 }

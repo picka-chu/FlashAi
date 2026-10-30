@@ -6,11 +6,10 @@ import { useUserStore } from '../store/useUserStore';
 import { formatMatch } from '../lib/matchUtils';
 import { TeamLogo } from '../components/TeamLogo';
 
-const statPercent = (value: string | number | undefined | null, fallback = 0) => {
-  if (value == null || value === '') return fallback;
-  const raw = typeof value === 'number' ? value : Number(String(value).replace('%', '').replace(',', '.'));
-  if (!Number.isFinite(raw)) return fallback;
-  return Math.max(0, Math.min(100, raw));
+const toNum = (value: unknown): number => {
+  if (value == null || value === '') return 0;
+  const n = Number(String(value).replace('%', '').replace(',', '.'));
+  return Number.isFinite(n) ? n : 0;
 };
 
 export const LiveMatchPreview: React.FC<{ onBack: () => void; onGoAnalyze: () => void }> = ({ onBack, onGoAnalyze }) => {
@@ -55,16 +54,32 @@ export const LiveMatchPreview: React.FC<{ onBack: () => void; onGoAnalyze: () =>
     };
   }, [fixtureId]);
 
-  const rows = useMemo(() => {
-    const stats = livePreviewMatch?.stats || {};
-    const homePassing = statPercent(stats?.possession?.home || 50);
-    return [
-      { label: 'Attacks', home: statPercent(stats?.shots?.home), away: statPercent(stats?.shots?.away) },
-      { label: 'Possession', home: homePassing, away: 100 - homePassing },
-      { label: 'On Target', home: statPercent(stats?.shotsOnTarget?.home), away: statPercent(stats?.shotsOnTarget?.away) },
-      { label: 'Corners', home: statPercent(stats?.corners?.home), away: statPercent(stats?.corners?.away) },
-    ];
+  const possessionHome = useMemo(() => {
+    const raw = toNum(livePreviewMatch?.stats?.possession?.home);
+    return raw > 0 ? Math.min(100, Math.round(raw)) : 50;
   }, [livePreviewMatch]);
+
+  const statRows = useMemo(() => {
+    const stats: any = livePreviewMatch?.stats || {};
+    const xg: any = (livePreviewMatch as any)?.xG || {};
+    const defs: Array<{ label: string; home: unknown; away: unknown; dec?: number }> = [
+      { label: 'Shots', home: stats?.shots?.home, away: stats?.shots?.away },
+      { label: 'On target', home: stats?.shotsOnTarget?.home, away: stats?.shotsOnTarget?.away },
+      { label: 'Expected goals', home: xg?.home, away: xg?.away, dec: 2 },
+      { label: 'Corners', home: stats?.corners?.home, away: stats?.corners?.away },
+      { label: 'Fouls', home: stats?.fouls?.home, away: stats?.fouls?.away },
+      { label: 'Offsides', home: stats?.offsides?.home, away: stats?.offsides?.away },
+      { label: 'Yellow cards', home: stats?.yellowCards?.home, away: stats?.yellowCards?.away },
+      { label: 'Red cards', home: stats?.redCards?.home, away: stats?.redCards?.away },
+      { label: 'Saves', home: stats?.saves?.home, away: stats?.saves?.away },
+      { label: 'Assists', home: stats?.assists?.home, away: stats?.assists?.away },
+    ];
+    return defs
+      .map((def) => ({ label: def.label, home: toNum(def.home), away: toNum(def.away), dec: def.dec || 0 }))
+      .filter((row) => row.home > 0 || row.away > 0);
+  }, [livePreviewMatch]);
+
+  const hasAnyStat = statRows.length > 0 || possessionHome !== 50;
 
   if (!livePreviewMatch) {
     return (
@@ -163,16 +178,63 @@ export const LiveMatchPreview: React.FC<{ onBack: () => void; onGoAnalyze: () =>
         </div>
 
         <div className="rounded-3xl border border-zinc-800 bg-zinc-900/70 p-4 space-y-4">
-          <div className="flex items-center gap-2 text-zinc-300"><BarChart3 className="w-4 h-4" /><span className="text-xs font-black uppercase tracking-wider">Live composition & momentum</span></div>
-          {rows.map((row) => (
-            <div key={row.label}>
-              <div className="flex justify-between text-xs mb-1"><span>{row.home.toFixed(0)}%</span><span className="text-zinc-400">{row.label}</span><span>{row.away.toFixed(0)}%</span></div>
-              <div className="grid grid-cols-2 gap-2">
-                <div className="h-2 rounded-full bg-zinc-800 overflow-hidden"><div className="h-full bg-[#ccff00]" style={{ width: `${row.home}%` }} /></div>
-                <div className="h-2 rounded-full bg-zinc-800 overflow-hidden"><div className="h-full bg-sky-400" style={{ width: `${row.away}%` }} /></div>
-              </div>
+          <div className="flex items-center justify-between">
+            <div className="flex items-center gap-2 text-zinc-300">
+              <BarChart3 className="w-4 h-4" />
+              <span className="text-xs font-black uppercase tracking-wider">Live match stats</span>
             </div>
-          ))}
+            <div className="flex items-center gap-3 text-[9px] font-black text-zinc-500">
+              <span className="inline-flex items-center gap-1"><span className="w-2 h-2 rounded-full bg-[#ccff00]" />HOME</span>
+              <span className="inline-flex items-center gap-1"><span className="w-2 h-2 rounded-full bg-sky-400" />AWAY</span>
+            </div>
+          </div>
+
+          {hasAnyStat ? (
+            <>
+              {/* Possession */}
+              <div>
+                <div className="flex justify-between items-center text-xs mb-1">
+                  <span className="font-black text-[#ccff00]">{possessionHome}%</span>
+                  <span className="text-zinc-500 font-bold">Possession</span>
+                  <span className="font-black text-sky-400">{100 - possessionHome}%</span>
+                </div>
+                <div className="grid grid-cols-2 gap-2">
+                  <div className="h-2 rounded-full bg-zinc-800 overflow-hidden flex justify-end">
+                    <div className="h-full bg-[#ccff00]" style={{ width: `${possessionHome}%` }} />
+                  </div>
+                  <div className="h-2 rounded-full bg-zinc-800 overflow-hidden">
+                    <div className="h-full bg-sky-400" style={{ width: `${100 - possessionHome}%` }} />
+                  </div>
+                </div>
+              </div>
+
+              <div className="border-t border-zinc-800/70 pt-3 space-y-3">
+                {statRows.map((row) => {
+                  const peak = Math.max(row.home, row.away, 1);
+                  const fmt = (v: number) => (row.dec ? v.toFixed(row.dec) : String(v));
+                  return (
+                    <div key={row.label}>
+                      <div className="flex justify-between items-center text-xs">
+                        <span className="w-12 font-black text-white">{fmt(row.home)}</span>
+                        <span className="text-zinc-500 font-bold">{row.label}</span>
+                        <span className="w-12 text-right font-black text-white">{fmt(row.away)}</span>
+                      </div>
+                      <div className="grid grid-cols-2 gap-2 mt-1">
+                        <div className="h-1.5 rounded-full bg-zinc-800 overflow-hidden flex justify-end">
+                          <div className="h-full bg-[#ccff00] rounded-full" style={{ width: `${Math.max(row.home > 0 ? 6 : 0, (row.home / peak) * 100)}%` }} />
+                        </div>
+                        <div className="h-1.5 rounded-full bg-zinc-800 overflow-hidden">
+                          <div className="h-full bg-sky-400 rounded-full" style={{ width: `${Math.max(row.away > 0 ? 6 : 0, (row.away / peak) * 100)}%` }} />
+                        </div>
+                      </div>
+                    </div>
+                  );
+                })}
+              </div>
+            </>
+          ) : (
+            <p className="text-xs font-bold text-zinc-500 py-2 text-center">Waiting for the stats provider — numbers appear as soon as they are reported.</p>
+          )}
         </div>
 
         {/* Inline error — never use showAlert for transient errors as it can close the mini-app */}
@@ -200,7 +262,7 @@ export const LiveMatchPreview: React.FC<{ onBack: () => void; onGoAnalyze: () =>
         className="fixed bottom-24 right-5 z-30 h-14 px-5 rounded-full bg-[#ccff00] text-black font-black text-sm shadow-[0_12px_32px_rgba(204,255,0,0.35)] inline-flex items-center gap-2 disabled:opacity-70"
       >
         {analyzing ? <Loader2 className="w-5 h-5 animate-spin" /> : <Zap className="w-5 h-5" />}
-        {analyzing ? 'Analysing… (up to 35s)' : analyzeError ? '↺ Retry Analysis' : 'Run Live Analysis'}
+        {analyzing ? 'Analysing…' : analyzeError ? '↺ Retry Analysis' : 'Run Live Analysis'}
       </button>
 
       <div className="fixed bottom-10 left-1/2 -translate-x-1/2 text-[10px] text-zinc-500 inline-flex items-center gap-1 bg-zinc-900/80 border border-zinc-800 rounded-full px-3 py-1">
