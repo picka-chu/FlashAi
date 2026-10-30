@@ -16,6 +16,7 @@ export const LiveMatchPreview: React.FC<{ onBack: () => void; onGoAnalyze: () =>
   const { livePreviewMatch, setLivePreviewMatch, user, setUser, setSelectedMatch, setAnalysisResult, setIsAnalyzing } = useUserStore();
   const { initData, showAlert, hapticFeedback } = useTelegram();
   const [loading, setLoading] = useState(false);
+  const [refreshKey, setRefreshKey] = useState(0);
   const [analyzing, setAnalyzing] = useState(false);
   const [analyzeError, setAnalyzeError] = useState<string | null>(null);
   const [attemptCount, setAttemptCount] = useState(0);
@@ -62,7 +63,7 @@ export const LiveMatchPreview: React.FC<{ onBack: () => void; onGoAnalyze: () =>
       mounted = false;
       clearInterval(interval);
     };
-  }, [fixtureId]);
+  }, [fixtureId, refreshKey]);
 
   const possession = useMemo(() => {
     const home = toNum(livePreviewMatch?.stats?.possession?.home);
@@ -177,7 +178,15 @@ export const LiveMatchPreview: React.FC<{ onBack: () => void; onGoAnalyze: () =>
             <div className="text-[10px] font-black text-zinc-500 uppercase tracking-[0.2em]">Telegram Live Preview</div>
             <div className="text-xs font-bold text-zinc-300">{livePreviewMatch.league}</div>
           </div>
-          <button onClick={() => setLivePreviewMatch(null)} className="w-9 h-9 rounded-full bg-zinc-900 border border-zinc-800 flex items-center justify-center"><RefreshCw className={`w-4 h-4 ${loading ? 'animate-spin' : ''}`} /></button>
+          <button
+            type="button"
+            onClick={() => setRefreshKey((key) => key + 1)}
+            disabled={loading}
+            aria-label="Refresh live match data"
+            className="w-9 h-9 rounded-full bg-zinc-900 border border-zinc-800 flex items-center justify-center disabled:opacity-60"
+          >
+            <RefreshCw className={`w-4 h-4 ${loading ? 'animate-spin' : ''}`} />
+          </button>
         </div>
       </div>
 
