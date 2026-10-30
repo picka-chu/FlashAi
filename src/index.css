@@ -6,7 +6,7 @@
 @custom-variant dark (&:is(.dark *));
 
 @theme inline {
-    --color-[#ccff00]: #F8B800;
+    --color-flash: #ccff00;
     --font-heading: 'Geist Variable', ui-sans-serif, system-ui, sans-serif;
     --font-sans: 'Geist Variable', ui-sans-serif, system-ui, sans-serif;
     --color-sidebar-ring: var(--sidebar-ring);
