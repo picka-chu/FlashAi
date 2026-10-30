@@ -377,6 +377,9 @@ export const Home: React.FC<HomeProps> = ({ onTabChange }) => {
     setNewsLoading(true);
     getFootballNews(12)
       .then((articles) => { if (!cancelled) setNews(articles); })
+      .catch((error) => {
+        if (!cancelled) console.warn('Football news could not be loaded:', error);
+      })
       .finally(() => { if (!cancelled) setNewsLoading(false); });
     return () => { cancelled = true; };
   }, []);
