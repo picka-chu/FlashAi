@@ -292,22 +292,56 @@ export class NotificationService {
     const dedupeKey = String(input.dedupeKey || "").slice(0, 180);
     if (!dedupeKey) return { sent: false, reason: "failed", error: "Missing dedupe key" };
 
-    const { data: delivery, error: deliveryError } = await this.supabase
+    const deliveryRow = {
+      telegram_id: telegramId,
+      category: input.category,
+      dedupe_key: dedupeKey,
+      status: "pending",
+    };
+    let delivery: { id: string } | null = null;
+    const firstInsert = await this.supabase
       .from("notification_deliveries")
-      .insert({
-        telegram_id: telegramId,
-        category: input.category,
-        dedupe_key: dedupeKey,
-        status: "pending",
-      })
+      .insert(deliveryRow)
       .select("id")
       .single();
 
-    if (deliveryError) {
-      if (deliveryError.code === "23505") return { sent: false, reason: "duplicate" };
-      console.error("Notification delivery insert failed:", deliveryError.message);
-      return { sent: false, reason: "failed", error: deliveryError.message };
+    if (firstInsert.error) {
+      if (firstInsert.error.code !== "23505") {
+        console.error("Notification delivery insert failed:", firstInsert.error.message);
+        return { sent: false, reason: "failed", error: firstInsert.error.message };
+      }
+      // Duplicate key: block only genuinely delivered/still-claiming rows.
+      // A previously failed or crashed attempt must stay retryable, otherwise
+      // one transient Telegram error silently kills that user's digest forever.
+      const { data: existing } = await this.supabase
+        .from("notification_deliveries")
+        .select("id,status,created_at")
+        .eq("telegram_id", telegramId)
+        .eq("dedupe_key", dedupeKey)
+        .maybeSingle();
+      const createdAt = Date.parse(existing?.created_at || "");
+      const stale =
+        existing &&
+        (existing.status === "failed" ||
+          (existing.status === "pending" &&
+            (!Number.isFinite(createdAt) || Date.now() - createdAt > 120_000)));
+      if (!stale) return { sent: false, reason: "duplicate" };
+
+      await this.supabase.from("notification_deliveries").delete().eq("id", existing.id);
+      const retryInsert = await this.supabase
+        .from("notification_deliveries")
+        .insert(deliveryRow)
+        .select("id")
+        .single();
+      if (retryInsert.error) {
+        if (retryInsert.error.code === "23505") return { sent: false, reason: "duplicate" };
+        return { sent: false, reason: "failed", error: retryInsert.error.message };
+      }
+      delivery = retryInsert.data;
+    } else {
+      delivery = firstInsert.data;
     }
+    if (!delivery) return { sent: false, reason: "failed", error: "Could not claim delivery slot" };
 
     const options: Record<string, any> = { parse_mode: "HTML" };
     if (input.keyboard) Object.assign(options, input.keyboard);
@@ -341,7 +375,14 @@ export class NotificationService {
       if (errorCode === 429 && retryAfter > 0 && retryAfter <= 20) {
         await sleep(retryAfter * 1000);
         try {
-          await this.bot.telegram.sendMessage(telegramId, input.text, options);
+          if (input.imageUrl) {
+            await this.bot.telegram.sendPhoto(telegramId, input.imageUrl, {
+              caption: input.text,
+              ...options,
+            });
+          } else {
+            await this.bot.telegram.sendMessage(telegramId, input.text, options);
+          }
           await this.supabase
             .from("notification_deliveries")
             .update({ status: "sent", sent_at: new Date().toISOString() })

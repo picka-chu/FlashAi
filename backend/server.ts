@@ -477,7 +477,7 @@ async function getTelegramProfilePhotoUrl(telegramId: number, bot: Telegraf | nu
   }
 }
 
-type HistoryStatus = "pending" | "won" | "lost";
+type HistoryStatus = "pending" | "won" | "lost" | "not_applicable";
 
 type UserHistoryItem = {
   id: string;
@@ -490,6 +490,8 @@ type UserHistoryItem = {
   reasoning: string;
   analysisPayload?: any;
   status: HistoryStatus;
+  /** Final score attached when the row resolves (persisted in analysis_payload.outcome). */
+  outcome?: { home: number; away: number } | null;
   created_at: string;
   resolved_at?: string | null;
 };
@@ -534,6 +536,7 @@ async function getUserHistory(telegramId: number): Promise<UserHistoryItem[]> {
     confidence: Number(row.confidence || 0),
     reasoning: row.reasoning || "",
     analysisPayload: row.analysis_payload || null,
+    outcome: row.analysis_payload?.outcome || null,
     status: row.status || "pending",
     created_at: row.created_at,
     resolved_at: row.resolved_at || null,
@@ -577,11 +580,24 @@ async function insertHistoryItem(telegramId: number, item: UserHistoryItem) {
  */
 async function updateHistoryItem(
   telegramId: number,
-  item: Pick<UserHistoryItem, "id" | "status" | "resolved_at">,
+  item: Pick<UserHistoryItem, "id" | "status" | "resolved_at" | "outcome">,
 ) {
+  const patch: Record<string, any> = {
+    status: item.status,
+    resolved_at: item.resolved_at || null,
+  };
+  if (item.outcome) {
+    const { data: row } = await supabase
+      .from("user_history")
+      .select("analysis_payload")
+      .eq("id", item.id)
+      .eq("telegram_id", telegramId)
+      .maybeSingle();
+    patch.analysis_payload = { ...(row?.analysis_payload || {}), outcome: item.outcome };
+  }
   const { error } = await supabase
     .from("user_history")
-    .update({ status: item.status, resolved_at: item.resolved_at || null })
+    .update(patch)
     .eq("id", item.id)
     .eq("telegram_id", telegramId);
   if (error) throw error;
@@ -648,8 +664,27 @@ function evaluatePredictionMarket(market: string, homeGoals: number, awayGoals: 
   if (!mk) return "pending";
 
   // Skip markets that can't be resolved from a final score — leave as pending
-  // rather than silently awarding "lost" via the 24h guardrail.
+  // rather than silently awarding "lost" via the timeout guardrail.
   if (isNonResolvableMarket(mk)) return "pending";
+
+  // Compound markets: "BTTS & Over 2.5", "Home Win or Over 3.5".
+  // Double-chance phrases ("home or draw") are excluded — they are handled
+  // as single markets below and split identically anyway.
+  if (!mk.includes("double chance")) {
+    const andParts = mk.split(/\s+(?:&|and)\s+/).map((part) => part.trim());
+    if (andParts.length === 2 && andParts.every((part) => part.length > 1)) {
+      const results = andParts.map((part) => evaluatePredictionMarket(part, homeGoals, awayGoals));
+      if (results.includes("pending")) return "pending";
+      return results.every((result) => result === "won") ? "won" : "lost";
+    }
+    const orParts = mk.split(/\s+or\s+/).map((part) => part.trim());
+    if (orParts.length === 2 && orParts.every((part) => part.length > 1)) {
+      const results = orParts.map((part) => evaluatePredictionMarket(part, homeGoals, awayGoals));
+      if (results.includes("won")) return "won";
+      if (results.includes("pending")) return "pending";
+      return "lost";
+    }
+  }
 
   // 1. Full Match Results (1X2)
   // Handles: "1", "Home Win", "Match Winner - Home", "Home Team Win", "1X2 - Home"
@@ -766,7 +801,7 @@ async function getRecentScoreboardEvents(): Promise<any[]> {
   if (recentScoreboardInFlight) return recentScoreboardInFlight;
 
   recentScoreboardInFlight = (async () => {
-    const dates = [getUtcDateString(-1), getUtcDateString(0)];
+    const dates = [getUtcDateString(-2), getUtcDateString(-1), getUtcDateString(0), getUtcDateString(1)];
     const responses = await Promise.all(
       dates.map((date) =>
         axios.get(
@@ -812,7 +847,9 @@ async function resolveHistoryItemResult(item: UserHistoryItem): Promise<UserHist
   }
 
   const createdAtMs = new Date(item.created_at).getTime();
-  const isOlderThan24h = Number.isFinite(createdAtMs) && (Date.now() - createdAtMs) >= (24 * 60 * 60 * 1000);
+  const ageMs = Number.isFinite(createdAtMs) ? Date.now() - createdAtMs : 0;
+  const isOlderThan48h = ageMs >= 48 * 60 * 60 * 1000;
+  const withinBsdSearchWindow = ageMs >= 0 && ageMs < 7 * 24 * 60 * 60 * 1000;
 
   const tryResolveFromAllScoreboard = async (): Promise<UserHistoryItem | null> => {
     try {
@@ -847,7 +884,12 @@ async function resolveHistoryItemResult(item: UserHistoryItem): Promise<UserHist
         const result = evaluatePredictionMarket(item.predictionMarket, homeGoals, awayGoals);
         if (result === "pending") return null;
 
-        return { ...item, status: result, resolved_at: new Date().toISOString() };
+        return {
+          ...item,
+          status: result,
+          resolved_at: new Date().toISOString(),
+          outcome: { home: homeGoals, away: awayGoals },
+        };
       }
     } catch {
       return null;
@@ -856,18 +898,25 @@ async function resolveHistoryItemResult(item: UserHistoryItem): Promise<UserHist
   };
 
   // BSD fixtures: settle straight from the provider's final score.
-  if (item.fixtureId?.startsWith("bsd_")) {
+  // Rows may store the id with ("bsd_123") or without ("123") the prefix.
+  const looksLikeBsdId = !!item.fixtureId && (/^bsd_\d+$/.test(item.fixtureId) || /^\d+$/.test(item.fixtureId));
+  if (looksLikeBsdId) {
     try {
-      const preview = await getLiveMatchPreview(item.fixtureId);
+      const preview = await getLiveMatchPreview(item.fixtureId!);
       const state = preview?.fixture?.status?.state;
       if (state !== "post") return item;
       const homeGoals = Number(preview?.goals?.home ?? 0);
       const awayGoals = Number(preview?.goals?.away ?? 0);
       const result = evaluatePredictionMarket(item.predictionMarket, homeGoals, awayGoals);
       if (result === "pending") return item;
-      return { ...item, status: result, resolved_at: new Date().toISOString() };
+      return {
+        ...item,
+        status: result,
+        resolved_at: new Date().toISOString(),
+        outcome: { home: homeGoals, away: awayGoals },
+      };
     } catch {
-      // Fall through to ESPN scoreboard matching below.
+      // Fall through to scoreboard matching below.
     }
   }
 
@@ -894,19 +943,48 @@ async function resolveHistoryItemResult(item: UserHistoryItem): Promise<UserHist
       const result = evaluatePredictionMarket(item.predictionMarket, homeGoals, awayGoals);
 
       if (result === "pending") return item;
-      return { ...item, status: result, resolved_at: new Date().toISOString() };
+      return {
+        ...item,
+        status: result,
+        resolved_at: new Date().toISOString(),
+        outcome: { home: homeGoals, away: awayGoals },
+      };
     }
   } catch {
     // Fallback to scoreboard resolution below.
   }
 
+  // BSD team-name lookup: covers rows with a missing/foreign fixture id.
+  if (withinBsdSearchWindow && !item.fixtureId?.startsWith("espn_")) {
+    try {
+      const { fetchBsdMatchStatsByName } = await import("./services/footballService.js");
+      const preview = await fetchBsdMatchStatsByName(item.home, item.away);
+      if (preview?.fixture?.status?.state === "post") {
+        const homeGoals = Number(preview?.goals?.home ?? 0);
+        const awayGoals = Number(preview?.goals?.away ?? 0);
+        const result = evaluatePredictionMarket(item.predictionMarket, homeGoals, awayGoals);
+        if (result !== "pending") {
+          return {
+            ...item,
+            status: result,
+            resolved_at: new Date().toISOString(),
+            outcome: { home: homeGoals, away: awayGoals },
+          };
+        }
+      }
+    } catch {
+      // Continue to scoreboard matching.
+    }
+  }
+
   const resolvedByTeams = await tryResolveFromAllScoreboard();
   if (resolvedByTeams) return resolvedByTeams;
 
-  // 24h guardrail: after a day, if the match should be over but we still can't resolve it,
-  // mark as lost — UNLESS the market is one we can never resolve from scoreline data.
-  if (isOlderThan24h && !isNonResolvableMarket(normalizeMarket(item.predictionMarket))) {
-    return { ...item, status: "lost", resolved_at: new Date().toISOString() };
+  // 48h guardrail: if we still cannot find the fixture after two days, the row
+  // can never be settled — mark it not_applicable instead of forcing a "lost",
+  // which would silently poison the user's win/loss record.
+  if (isOlderThan48h) {
+    return { ...item, status: "not_applicable", resolved_at: new Date().toISOString() };
   }
 
   return item;
@@ -1516,7 +1594,34 @@ function extractTelegramChannelFromTaskUrl(taskUrl: string): string | null {
         .maybeSingle();
       const plan = user?.plan || "free";
       if (plan === "free") {
-        return c.json({ error: "Live matches are available on paid plans only." }, 403);
+        // Free plan gets a small daily trial instead of a hard block.
+        const quotaKey = `chat_quota:${tgUser.id}:${new Date().toISOString().slice(0, 10)}`;
+        const FREE_CHAT_PER_DAY = 5;
+        const { data: quotaRow } = await supabase
+          .from("api_cache")
+          .select("data")
+          .eq("endpoint", quotaKey)
+          .maybeSingle();
+        const used = Number(quotaRow?.data?.count || 0);
+        if (used >= FREE_CHAT_PER_DAY) {
+          return c.json(
+            {
+              error: `Free plan allows ${FREE_CHAT_PER_DAY} AI chat messages per day. Upgrade for unlimited chat.`,
+              code: "CHAT_QUOTA",
+              used,
+              limit: FREE_CHAT_PER_DAY,
+            },
+            402,
+          );
+        }
+        await supabase.from("api_cache").upsert(
+          {
+            endpoint: quotaKey,
+            data: { count: used + 1 },
+            updated_at: new Date().toISOString(),
+          },
+          { onConflict: "endpoint" },
+        );
       }
 
       const matches = await getLiveMatches();
@@ -1929,8 +2034,8 @@ function extractTelegramChannelFromTaskUrl(taskUrl: string): string | null {
         }
       }
       const storedFixtureId = bsdPreview?.fixture?.id
-        ? String(bsdPreview.fixture.id)
-        : (String(matchId || "").startsWith("espn_") ? String(matchId) : (String(matchId || "").startsWith("bsd_") ? String(matchId) : null));
+        ? `bsd_${bsdPreview.fixture.id}`
+        : (String(matchId || "").startsWith("espn_") ? String(matchId) : (String(matchId || "").startsWith("bsd_") ? String(matchId) : (/^\d+$/.test(String(matchId || "")) ? `bsd_${matchId}` : null)));
       const newHistoryItem: UserHistoryItem = {
         id: crypto.randomUUID(),
         fixtureId: storedFixtureId,
@@ -2276,6 +2381,30 @@ function extractTelegramChannelFromTaskUrl(taskUrl: string): string | null {
       }
       if (!updatedUser) {
         return c.json({ error: "Credits changed during live analysis. Please retry.", code: "CREDITS_CONFLICT" }, 409);
+      }
+
+      // Live analyses land in History exactly like pre-match analyses.
+      try {
+        const topPrediction = result?.predictions?.[0];
+        const newHistoryItem: UserHistoryItem = {
+          id: crypto.randomUUID(),
+          fixtureId: /^\d+$/.test(normalizedFixtureId)
+            ? `bsd_${normalizedFixtureId}`
+            : (normalizedFixtureId || null),
+          match: matchString,
+          home: String(homeName),
+          away: String(awayName),
+          predictionMarket: topPrediction?.market || "Unknown Market",
+          confidence: Number(topPrediction?.confidence || 0),
+          reasoning: topPrediction?.reasoning || result?.overallReasoning || "",
+          analysisPayload: result || null,
+          status: "pending",
+          created_at: new Date().toISOString(),
+        };
+        await insertHistoryItem(tgUser.id, newHistoryItem);
+        await pruneHistory(tgUser.id);
+      } catch (historyError: any) {
+        console.error("Failed to persist live analysis history:", historyError?.message || historyError);
       }
 
       return c.json({
@@ -3165,7 +3294,12 @@ function extractTelegramChannelFromTaskUrl(taskUrl: string): string | null {
       // Resolving hits external APIs. Bound both the number of items per
       // request and the outbound concurrency so one client cannot fan out
       // hundreds of requests.
-      const pendingItems = history.filter((item) => item.status === "pending").slice(0, 10);
+      // Oldest pending first so abandoned rows keep settling instead of being
+      // permanently starved by newer predictions.
+      const pendingItems = history
+        .filter((item) => item.status === "pending")
+        .sort((a, b) => a.created_at.localeCompare(b.created_at))
+        .slice(0, 20);
       const resolvedPending = await mapWithConcurrency(pendingItems, 3, async (item) => {
         try {
           return await resolveHistoryItemResult(item);
@@ -3180,7 +3314,8 @@ function extractTelegramChannelFromTaskUrl(taskUrl: string): string | null {
       const changedItems = resolved.filter(
         (item, index) =>
           item.status !== history[index]?.status ||
-          item.resolved_at !== history[index]?.resolved_at,
+          item.resolved_at !== history[index]?.resolved_at ||
+          (item.outcome && !history[index]?.outcome),
       );
       await Promise.all(
         changedItems.map((item) =>
@@ -3188,6 +3323,7 @@ function extractTelegramChannelFromTaskUrl(taskUrl: string): string | null {
             id: item.id,
             status: item.status,
             resolved_at: item.resolved_at,
+            outcome: item.outcome || undefined,
           }).catch((error) => console.error("Failed to update history item:", error?.message || error)),
         ),
       );

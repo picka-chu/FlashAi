@@ -202,6 +202,47 @@ export const Analyze: React.FC<{ onTabChange?: (tab: string) => void }> = ({ onT
     handleSend();
   };
 
+  const sendChatTurn = async (userText: string) => {
+    setInput('');
+    setChatMessages((prev) => [...prev, { role: 'user', text: userText }]);
+    setChatBusy(true);
+    try {
+      const res = await fetch('/api/analyze/chat', {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          'X-TG-Init-Data': initData || '',
+        },
+        body: JSON.stringify({
+          message: userText,
+          history: chatMessages.slice(-10).map((m) => ({ role: m.role, text: m.text })),
+          matchId: selectedMatch?.id || '',
+          matchString: selectedMatch ? `${selectedMatch.home} vs ${selectedMatch.away}` : '',
+        }),
+      });
+      const data = await res.json();
+      if (!res.ok) {
+        const hint =
+          res.status === 402
+            ? '\n(Daily free chat limit reached — upgrade for unlimited chat.)'
+            : '';
+        setChatMessages((prev) => [
+          ...prev,
+          { role: 'assistant', text: (data.reply || data.error || 'Chat failed. Please try again.') + hint },
+        ]);
+        return;
+      }
+      setChatMessages((prev) => [...prev, { role: 'assistant', text: data.reply || 'No reply.' }]);
+    } catch {
+      setChatMessages((prev) => [
+        ...prev,
+        { role: 'assistant', text: 'Chat failed. Check your connection and try again.' },
+      ]);
+    } finally {
+      setChatBusy(false);
+    }
+  };
+
   const handleSend = async () => {
     if (!input.trim() && images.length === 0 && !selectedMatch) return;
 
@@ -212,7 +253,19 @@ export const Analyze: React.FC<{ onTabChange?: (tab: string) => void }> = ({ onT
       return;
     }
 
-    // Initial check for credits
+    // Chat turns about an open analysis are free (backend enforces a daily
+    // free quota) and never touch the credit balance.
+    const isChatTurn = Boolean(selectedMatch && analysisResult && input.trim() && images.length === 0);
+    if (isChatTurn) {
+      if (chatBusy || isAnalyzing) return;
+      await sendChatTurn(input.trim());
+      return;
+    }
+
+    // Never restart an in-flight analysis from a stray Enter/press.
+    if (isAnalyzing || chatBusy) return;
+
+    // Initial check for credits (analysis/betslip/search only)
     const requiredCredits = images.length > 0 ? 3 : 1;
     if (user.credits < requiredCredits) {
       hapticFeedback('error');
@@ -221,10 +274,9 @@ export const Analyze: React.FC<{ onTabChange?: (tab: string) => void }> = ({ onT
       setError(`Minimum ${requiredCredits} credits required for this analysis. You have ${user.credits}.`);
       return;
     }
-    
+
     setError(null);
-    const isChatTurn = Boolean(selectedMatch && analysisResult && input.trim() && images.length === 0);
-    if (!isChatTurn) setIsAnalyzing(true);
+    setIsAnalyzing(true);
 
     if (images.length > 0) {
       setBetSlipResult(null);
@@ -266,43 +318,6 @@ export const Analyze: React.FC<{ onTabChange?: (tab: string) => void }> = ({ onT
       } finally {
         setIsAnalyzing(false);
         setImages([]);
-      }
-    } else if (selectedMatch && analysisResult && input.trim()) {
-      // Multi-turn analyst chat about the current fixture
-      const userText = input.trim();
-      setInput('');
-      setChatMessages((prev) => [...prev, { role: 'user', text: userText }]);
-      setChatBusy(true);
-      try {
-        const res = await fetch('/api/analyze/chat', {
-          method: 'POST',
-          headers: {
-            'Content-Type': 'application/json',
-            'X-TG-Init-Data': initData || '',
-          },
-          body: JSON.stringify({
-            message: userText,
-            history: chatMessages.slice(-10).map((m) => ({ role: m.role, text: m.text })),
-            matchId: selectedMatch.id,
-            matchString: `${selectedMatch.home} vs ${selectedMatch.away}`,
-          }),
-        });
-        const data = await res.json();
-        if (!res.ok) {
-          setChatMessages((prev) => [
-            ...prev,
-            { role: 'assistant', text: data.reply || data.error || 'Chat failed. Please try again.' },
-          ]);
-          return;
-        }
-        setChatMessages((prev) => [...prev, { role: 'assistant', text: data.reply || 'No reply.' }]);
-      } catch {
-        setChatMessages((prev) => [
-          ...prev,
-          { role: 'assistant', text: 'Chat failed. Check your connection and try again.' },
-        ]);
-      } finally {
-        setChatBusy(false);
       }
     } else if (selectedMatch) {
       // Trigger analysis for the selected match
@@ -1121,8 +1136,21 @@ export const Analyze: React.FC<{ onTabChange?: (tab: string) => void }> = ({ onT
                 onChange={(e) => setInput(e.target.value)}
                 onFocus={() => setIsFocused(true)}
                 onBlur={() => setIsFocused(false)}
-                onKeyDown={(e) => e.key === 'Enter' && handleSend()}
-                placeholder={selectedMatch ? `Chat about ${selectedMatch.homeShort}...` : "Ask Flash AI anything..."}
+                onKeyDown={(e) => {
+                  if (e.key === 'Enter' && !e.shiftKey) {
+                    e.preventDefault();
+                    handleSend();
+                  }
+                }}
+                placeholder={
+                  isAnalyzing || chatBusy
+                    ? (isAnalyzing ? 'Analyzing the match…' : 'The analyst is replying…')
+                    : selectedMatch && analysisResult
+                      ? `Ask about ${selectedMatch.homeShort} vs ${selectedMatch.awayShort}…`
+                      : selectedMatch
+                        ? 'Press send to run the analysis…'
+                        : 'Ask Flash AI anything…'
+                }
                 className="w-full bg-transparent border-none px-2 py-3 text-sm text-white placeholder:text-zinc-600 focus:outline-none"
               />
             </div>
@@ -1135,7 +1163,7 @@ export const Analyze: React.FC<{ onTabChange?: (tab: string) => void }> = ({ onT
                   : 'bg-zinc-800 text-zinc-600'
               }`}
             >
-              {isAnalyzing ? (
+              {isAnalyzing || chatBusy ? (
                 <Loader2 className="w-5 h-5 animate-spin" />
               ) : (
                 <Zap className="w-5 h-5" />

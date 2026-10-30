@@ -1,4 +1,4 @@
-import React, { useEffect, useMemo, useState } from 'react';
+import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { motion, AnimatePresence } from 'motion/react';
 import { useUserStore } from '../store/useUserStore';
 import { useTelegram } from '../hooks/useTelegram';
@@ -40,6 +40,7 @@ type HistoryItem = {
   created_at: string;
   resolved_at?: string | null;
   analysisPayload?: AnalysisPayload | null;
+  outcome?: { home: number; away: number } | null;
 };
 
 const statusUi: Record<HistoryStatus, { label: string; className: string; icon: React.ReactNode }> = {
@@ -88,38 +89,61 @@ export const History: React.FC = () => {
     const won = historyItems.filter((i) => i.status === 'won').length;
     const lost = historyItems.filter((i) => i.status === 'lost').length;
     const settled = won + lost;
+    const pending = historyItems.filter((i) => i.status === 'pending').length;
     const winRate = settled > 0 ? Math.round((won / settled) * 100) : 0;
-    return { total, won, lost, winRate };
+    return { total, won, lost, pending, winRate };
   }, [historyItems]);
 
-  useEffect(() => {
-    const loadHistory = async () => {
-      try {
-        const res = await fetch('/api/user/history', { headers: { 'X-TG-Init-Data': initData || '' } });
-        const data = await res.json();
-        const normalized = (Array.isArray(data) ? data : []).map((item: any) => ({
-          id: String(item.id),
-          match: item.match || `${item.home || 'Home'} vs ${item.away || 'Away'}`,
-          home: item.home || 'Home',
-          away: item.away || 'Away',
-          predictionMarket: item.predictionMarket || 'Unknown market',
-          confidence: Number(item.confidence || 0),
-          reasoning: item.reasoning || '',
-          status: (['won', 'lost', 'pending', 'not_applicable'].includes(item.status) ? item.status : 'pending') as HistoryStatus,
-          created_at: item.created_at,
-          resolved_at: item.resolved_at || null,
-          analysisPayload: item.analysisPayload || null,
-        }));
-        setHistoryItems(normalized);
-      } catch (e) {
-        console.error('History fetch failed:', e);
-        setHistoryItems([]);
-      } finally {
-        setLoading(false);
-      }
-    };
-    loadHistory();
+  const historyLoaded = useRef(false);
+
+  const loadHistory = useCallback(async (silent = false) => {
+    if (!silent) setLoading(true);
+    try {
+      const res = await fetch('/api/user/history', { headers: { 'X-TG-Init-Data': initData || '' } });
+      const data = await res.json();
+      const normalized = (Array.isArray(data) ? data : []).map((item: any) => ({
+        id: String(item.id),
+        match: item.match || `${item.home || 'Home'} vs ${item.away || 'Away'}`,
+        home: item.home || 'Home',
+        away: item.away || 'Away',
+        predictionMarket: item.predictionMarket || 'Unknown market',
+        confidence: Number(item.confidence || 0),
+        reasoning: item.reasoning || '',
+        status: (['won', 'lost', 'pending', 'not_applicable'].includes(item.status) ? item.status : 'pending') as HistoryStatus,
+        created_at: item.created_at,
+        resolved_at: item.resolved_at || null,
+        analysisPayload: item.analysisPayload || null,
+        outcome:
+          item.outcome && Number.isFinite(Number(item.outcome?.home)) && Number.isFinite(Number(item.outcome?.away))
+            ? { home: Number(item.outcome.home), away: Number(item.outcome.away) }
+            : (item.analysisPayload?.outcome
+                ? { home: Number(item.analysisPayload.outcome.home || 0), away: Number(item.analysisPayload.outcome.away || 0) }
+                : null),
+      }));
+      setHistoryItems(normalized);
+      historyLoaded.current = true;
+    } catch (e) {
+      console.error('History fetch failed:', e);
+      if (!silent) setHistoryItems([]);
+    } finally {
+      setLoading(false);
+    }
   }, [initData]);
+
+  useEffect(() => {
+    loadHistory();
+  }, [loadHistory]);
+
+  // Poll while anything is still pending so results flip without a manual refresh.
+  useEffect(() => {
+    if (!initData || loading) return;
+    const hasPending = historyItems.some((item) => item.status === 'pending');
+    if (!hasPending) return;
+    const timer = setInterval(() => {
+      void loadHistory(true);
+    }, 45_000);
+    return () => clearInterval(timer);
+  }, [initData, loading, historyItems, loadHistory]);
 
   const formatDate = (date: string) => new Date(date).toLocaleString();
 
@@ -197,6 +221,14 @@ export const History: React.FC = () => {
 
                       <p className="text-sm font-black text-white line-clamp-1">{item.match}</p>
                       <p className="text-[11px] font-bold text-zinc-400 line-clamp-1">{item.predictionMarket}</p>
+                      {item.outcome && item.status !== 'pending' && (
+                        <span className="inline-flex items-center gap-1.5 text-[10px] font-black text-zinc-300 bg-zinc-800/70 border border-zinc-700/60 rounded-full px-2 py-0.5 w-fit">
+                          FT
+                          <span className="text-white">{item.outcome.home}-{item.outcome.away}</span>
+                          {item.status === 'won' && <span className="text-[#ccff00]">✓ hit</span>}
+                          {item.status === 'lost' && <span className="text-red-400">✕ missed</span>}
+                        </span>
+                      )}
                     </div>
 
                     <ChevronRight className="w-4 h-4 text-zinc-600 shrink-0" />
@@ -225,10 +257,12 @@ export const History: React.FC = () => {
           )}
         </AnimatePresence>
 
-        {!loading && historyItems.some((item) => item.status === 'pending') && (
+        {!loading && stats.pending > 0 && (
           <div className="mt-3 flex items-start gap-2 rounded-2xl border border-amber-500/30 bg-amber-500/10 p-3">
             <ShieldAlert className="w-4 h-4 text-amber-400 mt-0.5" />
-            <p className="text-[10px] font-bold text-amber-200">Pending items auto-resolve when the match finishes. Markets like corners or player scorers show N/A as they can't be verified from the final score.</p>
+            <p className="text-[10px] font-bold text-amber-200">
+              {stats.pending} pending — results refresh automatically when matches finish. Markets like corners or player scorers show N/A as they can't be verified from the final score.
+            </p>
           </div>
         )}
       </div>
@@ -277,6 +311,40 @@ export const History: React.FC = () => {
                     <p className="text-sm font-black text-[#ccff00]">{activeItem.confidence}%</p>
                   </div>
                 </div>
+
+                {activeItem.status !== 'pending' && (
+                  <div
+                    className={`rounded-2xl border p-4 ${
+                      activeItem.status === 'won'
+                        ? 'border-[#ccff00]/30 bg-[#ccff00]/5'
+                        : activeItem.status === 'lost'
+                          ? 'border-red-500/30 bg-red-500/5'
+                          : 'border-zinc-700/50 bg-zinc-900/40'
+                    }`}
+                  >
+                    <div className="flex items-center justify-between gap-3">
+                      <div className="space-y-1 min-w-0">
+                        <p className="text-[10px] font-black text-zinc-500 tracking-widest">RESULT</p>
+                        {activeItem.outcome ? (
+                          <p className="text-2xl font-black text-white">
+                            {activeItem.outcome.home} <span className="text-zinc-600">-</span> {activeItem.outcome.away}
+                          </p>
+                        ) : (
+                          <p className="text-xs font-black text-zinc-400">Final score unavailable</p>
+                        )}
+                      </div>
+                      <span className={`inline-flex items-center gap-1.5 px-3 py-2 rounded-full border text-[11px] font-black tracking-wide ${getStatusUi(activeItem.status).className}`}>
+                        {getStatusUi(activeItem.status).icon}
+                        {activeItem.status === 'won' ? 'Prediction hit' : activeItem.status === 'lost' ? 'Prediction missed' : 'Not applicable'}
+                      </span>
+                    </div>
+                    <p className="text-[10px] font-bold text-zinc-500 mt-2">
+                      {activeItem.outcome
+                        ? `Final score: ${activeItem.outcome.home}-${activeItem.outcome.away} · ${activeItem.home} vs ${activeItem.away}`
+                        : 'Market cannot be verified from the final scoreline.'}
+                    </p>
+                  </div>
+                )}
 
                 {activeItem.analysisPayload?.predictions?.length ? (
                   <div className="space-y-3">

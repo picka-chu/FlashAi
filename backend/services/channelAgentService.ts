@@ -94,12 +94,28 @@ const firstEnv = (...names: string[]) => {
 
 const unique = (values: string[]) => [...new Set(values.filter(Boolean))];
 
+const MAX_ATTEMPTS_PER_DAY = 4;
+const CLAIM_STALE_MS = 10 * 60 * 1000;
+
+/** Truncate to max chars without cutting through a Telegram HTML tag. */
+const trimHtmlSafe = (message: string, max: number): string => {
+  if (message.length <= max) return message;
+  let cut = message.lastIndexOf("\n", max);
+  if (cut < max * 0.6) cut = max;
+  let out = message.slice(0, cut);
+  const lastOpen = out.lastIndexOf("<");
+  const lastClose = out.lastIndexOf(">");
+  if (lastOpen > lastClose) out = out.slice(0, lastOpen);
+  return `${out.trimEnd()}\n\n<i>Flash AI · Smart match intelligence</i>`;
+};
+
 const normalizeChannelId = (value: string) => {
   const raw = String(value || "").trim();
   if (!raw) return "";
   const linkMatch = raw.match(/^https?:\/\/t\.me\/([A-Za-z0-9_]+)/i);
   if (linkMatch) return `@${linkMatch[1]}`;
   if (/^-?\d+$/.test(raw)) return raw;
+  if (/^https?:\/\/t\.me\/\+/i.test(raw)) return raw; // private invite — needs numeric chat id
   return raw.startsWith("@") ? raw : `@${raw}`;
 };
 
@@ -146,7 +162,7 @@ const parseJsonFromText = (raw: string) => {
 const text = (value: unknown, limit: number) =>
   String(value ?? "").replace(/\r/g, "").trim().slice(0, limit);
 
-const leagueWeight = (league: string) => {
+export const leagueWeight = (league: string) => {
   const value = String(league || "").toLowerCase();
   const weighted: Array<[RegExp, number]> = [
     [/champions league/, 10],
@@ -235,6 +251,7 @@ export class ChannelAgentScheduler {
     }, TICK_INTERVAL);
     this.timer.unref?.();
     this.tick().catch((error) => console.error("AI channel editor tick failed:", error));
+    void this.validateChannel();
     console.log(
       `🗞️ AI channel editor active for ${this.channelId} (${this.timezone}); Gemini keys: ${this.keys.length}.`,
     );
@@ -402,10 +419,6 @@ export class ChannelAgentScheduler {
     this.running.add(runKey);
 
     try {
-      if (!options.force && await this.wasPosted(marker)) {
-        return { sent: false, skipped: "already_posted" };
-      }
-
       const context = await this.buildContext(job);
       if (job === "featured_match" && !context.featured) {
         return { sent: false, skipped: "no_featured_match" };
@@ -423,6 +436,17 @@ export class ChannelAgentScheduler {
         return { sent: false, dryRun: true, preview: message, context };
       }
 
+      // Claim the slot BEFORE sending so a crash/restart can never double-post.
+      // Dry runs return earlier and never consume the daily attempt budget.
+      if (!options.force) {
+        const claim = await this.claimMarker(marker);
+        if (!claim.allow) {
+          return { sent: false, skipped: claim.reason };
+        }
+      } else {
+        await this.writeMarker(marker, { status: "sending", job, dateKey, channel: this.channelId, started_at: new Date().toISOString() });
+      }
+
       const keyboard = this.buildKeyboard(context);
       const sent = await this.bot.telegram.sendMessage(this.channelId, message, {
         parse_mode: "HTML",
@@ -431,22 +455,18 @@ export class ChannelAgentScheduler {
       } as any);
 
       this.posted.add(marker);
-      const { error: markerError } = await this.supabase.from("api_cache").upsert(
-        {
-          endpoint: marker,
-          data: {
-            job,
-            dateKey,
-            channel: this.channelId,
-            message_id: sent?.message_id || null,
-            posted_at: new Date().toISOString(),
-          },
-          updated_at: new Date().toISOString(),
-        },
-        { onConflict: "endpoint" },
-      );
+      const { error: markerError } = await this.writeMarker(marker, {
+        status: "posted",
+        job,
+        dateKey,
+        channel: this.channelId,
+        message_id: sent?.message_id || null,
+        posted_at: new Date().toISOString(),
+      });
       if (markerError) {
-        console.warn("[channel-agent] Posted but failed to save dedupe marker:", markerError.message);
+        // In-memory `posted` still protects this process; the claim row written
+        // above protects restarted processes, so duplicates stay impossible.
+        console.warn("[channel-agent] Posted but failed to finalise marker:", markerError.message);
       }
       console.log(`[channel-agent] ${job} published to ${this.channelId} (${dateKey}).`);
       return { sent: true, messageId: sent?.message_id || null, text: message };
@@ -457,24 +477,122 @@ export class ChannelAgentScheduler {
         ? " Add the bot as an admin of the channel and verify TELEGRAM_CHANNEL_ID."
         : "";
       console.error(`[channel-agent] ${job} failed:`, reason);
+      await this.writeMarker(marker, {
+        status: "failed",
+        job,
+        dateKey,
+        channel: this.channelId,
+        error: reason,
+        last_attempt_at: new Date().toISOString(),
+      }).catch(() => undefined);
       throw new Error(`Channel post failed: ${reason}.${hint}`);
     } finally {
       this.running.delete(runKey);
     }
   }
 
-  private async wasPosted(marker: string): Promise<boolean> {
-    if (this.posted.has(marker)) return true;
-    const { data } = await this.supabase
+  /** Atomically decide whether this job/date may still be published. */
+  private async claimMarker(
+    marker: string,
+  ): Promise<{ allow: boolean; reason: string }> {
+    if (this.posted.has(marker)) return { allow: false, reason: "already_posted" };
+
+    const { data, error } = await this.supabase
       .from("api_cache")
-      .select("endpoint")
+      .select("endpoint,data,updated_at")
       .eq("endpoint", marker)
       .maybeSingle();
-    if (data?.endpoint) {
-      this.posted.add(marker);
-      return true;
+
+    if (error) {
+      // Cannot verify state → never risk a duplicate channel post.
+      console.warn("[channel-agent] Dedupe read failed; skipping post:", error.message);
+      return { allow: false, reason: "dedupe_unavailable" };
     }
-    return false;
+    if (!data?.endpoint) return { allow: true, reason: "fresh" };
+
+    const payload = data.data || {};
+    if (payload.status === "posted") {
+      this.posted.add(marker);
+      return { allow: false, reason: "already_posted" };
+    }
+
+    const attempts = Number(payload.attempts || 0);
+    if (attempts >= MAX_ATTEMPTS_PER_DAY) {
+      return { allow: false, reason: "max_attempts" };
+    }
+
+    if (payload.status === "sending") {
+      const started = Date.parse(payload.started_at || data.updated_at || "");
+      if (Number.isFinite(started) && Date.now() - started < CLAIM_STALE_MS) {
+        return { allow: false, reason: "in_flight" };
+      }
+      // Stale claim (crashed process) → take over.
+    }
+
+    const { error: claimError } = await this.writeMarker(marker, {
+      ...payload,
+      status: "sending",
+      attempts: attempts + 1,
+      started_at: new Date().toISOString(),
+    });
+    if (claimError) {
+      return { allow: false, reason: "dedupe_unavailable" };
+    }
+    return { allow: true, reason: attempts ? `retry_${attempts + 1}` : "fresh" };
+  }
+
+  private async writeMarker(
+    marker: string,
+    payload: Record<string, any>,
+  ): Promise<{ error: any }> {
+    const { attempts, ...rest } = payload;
+    const cleaned = Object.fromEntries(
+      Object.entries(rest).filter(([, value]) => value !== undefined),
+    );
+    const { data: existing } = await this.supabase
+      .from("api_cache")
+      .select("data")
+      .eq("endpoint", marker)
+      .maybeSingle();
+    const mergedAttempts =
+      attempts !== undefined ? Number(attempts) : Number(existing?.data?.attempts || 0);
+    const result = await this.supabase.from("api_cache").upsert(
+      {
+        endpoint: marker,
+        data: { ...cleaned, attempts: Math.max(mergedAttempts, 0) },
+        updated_at: new Date().toISOString(),
+      },
+      { onConflict: "endpoint" },
+    );
+    return { error: result.error };
+  }
+
+  /** Fail loudly at boot when the channel id is wrong or the bot lacks rights. */
+  private async validateChannel(): Promise<void> {
+    try {
+      const chat: any = await this.bot.telegram.getChat(this.channelId);
+      const title = chat?.title || chat?.username || this.channelId;
+      let botIsAdmin = false;
+      try {
+        const admins = await this.bot.telegram.getChatAdministrators(this.channelId);
+        botIsAdmin = admins.some((member: any) => member.user?.is_bot);
+      } catch {
+        // Rights check itself needs admin; sendMessage will surface it later.
+      }
+      if (botIsAdmin) {
+        console.log(`📰 Channel validated: "${title}" (${chat?.type || "channel"}), bot is admin.`);
+      } else {
+        console.warn(
+          `⚠️ Channel "${title}" reachable but the bot is NOT an admin — posts will fail. Add the bot as an administrator of ${this.channelId}.`,
+        );
+      }
+    } catch (error: any) {
+      const reason = error?.response?.description || error?.message || String(error);
+      console.error(
+        `⚠️ Channel validation failed for ${this.channelId}: ${reason}. ` +
+          "Set TELEGRAM_CHANNEL_ID to the channel username (@name) or numeric chat id, and make the bot an admin.",
+      );
+    }
   }
 
   private buildKeyboard(context: ChannelContext) {
@@ -720,6 +838,6 @@ Use 2-4 sections. Keep the whole post under 1400 characters, or under 1700 for n
       sections.pop();
       message = build(sections);
     }
-    return message.length > MAX_POST_LENGTH ? message.slice(0, MAX_POST_LENGTH) : message;
+    return trimHtmlSafe(message, MAX_POST_LENGTH);
   }
 }

@@ -6,6 +6,7 @@ import {
   NotificationService,
   type NotificationPreferences,
 } from "../services/notificationService.js";
+import { leagueWeight } from "../services/channelAgentService.js";
 
 interface EngagementSchedulerOptions {
   supabase: SupabaseClient;
@@ -19,11 +20,44 @@ const LIVE_INTERVAL = 90_000;
 
 const sleep = (ms: number) => new Promise((resolve) => setTimeout(resolve, ms));
 
+// All scheduling and "today" filters run in the app's timezone so users in
+// UTC+3 (and everywhere else) get their slate at a sensible local hour and
+// matches are matched against THEIR calendar day, not the server's.
+const APP_TIMEZONE = (() => {
+  const raw =
+    process.env.CHANNEL_AGENT_TIMEZONE || process.env.MATCH_TIMEZONE || process.env.TIMEZONE || "UTC";
+  try {
+    new Intl.DateTimeFormat("en-GB", { timeZone: raw });
+    return raw;
+  } catch {
+    return "UTC";
+  }
+})();
+
+function zonedParts(date = new Date()) {
+  const parts = new Intl.DateTimeFormat("en-GB", {
+    timeZone: APP_TIMEZONE,
+    hour12: false,
+    year: "numeric",
+    month: "2-digit",
+    day: "2-digit",
+    hour: "2-digit",
+    minute: "2-digit",
+  }).formatToParts(date);
+  const get = (type: string) => parts.find((part) => part.type === type)?.value || "00";
+  const hour = Number(get("hour"));
+  return {
+    hour: hour === 24 ? 0 : hour,
+    minute: Number(get("minute")),
+    dateKey: `${get("year")}-${get("month")}-${get("day")}`,
+  };
+}
+
 function utcTime(value: string | Date): string {
   const date = new Date(value);
   if (Number.isNaN(date.getTime())) return "TBC";
   return new Intl.DateTimeFormat("en-GB", {
-    timeZone: "UTC",
+    timeZone: APP_TIMEZONE,
     hour: "2-digit",
     minute: "2-digit",
     hour12: false,
@@ -31,7 +65,7 @@ function utcTime(value: string | Date): string {
 }
 
 function dateKey(date = new Date()): string {
-  return date.toISOString().slice(0, 10);
+  return zonedParts(date).dateKey;
 }
 
 function isoWeekKey(date = new Date()): string {
@@ -113,13 +147,14 @@ export class EngagementScheduler {
     this.runningDaily = true;
     try {
       const now = new Date();
-      const hour = now.getUTCHours();
-      const minute = now.getUTCMinutes();
+      const { hour, minute } = zonedParts(now);
 
-      if (isWindow(hour, minute, 8)) {
+      // 07:30 local — fixture slate lands before people head out.
+      if (isWindow(hour, minute, 7, 30)) {
         await this.runDailyFixtures();
       }
-      if (isWindow(hour, minute, 17)) {
+      // 19:00 local — evening news digest.
+      if (isWindow(hour, minute, 19)) {
         await this.runNewsDigest();
       }
       if (isWindow(hour, minute, 16, 0, 45)) {
@@ -191,7 +226,15 @@ export class EngagementScheduler {
       const matches = (await getUpcomingMatches())
         .filter((match: any) => String(match?.fixture?.date || "").startsWith(today))
         .filter((match: any) => match?.fixture?.status?.state !== "post")
-        .slice(0, 5);
+        // Highest-weight league first, then earliest kick-off — the featured
+        // pick should always be the day's marquee fixture, not list order.
+        .sort((a: any, b: any) => {
+          const weightDiff =
+            leagueWeight(a?.league?.name || a?.league || "") - leagueWeight(b?.league?.name || b?.league || "");
+          if (weightDiff !== 0) return weightDiff;
+          return String(a?.fixture?.date || "").localeCompare(String(b?.fixture?.date || ""));
+        })
+        .slice(0, 6);
 
       if (!matches.length) return { sent: 0, fixtures: 0 };
 
@@ -206,7 +249,9 @@ export class EngagementScheduler {
       const lines = matches.map((match: any) => {
         const home = escapeHtml(match?.teams?.home?.name || "Home");
         const away = escapeHtml(match?.teams?.away?.name || "Away");
-        const league = escapeHtml(match?.league?.name || "Football");
+        const league = escapeHtml(
+          typeof match?.league === "string" ? match.league : match?.league?.name || "Football",
+        );
         return `• <b>${utcTime(match?.fixture?.date)}</b> — ${home} vs ${away} <i>(${league})</i>`;
       });
 
