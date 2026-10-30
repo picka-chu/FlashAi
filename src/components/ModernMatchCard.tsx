@@ -57,7 +57,7 @@ export const ModernMatchCard: React.FC<ModernMatchCardProps> = ({ match, variant
           <div className="flex flex-col items-center gap-2 min-w-0">
             <div className="relative">
               <div className="absolute inset-0 bg-white/5 blur-xl rounded-full opacity-0 group-hover:opacity-100 transition-opacity" />
-<div className="rounded-full " + (compact ? "h-12 w-12" : "h-16 w-16") + " bg-zinc-800/40 border border-zinc-700/30 p-1.5 flex items-center justify-center relative z-10 backdrop-blur-md shadow-inner overflow-hidden">
+<div className={`${compact ? "h-12 w-12" : "h-16 w-16"} rounded-full bg-zinc-800/40 border border-zinc-700/30 p-1.5 flex items-center justify-center relative z-10 backdrop-blur-md shadow-inner overflow-hidden`}>
                 <TeamLogo name={match.home} logo={match.homeLogo} textClassName="text-xs" />
               </div>
             </div>
@@ -100,7 +100,7 @@ export const ModernMatchCard: React.FC<ModernMatchCardProps> = ({ match, variant
           <div className="flex flex-col items-center gap-2.5 min-w-0">
             <div className="relative">
               <div className="absolute inset-0 bg-white/5 blur-xl rounded-full opacity-0 group-hover:opacity-100 transition-opacity" />
-<div className="rounded-full " + (compact ? "h-12 w-12" : "h-16 w-16") + " bg-zinc-800/40 border border-zinc-700/30 p-1.5 flex items-center justify-center relative z-10 backdrop-blur-md shadow-inner overflow-hidden">
+<div className={`${compact ? "h-12 w-12" : "h-16 w-16"} rounded-full bg-zinc-800/40 border border-zinc-700/30 p-1.5 flex items-center justify-center relative z-10 backdrop-blur-md shadow-inner overflow-hidden`}>
                 <TeamLogo name={match.away} logo={match.awayLogo} textClassName="text-xs" />
               </div>
             </div>
