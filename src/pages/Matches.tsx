@@ -1,13 +1,13 @@
-import React, { useMemo, useState, useEffect, useRef } from 'react';
-import { Search, X, Zap, Lock } from 'lucide-react';
+import React, { useMemo, useState, useEffect } from 'react';
+import { motion, AnimatePresence } from 'motion/react';
+import { Search, X, Trophy, Zap, Radio, Lock, CalendarDays } from 'lucide-react';
 import { useUserStore } from '../store/useUserStore';
 import { Skeleton } from '../components/ui/Skeleton';
 import { getLiveMatches, getLiveMatchPreview, getUpcomingMatches, recordMatchClick } from '../services/footballService';
 import { useTelegram } from '../hooks/useTelegram';
 import { SignUpSheet } from '../components/SignUpSheet';
-import { FixtureRow } from '../components/matches/FixtureRow';
+import { ModernMatchCard } from '../components/ModernMatchCard';
 import { formatMatch, localDateKey, dateFromKey } from '../lib/matchUtils';
-import { compareByPriority } from '../lib/leaguePriority';
 
 type MatchType = 'live' | 'prematch';
 
@@ -15,11 +15,10 @@ interface MatchesProps {
   onTabChange: (tab: any) => void;
 }
 
-const DAYS_AHEAD = 8;
-
 export const Matches: React.FC<MatchesProps> = ({ onTabChange }) => {
-  const [searchOpen, setSearchOpen] = useState(false);
   const [searchQuery, setSearchQuery] = useState('');
+  const [searchOpen, setSearchOpen] = useState(false);
+  const [clockNow, setClockNow] = useState(Date.now());
   const [matches, setMatches] = useState<any[]>([]);
   const [liveMatches, setLiveMatches] = useState<any[]>([]);
   const [activeMatchType, setActiveMatchType] = useState<MatchType>('prematch');
@@ -27,7 +26,6 @@ export const Matches: React.FC<MatchesProps> = ({ onTabChange }) => {
   const [loading, setLoading] = useState(true);
   const [liveLoading, setLiveLoading] = useState(false);
   const [isSignUpOpen, setIsSignUpOpen] = useState(false);
-  const searchInputRef = useRef<HTMLInputElement>(null);
   const { setSelectedMatch, setIsAnalyzing, setAnalysisResult, user, setLivePreviewMatch } = useUserStore();
   const { hapticFeedback, initData, showAlert } = useTelegram();
 
@@ -38,13 +36,14 @@ export const Matches: React.FC<MatchesProps> = ({ onTabChange }) => {
       setLoading(true);
       try {
         const upcoming = await getUpcomingMatches(initData || '');
-        setMatches(upcoming.map(formatMatch));
+        setMatches((Array.isArray(upcoming) ? upcoming : []).map(formatMatch).filter(Boolean));
       } catch (error) {
         console.error('Failed to fetch matches:', error);
       } finally {
         setLoading(false);
       }
     };
+
     fetchMatches();
   }, [initData]);
 
@@ -57,7 +56,13 @@ export const Matches: React.FC<MatchesProps> = ({ onTabChange }) => {
       setLiveLoading(true);
       try {
         const live = await getLiveMatches(initData || '');
-        setLiveMatches((Array.isArray(live) ? live : []).map(formatMatch));
+        const formatted = (Array.isArray(live) ? live : []).map(formatMatch).filter(Boolean);
+        setLiveMatches((previous) => formatted.map((match: any) => {
+          const old = previous.find((item: any) => String(item.id) === String(match.id));
+          const oldElapsed = Number(old?.fixture?.status?.elapsed ?? -1);
+          const newElapsed = Number(match?.fixture?.status?.elapsed ?? -1);
+          return { ...match, __minuteAnchorAt: old && oldElapsed === newElapsed ? (old.__minuteAnchorAt || Date.now()) : Date.now() };
+        }));
       } catch (error) {
         console.error('Failed to fetch live matches:', error);
         setLiveMatches([]);
@@ -65,78 +70,69 @@ export const Matches: React.FC<MatchesProps> = ({ onTabChange }) => {
         setLiveLoading(false);
       }
     };
+
     fetchLive();
+    if (!isSubscribed) return;
+    const refreshId = window.setInterval(fetchLive, 15_000);
+    return () => window.clearInterval(refreshId);
   }, [isSubscribed, initData]);
 
   useEffect(() => {
-    if (searchOpen) searchInputRef.current?.focus();
-  }, [searchOpen]);
+    const clockId = window.setInterval(() => setClockNow(Date.now()), 1_000);
+    return () => window.clearInterval(clockId);
+  }, []);
 
   const todayKey = localDateKey(new Date());
-
-  const dateOptions = useMemo(
-    () =>
-      Array.from({ length: DAYS_AHEAD }, (_, offset) => {
-        const date = dateFromKey(todayKey);
-        date.setDate(date.getDate() + offset);
-        return {
-          key: localDateKey(date),
-          label:
-            offset === 0
-              ? 'Today'
-              : offset === 1
-                ? 'Tomorrow'
-                : date.toLocaleDateString('en-GB', { weekday: 'short', day: 'numeric' }),
-          fullLabel: date.toLocaleDateString('en-GB', { weekday: 'long', day: 'numeric', month: 'short' }),
-        };
-      }),
-    [todayKey],
-  );
-
-  const dayLabelFor = (key: string) => dateOptions.find((d) => d.key === key)?.label || key;
+  const dateOptions = useMemo(() => Array.from({ length: 8 }, (_, offset) => {
+    const date = dateFromKey(todayKey);
+    date.setDate(date.getDate() + offset);
+    const key = localDateKey(date);
+    return {
+      key,
+      dayName: offset === 0 ? 'Today' : offset === 1 ? 'Tomorrow' : date.toLocaleDateString('en-GB', { weekday: 'short' }),
+      dayNumber: date.getDate(),
+      month: date.toLocaleDateString('en-GB', { month: 'short' }),
+      count: matches.filter((match) => match.dateKey === key).length,
+    };
+  }), [matches, todayKey]);
 
   useEffect(() => {
-    const lastKey = dateOptions[dateOptions.length - 1]?.key;
-    if (!selectedDate || selectedDate < todayKey || (lastKey && selectedDate > lastKey)) {
+    if (selectedDate < todayKey || selectedDate > dateOptions[dateOptions.length - 1]?.key) {
       setSelectedDate(todayKey);
     }
   }, [selectedDate, todayKey, dateOptions]);
 
-  const query = searchQuery.trim().toLowerCase();
-  const isSearching = searchOpen && query.length > 0;
+  const normalizedQuery = searchQuery.trim().toLowerCase();
+  const isFinishedMatch = (match: any) => {
+    const status = String(match?.fixture?.status?.short || match?.status || '').toUpperCase();
+    return ['FT', 'AET', 'PEN', 'CANC', 'CANCELLED', 'ABD', 'AWD', 'WO', 'FINISHED', 'FULL TIME'].includes(status) || /finished|full.?time|cancelled|abandoned/i.test(status);
+  };
+  const withRunningMinute = (match: any) => {
+    const elapsed = Number(match?.fixture?.status?.elapsed);
+    const status = String(match?.fixture?.status?.short || match?.status || '').toUpperCase();
+    if (!Number.isFinite(elapsed) || elapsed < 1 || isFinishedMatch(match) || ['HT', 'BT', 'P', 'PENS', 'ET', 'SUSP', 'INT'].includes(status)) return match;
+    // Provider elapsed arrives in seconds (BSD stores minute × 60); convert to
+    // whole minutes and add minutes ticked since the last refresh.
+    let baseMinutes = elapsed >= 60 ? Math.round(elapsed / 60) : Math.round(elapsed);
+    if (baseMinutes > 135) baseMinutes = Math.round(baseMinutes / 60);
+    const anchor = Number(match?.__minuteAnchorAt || 0);
+    const extraMinutes = anchor > 0 ? Math.floor(Math.max(0, clockNow - anchor) / 60_000) : 0;
+    return { ...match, minute: `${Math.max(1, baseMinutes) + extraMinutes}'` };
+  };
 
-  const matchesQuery = (m: any) =>
-    !query ||
-    String(m.home).toLowerCase().includes(query) ||
-    String(m.away).toLowerCase().includes(query) ||
-    String(m.league).toLowerCase().includes(query);
+  const filteredUpcomingMatches = useMemo(() => matches.filter((m) =>
+    !isFinishedMatch(m) && m.dateKey === selectedDate && (
+      m.home.toLowerCase().includes(normalizedQuery) ||
+      m.away.toLowerCase().includes(normalizedQuery) ||
+      m.league.toLowerCase().includes(normalizedQuery)
+    )
+  ).map(withRunningMinute), [matches, normalizedQuery, selectedDate, clockNow]);
 
-  const upcomingList = useMemo(() => {
-    if (searchOpen && !query) return [];
-    return matches
-      .filter((m) => (searchOpen ? true : m.dateKey === selectedDate))
-      .filter(matchesQuery)
-      .sort((a, b) => (searchOpen ? a.dateKey.localeCompare(b.dateKey) : 0) || compareByPriority(a, b));
-  }, [matches, selectedDate, query, searchOpen]);
-
-  const liveList = useMemo(
-    () => liveMatches.filter(matchesQuery).sort(compareByPriority),
-    [liveMatches, query],
-  );
-
-  const activeList = searchOpen ? upcomingList : activeMatchType === 'live' ? liveList : upcomingList;
-
-  const groups = useMemo(() => {
-    const map = new Map<string, { label: string; rows: any[] }>();
-    for (const m of activeList) {
-      const league = m.league || 'Other competitions';
-      const key = searchOpen ? `${m.dateKey}|${league}` : league;
-      const label = searchOpen ? `${dayLabelFor(m.dateKey)} · ${league}` : league;
-      if (!map.has(key)) map.set(key, { label, rows: [] });
-      map.get(key)!.rows.push(m);
-    }
-    return Array.from(map.values());
-  }, [activeList, searchOpen, dateOptions]);
+  const filteredLiveMatches = useMemo(() => liveMatches.filter((m) =>
+    !isFinishedMatch(m) && (m.home.toLowerCase().includes(normalizedQuery) ||
+    m.away.toLowerCase().includes(normalizedQuery) ||
+    m.league.toLowerCase().includes(normalizedQuery))
+  ).map(withRunningMinute), [liveMatches, normalizedQuery, clockNow]);
 
   const handleAnalyzePrematch = (match: any) => {
     if (!user?.phone) {
@@ -162,188 +158,166 @@ export const Matches: React.FC<MatchesProps> = ({ onTabChange }) => {
       return;
     }
     hapticFeedback('light');
+
+    // Optimistic navigation: open the page immediately with whatever data we have.
+    // The page will auto-refresh every 20s for live stats.
     setLivePreviewMatch(formatMatch(match));
     onTabChange('livePreview');
+
+    // Then try to enrich with fresh data from the backend (non-blocking).
     try {
       const preview = await getLiveMatchPreview(String(match.id), initData || '');
       if (preview) setLivePreviewMatch(formatMatch(preview));
     } catch {
-      // The snapshot already on screen is enough; the preview refreshes itself.
+      // Silently ignore — user is already on the live preview page with the snapshot data.
     }
   };
 
-  const closeSearch = () => {
-    setSearchOpen(false);
-    setSearchQuery('');
-  };
+  const activeList = activeMatchType === 'live' ? filteredLiveMatches : filteredUpcomingMatches;
+  const searchResults = [...filteredLiveMatches, ...matches.filter((match) =>
+    !isFinishedMatch(match) && (match.home.toLowerCase().includes(normalizedQuery) || match.away.toLowerCase().includes(normalizedQuery) || match.league.toLowerCase().includes(normalizedQuery))
+  ).map(withRunningMinute)].filter((match, index, all) => all.findIndex((item) => String(item.id) === String(match.id)) === index);
 
-  const isLoading = loading || (!searchOpen && activeMatchType === 'live' && liveLoading);
-  const showLiveGate = !searchOpen && activeMatchType === 'live' && !isSubscribed;
-  const selectedLabel = dayLabelFor(selectedDate);
-  const emptyTitle = searchOpen
-    ? query
-      ? 'No results'
-      : 'Search fixtures'
-    : activeMatchType === 'live'
-      ? 'No live matches'
-      : `No fixtures on ${selectedLabel}`;
-  const emptyText = searchOpen
-    ? query
-      ? `Nothing matches “${searchQuery.trim()}”. Try another team or league.`
-      : 'Find a team or competition across the next 8 days.'
-    : activeMatchType === 'live'
-      ? 'There are no live fixtures right now. Check back shortly.'
-      : 'Choose another day above.';
+  if (searchOpen) {
+    return (
+      <div className="relative flex h-full min-h-0 flex-col overflow-hidden bg-[var(--background)] text-[var(--foreground)]">
+        <div className="flex flex-none items-center gap-3 border-b border-[var(--border)] px-4 pb-3 pt-4">
+          <button type="button" onClick={() => { setSearchOpen(false); setSearchQuery(''); }} aria-label="Back to matches" className="flex h-10 w-10 shrink-0 items-center justify-center rounded-full border border-[var(--border)] bg-[var(--surface-1)] text-[var(--text-strong)]"><X className="h-5 w-5" /></button>
+          <div className="relative min-w-0 flex-1">
+            <Search className="absolute left-3.5 top-1/2 h-4 w-4 -translate-y-1/2 text-[var(--text-subtle)]" />
+            <input autoFocus value={searchQuery} onChange={(e) => setSearchQuery(e.target.value)} placeholder="Search teams, leagues, fixtures" aria-label="Search teams, leagues, fixtures" className="w-full rounded-2xl border border-[var(--border)] bg-[var(--surface-1)] py-3 pl-10 pr-4 text-sm text-[var(--text-strong)] outline-none placeholder:text-[var(--text-subtle)] focus:border-[var(--primary)]/50" />
+          </div>
+          {searchQuery && <button type="button" onClick={() => setSearchQuery('')} aria-label="Clear search" className="flex h-9 w-9 shrink-0 items-center justify-center rounded-full text-[var(--text-muted)]"><X className="h-4 w-4" /></button>}
+        </div>
+        <div className="min-h-0 flex-1 overflow-y-auto overscroll-y-contain touch-pan-y px-4 pb-24 pt-4">
+          {!normalizedQuery ? <div className="flex h-full min-h-[240px] flex-col items-center justify-center text-center"><div className="mb-4 flex h-16 w-16 items-center justify-center rounded-2xl border border-[var(--border)] bg-[var(--surface-1)]"><Search className="h-7 w-7 text-[var(--text-muted)]" /></div><p className="text-base font-semibold text-[var(--text-strong)]">Find a match</p><p className="mt-1 max-w-[240px] text-sm text-[var(--text-muted)]">Search by team name or competition. Finished matches are hidden.</p></div>
+          : searchResults.length ? <div className="space-y-3"><div className="px-1 text-xs font-semibold uppercase tracking-wider text-[var(--text-muted)]">{searchResults.length} matching {searchResults.length === 1 ? 'fixture' : 'fixtures'}</div>{searchResults.map((match: any, index) => { const isLiveResult = liveMatches.some((live) => String(live.id) === String(match.id)); return <motion.div key={match.id || index} initial={{ opacity: 0, y: 8 }} animate={{ opacity: 1, y: 0 }}><ModernMatchCard match={match} variant={isLiveResult ? 'live' : 'prematch'} onClick={() => { setSearchOpen(false); if (isLiveResult) handleOpenLivePreview(match); else handleAnalyzePrematch(match); }} /></motion.div>; })}</div>
+          : <div className="py-20 text-center"><Trophy className="mx-auto mb-3 h-8 w-8 text-[var(--text-muted)]" /><p className="font-semibold text-[var(--text-strong)]">No matching fixtures</p><p className="mt-1 text-sm text-[var(--text-muted)]">Try another team or league name.</p></div>}
+        </div>
+        <SignUpSheet isOpen={isSignUpOpen} onClose={() => setIsSignUpOpen(false)} />
+      </div>
+    );
+  }
 
   return (
-    <div className="flex h-full min-h-0 flex-col overflow-hidden bg-[var(--background)] text-[var(--foreground)]">
-      <header className="relative z-10 flex-none border-b border-[var(--border)] bg-[var(--background)] px-5 pt-3">
-        <div className="flex h-9 items-center gap-2">
-          {searchOpen ? (
-            <>
-              <div className="relative min-w-0 flex-1">
-                <Search className="pointer-events-none absolute left-3 top-1/2 h-3.5 w-3.5 -translate-y-1/2 text-[var(--text-subtle)]" />
-                <input
-                  ref={searchInputRef}
-                  value={searchQuery}
-                  onChange={(e) => setSearchQuery(e.target.value)}
-                  placeholder="Search teams or leagues"
-                  className="h-9 w-full rounded-lg border border-[var(--border)] bg-[var(--surface-1)] pl-9 pr-9 text-[13px] text-[var(--text-strong)] placeholder:text-[var(--text-subtle)] outline-none transition-colors focus:border-[var(--primary)]/50"
-                />
-                {searchQuery && (
-                  <button
-                    type="button"
-                    onClick={() => setSearchQuery('')}
-                    aria-label="Clear search"
-                    className="absolute right-1.5 top-1/2 flex h-6 w-6 -translate-y-1/2 items-center justify-center rounded-md text-[var(--text-subtle)] hover:text-[var(--text-strong)]"
-                  >
-                    <X className="h-3.5 w-3.5" />
-                  </button>
-                )}
-              </div>
-              <button
-                type="button"
-                onClick={closeSearch}
-                className="h-9 shrink-0 px-1 text-[13px] font-medium text-[var(--primary)]"
-              >
-                Cancel
-              </button>
-            </>
-          ) : (
-            <>
-              <h1 className="min-w-0 flex-1 truncate text-[20px] font-semibold tracking-tight text-[var(--text-strong)]">Matches</h1>
-              {user?.phone && (
-                <span className="flex items-center gap-1 text-[12px] text-[var(--text-muted)]">
-                  <Zap className={`h-3.5 w-3.5 ${user.credits <= 0 ? 'text-[var(--danger)]' : 'text-[var(--primary)]'}`} fill="currentColor" />
-                  <span className={`tabular font-medium ${user.credits <= 0 ? 'text-[var(--danger)]' : 'text-[var(--text-strong)]'}`}>{user.credits}</span>
-                </span>
-              )}
-              <button
-                type="button"
-                onClick={() => { hapticFeedback('light'); setSearchOpen(true); }}
-                aria-label="Search matches"
-                className="flex h-9 w-9 shrink-0 items-center justify-center rounded-lg text-[var(--text-muted)] transition-colors hover:bg-white/[0.05] hover:text-[var(--text-strong)]"
-              >
-                <Search className="h-[17px] w-[17px]" />
-              </button>
-            </>
+    <div className="relative flex h-full min-h-0 flex-col overflow-hidden bg-[var(--background)] text-[var(--foreground)]">
+      <div className="z-10 flex flex-none items-center justify-between px-5 pb-2 pt-4">
+        <div>
+          <h1 className="text-[25px] font-semibold tracking-tight text-[var(--text-strong)]">Matches</h1>
+        </div>
+        <div className="flex items-center gap-2">
+          <button type="button" aria-label={searchOpen ? 'Close search' : 'Search matches'} onClick={() => { setSearchOpen(true); setSearchQuery(''); }} className={`flex h-10 w-10 items-center justify-center rounded-full border transition-colors ${searchOpen ? 'border-[var(--primary)]/40 bg-[var(--primary)]/10 text-[var(--primary)]' : 'border-[var(--border)] bg-[var(--surface-1)] text-[var(--text-muted)] hover:text-[var(--text-strong)]'}`}>
+            {searchOpen ? <X className="h-[18px] w-[18px]" /> : <Search className="h-[18px] w-[18px]" />}
+          </button>
+          {user?.phone && (
+            <div className={`backdrop-blur-md border px-3 py-1.5 rounded-full flex items-center gap-1.5 ${user.credits <= 0 ? 'bg-red-500/10 border-red-500/20' : 'bg-white/5 border-white/10'}`}>
+              <Zap className={`w-3.5 h-3.5 ${user.credits <= 0 ? 'text-red-500' : 'text-[#ccff00]'}`} />
+              <span className={`text-xs font-black ${user.credits <= 0 ? 'text-red-500' : 'text-white'}`}>{user.credits}</span>
+            </div>
           )}
         </div>
+      </div>
 
-        {!searchOpen && (
-          <>
-            <div role="tablist" className="mt-1 flex gap-5 border-b border-[var(--border)]">
-              {([
-                ['prematch', 'Upcoming'],
-                ['live', 'Live'],
-              ] as const).map(([value, label]) => {
-                const active = activeMatchType === value;
+      <div className="flex-none space-y-3 px-5 pb-3 pt-1">
+        <div className="grid grid-cols-2 gap-1 rounded-2xl border border-[var(--border)] bg-[var(--surface-1)] p-1">
+          <button onClick={() => setActiveMatchType('prematch')} className={`rounded-xl py-3 text-[13px] font-semibold transition-colors ${activeMatchType === 'prematch' ? 'bg-[var(--primary)] text-[var(--primary-foreground)] shadow-sm' : 'text-[var(--text-muted)] hover:text-[var(--text-strong)]'}`}>Prematch</button>
+          <button onClick={() => setActiveMatchType('live')} className={`flex items-center justify-center gap-1.5 rounded-xl py-3 text-[13px] font-semibold transition-colors ${activeMatchType === 'live' ? 'bg-[var(--surface-3)] text-[var(--text-strong)] shadow-sm' : 'text-[var(--text-muted)] hover:text-[var(--text-strong)]'}`}><Radio className="w-3.5 h-3.5" /> Live</button>
+        </div>
+
+        {activeMatchType === 'prematch' && (
+          <section className="relative overflow-hidden rounded-[20px] border border-[var(--border)] bg-gradient-to-br from-[var(--surface-1)] via-[var(--surface-1)] to-[var(--surface-2)] p-2.5">
+            <div className="mb-2 flex items-center justify-between gap-3 px-1">
+              <div className="flex items-center gap-2.5">
+                <span className="flex h-7 w-7 items-center justify-center rounded-lg bg-[var(--primary)]/12 text-[var(--primary)]">
+                  <CalendarDays className="h-4 w-4" />
+                </span>
+                <div>
+                  <p className="text-[13px] font-semibold text-[var(--text-strong)]">Match schedule</p>
+                </div>
+              </div>
+              <span className="rounded-full border border-[var(--border)] bg-[var(--surface-2)] px-2 py-1 text-[10px] font-semibold tabular text-[var(--text-muted)]">
+                {dateOptions.find((day) => day.key === selectedDate)?.count || 0} games
+              </span>
+            </div>
+            <div className="no-scrollbar -mx-1 flex gap-1.5 overflow-x-auto px-1 pb-0.5">
+              {dateOptions.map((day) => {
+                const active = day.key === selectedDate;
                 return (
                   <button
-                    key={value}
+                    key={day.key}
                     type="button"
-                    role="tab"
-                    aria-selected={active}
-                    onClick={() => setActiveMatchType(value)}
-                    className={`-mb-px border-b-2 pb-2 text-[13px] font-medium transition-colors ${
-                      active ? 'border-[var(--primary)] text-[var(--text-strong)]' : 'border-transparent text-[var(--text-subtle)] hover:text-[var(--text-muted)]'
+                    onClick={() => { hapticFeedback('light'); setSelectedDate(day.key); }}
+                    aria-pressed={active}
+                    className={`relative flex min-w-[58px] shrink-0 flex-col items-center gap-1 overflow-hidden rounded-[14px] border px-2.5 py-2 transition-all duration-200 active:scale-95 ${
+                      active ? 'border-[var(--primary)] bg-[var(--primary)] text-[var(--primary-foreground)] shadow-[0_8px_22px_rgba(204,255,0,0.16)]' : 'border-[var(--border)] bg-[var(--background)]/70 text-[var(--text-muted)] hover:border-[var(--primary)]/40 hover:bg-[var(--surface-2)]'
                     }`}
                   >
-                    {label}
+                    {active && <span className="absolute inset-x-3 top-0 h-[3px] rounded-b-full bg-current opacity-70" />}
+                    <span className="text-[10px] font-bold uppercase tracking-wide">{day.dayName}</span>
+                    <span className="tabular text-[19px] font-bold leading-none">{day.dayNumber}</span>
+                    <span className="text-[10px] font-medium opacity-75">{day.month}</span>
+                    <span className={`h-1 w-1 rounded-full ${day.count ? (active ? 'bg-current' : 'bg-[var(--primary)]') : 'bg-transparent'}`} />
                   </button>
                 );
               })}
             </div>
-
-            {activeMatchType === 'prematch' && (
-              <div className="no-scrollbar -mx-5 flex gap-1.5 overflow-x-auto px-5 py-2.5">
-                {dateOptions.map((day) => {
-                  const active = day.key === selectedDate;
-                  return (
-                    <button
-                      key={day.key}
-                      type="button"
-                      onClick={() => { hapticFeedback('light'); setSelectedDate(day.key); }}
-                      aria-pressed={active}
-                      aria-label={day.fullLabel}
-                      className={`h-8 shrink-0 rounded-full px-3 text-[12px] font-medium transition-colors ${
-                        active
-                          ? 'bg-[var(--primary)] text-[var(--primary-foreground)]'
-                          : 'border border-[var(--border)] bg-[var(--surface-1)] text-[var(--text-muted)] hover:text-[var(--text-strong)]'
-                      }`}
-                    >
-                      {day.label}
-                    </button>
-                  );
-                })}
-              </div>
-            )}
-          </>
+          </section>
         )}
-      </header>
 
-      <div className="no-scrollbar min-h-0 flex-1 overflow-y-auto overscroll-contain px-5 pb-6 pt-3">
-        {isLoading ? (
-          <div className="space-y-2.5">
-            <Skeleton className="h-16 w-full rounded-2xl" />
-            <Skeleton className="h-16 w-full rounded-2xl" />
-            <Skeleton className="h-16 w-full rounded-2xl" />
+        {searchOpen && (
+          <div className="relative">
+            <Search className="absolute left-3.5 top-1/2 h-4 w-4 -translate-y-1/2 text-[var(--text-subtle)]" />
+            <input autoFocus value={searchQuery} onChange={(e) => setSearchQuery(e.target.value)} placeholder="Search teams or leagues" aria-label="Search teams or leagues" className="w-full rounded-xl border border-[var(--border)] bg-[var(--surface-1)] py-3 pl-10 pr-4 text-[14px] text-[var(--text-strong)] placeholder:text-[var(--text-subtle)] outline-none transition-colors focus:border-[var(--primary)]/50" />
           </div>
-        ) : showLiveGate ? (
-          <div className="space-y-3 rounded-2xl border border-[var(--border)] bg-[var(--surface-1)] p-5">
-            <Lock className="h-5 w-5 text-[var(--text-muted)]" />
-            <h3 className="text-[15px] font-semibold text-[var(--text-strong)]">Live matches are on paid plans</h3>
-            <p className="text-[13px] leading-relaxed text-[var(--text-muted)]">
-              Upgrade to view live scores and run live analysis.
-            </p>
-          </div>
-        ) : groups.length > 0 ? (
+        )}
+      </div>
+
+      <div className="no-scrollbar min-h-0 flex-1 space-y-3 overflow-y-auto overscroll-y-contain touch-pan-y px-5 pb-28 pt-1">
+        {(loading || (activeMatchType === 'live' && liveLoading)) ? (
           <div className="space-y-4">
-            {groups.map((group) => (
-              <section key={group.label} className="space-y-1.5">
-                <div className="flex items-center gap-2 px-1">
-                  <p className="truncate text-[11px] font-semibold uppercase tracking-[0.08em] text-[var(--text-subtle)]">{group.label}</p>
-                  <span className="h-px flex-1 bg-[var(--border)]" />
-                  <span className="tabular text-[11px] text-[var(--text-subtle)]">{group.rows.length}</span>
-                </div>
-                <div className="overflow-hidden rounded-2xl border border-[var(--border)] bg-[var(--surface-1)]">
-                  {group.rows.map((match: any, idx: number) => (
-                    <FixtureRow
-                      key={match.id || `${group.label}-${idx}`}
-                      match={match}
-                      isLast={idx === group.rows.length - 1}
-                      onClick={() => (activeMatchType === 'live' && !searchOpen ? handleOpenLivePreview(match) : handleAnalyzePrematch(match))}
-                    />
-                  ))}
-                </div>
-              </section>
+            {[1, 2, 3].map((i) => (
+              <div key={i} className="bg-zinc-900 border border-zinc-800 rounded-[24px] p-5 space-y-4">
+                <Skeleton className="w-24 h-5 rounded-full" />
+                <Skeleton className="w-full h-32 rounded-2xl" />
+              </div>
             ))}
           </div>
         ) : (
-          <div className="py-16 text-center">
-            <p className="text-[15px] font-semibold text-[var(--text-strong)]">{emptyTitle}</p>
-            <p className="mx-auto mt-1 max-w-[260px] text-[13px] leading-relaxed text-[var(--text-muted)]">{emptyText}</p>
-          </div>
+          <>
+            {activeMatchType === 'live' && !isSubscribed ? (
+              <div className="space-y-3 rounded-[24px] border border-[var(--border)] bg-[var(--surface-1)] p-6 text-center">
+                <Lock className="mx-auto h-8 w-8 text-[var(--primary)]" />
+                <h3 className="text-sm font-black text-white uppercase tracking-wider">Live matches are premium only</h3>
+                <p className="text-xs text-zinc-500">Upgrade to Monthly Basic or Monthly Pro to view live match cards and run live AI analysis.</p>
+              </div>
+            ) : null}
+
+            <AnimatePresence mode="popLayout">
+              {activeList.length > 0 ? (
+                activeList.map((match: any, i) => (
+                  <motion.div key={match.id || i} initial={{ opacity: 0, y: 16 }} animate={{ opacity: 1, y: 0 }} exit={{ opacity: 0, scale: 0.95 }}>
+                    <ModernMatchCard
+                      match={match}
+                      variant={activeMatchType === 'live' ? 'live' : 'prematch'}
+                      onClick={() => (activeMatchType === 'live' ? handleOpenLivePreview(match) : handleAnalyzePrematch(match))}
+                    />
+                  </motion.div>
+                ))
+              ) : (
+                <div className="py-20 text-center space-y-4">
+                  <div className="w-16 h-16 bg-zinc-900/50 rounded-full flex items-center justify-center mx-auto border border-zinc-800">
+                    <Trophy className="w-8 h-8 text-zinc-600" />
+                  </div>
+                  <div>
+                    <p className="text-[15px] font-semibold tracking-tight text-[var(--text-strong)]">No matches found</p>
+                    <p className="text-zinc-500 text-xs mt-1 max-w-[240px] mx-auto leading-relaxed">
+                      {activeMatchType === 'live' ? 'There are no live fixtures at the moment. Try again shortly.' : (matches.some((match) => match.dateKey === selectedDate) ? 'No fixtures match your search. Try another team or league.' : 'No fixtures are scheduled for this day. Choose another date above.')}
+                    </p>
+                  </div>
+                </div>
+              )}
+            </AnimatePresence>
+          </>
         )}
       </div>
 

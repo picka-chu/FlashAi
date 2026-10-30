@@ -52,92 +52,82 @@ function dixonColesCorrection(
 // Home advantage +8% (consistent across top European leagues).
 // ─────────────────────────────────────────────────────────────────────────────
 export function computeFeatures(data: MatchData) {
+  const finiteNonNegative = (value: unknown, fallback = 0) =>
+    typeof value === "number" && Number.isFinite(value) && value >= 0 ? value : fallback;
   const safeDiv = (a: number, b: number, fallback = 1.0) =>
     b > 0 ? a / b : fallback;
 
-  // ── Season averages ────────────────────────────────────────────────────────
-  const homePlayed  = data.home.season.played  || 1;
-  const awayPlayed  = data.away.season.played  || 1;
+  const homePlayed = finiteNonNegative(data.home?.season?.played);
+  const awayPlayed = finiteNonNegative(data.away?.season?.played);
+  const homeScored = finiteNonNegative(data.home?.season?.goalsScored);
+  const awayScored = finiteNonNegative(data.away?.season?.goalsScored);
+  const homeConceded = finiteNonNegative(data.home?.season?.goalsConceded);
+  const awayConceded = finiteNonNegative(data.away?.season?.goalsConceded);
 
-  const homeAttackSeason  = safeDiv(data.home.season.goalsScored,   homePlayed);
-  const awayAttackSeason  = safeDiv(data.away.season.goalsScored,   awayPlayed);
-  const homeDefenseSeason = safeDiv(data.home.season.goalsConceded, homePlayed);
-  const awayDefenseSeason = safeDiv(data.away.season.goalsConceded, awayPlayed);
+  // Do not manufacture season averages from a zero-game denominator. The
+  // conservative fallback is used only to keep the model finite; data quality
+  // is reduced below so the UI can communicate that uncertainty.
+  const homeAttackSeason = safeDiv(homeScored, homePlayed, 1.25);
+  const awayAttackSeason = safeDiv(awayScored, awayPlayed, 1.10);
+  const homeDefenseSeason = safeDiv(homeConceded, homePlayed, 1.25);
+  const awayDefenseSeason = safeDiv(awayConceded, awayPlayed, 1.25);
 
-  // ── Form decay (last 5, newest = highest weight) ──────────────────────────
   const FORM_WEIGHTS = [5, 4, 3, 2, 1];
-  const WEIGHT_SUM   = FORM_WEIGHTS.reduce((a, b) => a + b, 0);
-
+  const WEIGHT_SUM = FORM_WEIGHTS.reduce((sum, weight) => sum + weight, 0);
   const computeFormMetrics = (
     goalsScored: number,
     goalsConceded: number,
     results: string[]
   ) => {
-    const games = Math.max(results.length, 1);
-    const formScore =
-      results
-        .slice(0, 5)
-        .reduce((acc, r, i) => acc + (r === "W" ? 3 : r === "D" ? 1 : 0) * (FORM_WEIGHTS[i] ?? 1), 0) /
-      (WEIGHT_SUM * 3); // normalised 0-1
-
+    const recentResults = Array.isArray(results) ? results.slice(0, 5) : [];
+    const games = Math.max(Math.min(recentResults.length, 5), 1);
+    const formScore = recentResults.reduce((sum, result, index) =>
+      sum + (result === "W" ? 3 : result === "D" ? 1 : 0) *
+        (FORM_WEIGHTS[index] ?? 1), 0) / (WEIGHT_SUM * 3);
     return {
-      attack:    safeDiv(goalsScored,   games),
-      defense:   safeDiv(goalsConceded, games),
-      formScore,
+      attack: safeDiv(finiteNonNegative(goalsScored), games, 1.1),
+      defense: safeDiv(finiteNonNegative(goalsConceded), games, 1.25),
+      formScore: Math.min(1, Math.max(0, formScore)),
     };
   };
 
+  const homeResults = data.home?.last5?.results ?? [];
+  const awayResults = data.away?.last5?.results ?? [];
   const homeForm = computeFormMetrics(
-    data.home.last5.goalsScored,
-    data.home.last5.goalsConceded,
-    data.home.last5.results
+    data.home?.last5?.goalsScored ?? 0,
+    data.home?.last5?.goalsConceded ?? 0,
+    homeResults
   );
   const awayForm = computeFormMetrics(
-    data.away.last5.goalsScored,
-    data.away.last5.goalsConceded,
-    data.away.last5.results
+    data.away?.last5?.goalsScored ?? 0,
+    data.away?.last5?.goalsConceded ?? 0,
+    awayResults
   );
 
-  // ── Blend season (60%) + recent form (40%) ─────────────────────────────────
-  const homeAttack  = homeAttackSeason  * 0.6 + homeForm.attack  * 0.4;
-  const awayAttack  = awayAttackSeason  * 0.6 + awayForm.attack  * 0.4;
-  const homeDefense = homeDefenseSeason * 0.6 + homeForm.defense * 0.4;
-  const awayDefense = awayDefenseSeason * 0.6 + awayForm.defense * 0.4;
+  const homeAttack = homeAttackSeason * 0.65 + homeForm.attack * 0.35;
+  const awayAttack = awayAttackSeason * 0.65 + awayForm.attack * 0.35;
+  const homeDefense = homeDefenseSeason * 0.65 + homeForm.defense * 0.35;
+  const awayDefense = awayDefenseSeason * 0.65 + awayForm.defense * 0.35;
 
-  // ── League average with sensible defaults ─────────────────────────────────
-  const league = data.leagueAvgGoals && data.leagueAvgGoals > 0.5
-    ? data.leagueAvgGoals
-    : 2.65; // European average
+  const rawLeague = finiteNonNegative(data.leagueAvgGoals, 2.65);
+  const league = rawLeague >= 1.5 && rawLeague <= 4.5 ? rawLeague : 2.65;
 
-  // ── Dixon-Coles lambdas ────────────────────────────────────────────────────
-  let lambdaHome =
-    safeDiv(homeAttack,  league) *
-    safeDiv(awayDefense, league) *
-    league;
+  let lambdaHome = safeDiv(homeAttack, league) * safeDiv(awayDefense, league) * league;
+  let lambdaAway = safeDiv(awayAttack, league) * safeDiv(homeDefense, league) * league;
 
-  let lambdaAway =
-    safeDiv(awayAttack,  league) *
-    safeDiv(homeDefense, league) *
-    league;
-
-  // ── xG overlay (BSD live data, 30% weight) ────────────────────────────────
-  const homeXG = data.deepContext?.xG?.home;
-  const awayXG = data.deepContext?.xG?.away;
-  if (homeXG && awayXG && homeXG > 0 && awayXG > 0) {
-    lambdaHome = lambdaHome * 0.70 + homeXG * 0.30;
-    lambdaAway = lambdaAway * 0.70 + awayXG * 0.30;
+  // Only use explicitly labelled pre-match expected-goal estimates. Accumulated
+  // live xG is not a full-match lambda and must not be mixed into pre-match
+  // expectations; doing so double-counts elapsed match information.
+  const expectedHomeXG = finiteNonNegative(data.deepContext?.expectedGoals?.home, -1);
+  const expectedAwayXG = finiteNonNegative(data.deepContext?.expectedGoals?.away, -1);
+  if (expectedHomeXG > 0 && expectedAwayXG > 0) {
+    lambdaHome = lambdaHome * 0.8 + expectedHomeXG * 0.2;
+    lambdaAway = lambdaAway * 0.8 + expectedAwayXG * 0.2;
   }
 
-  // ── Home advantage +8% ────────────────────────────────────────────────────
   lambdaHome *= 1.08;
-
-  // ── Form momentum boost (hot teams) ──────────────────────────────────────
-  if (homeForm.formScore > 0.75) lambdaHome *= 1.05;
-  if (awayForm.formScore > 0.75) lambdaAway *= 1.05;
-
-  // ── Sanity bounds ─────────────────────────────────────────────────────────
-  lambdaHome = Math.max(0.30, Math.min(lambdaHome, 5.0));
-  lambdaAway = Math.max(0.30, Math.min(lambdaAway, 5.0));
+  lambdaHome = Math.min(5, Math.max(0.3, Number.isFinite(lambdaHome) ? lambdaHome : 1.35));
+  lambdaAway = Math.min(5, Math.max(0.3, Number.isFinite(lambdaAway) ? lambdaAway : 1.10));
 
   return {
     lambdaHome,
@@ -150,29 +140,41 @@ export function computeFeatures(data: MatchData) {
 
 // ─── Data quality score ───────────────────────────────────────────────────────
 function computeDataQuality(data: MatchData): number {
-  let score = 0.40; // base
+  let score = 0.20;
 
-  // Season data depth
-  if (data.home.season.played >= 5)  score += 0.05;
-  if (data.home.season.played >= 10) score += 0.10;
-  if (data.away.season.played >= 5)  score += 0.05;
-  if (data.away.season.played >= 10) score += 0.10;
+  const homePlayed = finiteDataNumber(data.home?.season?.played);
+  const awayPlayed = finiteDataNumber(data.away?.season?.played);
+  if (homePlayed >= 5) score += 0.10;
+  if (homePlayed >= 10) score += 0.08;
+  if (awayPlayed >= 5) score += 0.10;
+  if (awayPlayed >= 10) score += 0.08;
 
-  // Form data
-  if (data.home.last5.results.length >= 5) score += 0.05;
-  if (data.away.last5.results.length >= 5) score += 0.05;
+  if ((data.home?.last5?.results?.length ?? 0) >= 3) score += 0.07;
+  if ((data.home?.last5?.results?.length ?? 0) >= 5) score += 0.04;
+  if ((data.away?.last5?.results?.length ?? 0) >= 3) score += 0.07;
+  if ((data.away?.last5?.results?.length ?? 0) >= 5) score += 0.04;
 
-  // Live data bonuses
-  if (data.deepContext?.xG)                     score += 0.08;
-  if (data.odds && Object.keys(data.odds).length > 4) score += 0.07;
+  // Odds add market context, but are not a substitute for complete team data.
+  const validOdds = Object.values(data.odds ?? {}).filter((odd) =>
+    typeof odd === "number" && Number.isFinite(odd) && odd > 1.01 && odd <= 100
+  ).length;
+  if (validOdds >= 3) score += 0.08;
 
-  // Penalty if data came from AI fallback (not real sports API)
-  if ((data as any).dataSource === "gemini_search") score -= 0.15;
-  if ((data as any).dataQualityWarning)              score -= 0.10;
+  const context = data.deepContext ?? {};
+  const source = (data as any).dataSource ?? context.dataSource;
+  const warning = (data as any).dataQualityWarning ?? context.dataQualityWarning;
+  if (source === "gemini_search") score -= 0.15;
+  if (warning) score -= 0.10;
+  if (context.oddsAvailable === false) score -= 0.08;
+  if (context.statsAvailable === false) score -= 0.10;
+  if (homePlayed === 0 || awayPlayed === 0) score -= 0.15;
 
-  return Math.min(Math.max(score, 0.0), 1.0);
+  return Math.min(1, Math.max(0, score));
 }
 
+function finiteDataNumber(value: unknown): number {
+  return typeof value === "number" && Number.isFinite(value) && value >= 0 ? value : 0;
+}
 // ─────────────────────────────────────────────────────────────────────────────
 // PART 3 — ELITE POISSON MODEL WITH DIXON-COLES
 // Scores computed up to 10 for accurate tail capture.
@@ -181,67 +183,112 @@ export function calculatePoissonProbabilities(
   lambdaHome: number,
   lambdaAway: number
 ): Probabilities & {
+  over05: number;
+  under05: number;
   over45: number;
   under45: number;
+  over55: number;
+  under55: number;
+  homeScores: number;
+  awayScores: number;
+  homeOver05: number;
+  awayOver05: number;
   csHome: number;
   csAway: number;
+  scoreProbabilities: Record<string, number>;
+  handicapProbabilities: Record<string, number>;
 } {
-  const MAX_GOALS = 10;
+  // Defensive bounds prevent malformed upstream data from producing NaN,
+  // negative probabilities, or factorial overflow.
+  const MAX_GOALS = 12;
+  const safeLambda = (value: number) =>
+    Number.isFinite(value) ? Math.min(5.5, Math.max(0.01, value)) : 1.25;
+  const lh = safeLambda(lambdaHome);
+  const la = safeLambda(lambdaAway);
 
-  const factCache: number[] = [1];
-  for (let i = 1; i <= MAX_GOALS; i++) factCache[i] = factCache[i - 1] * i;
+  const factorial = [1];
+  for (let i = 1; i <= MAX_GOALS; i++) factorial[i] = factorial[i - 1] * i;
+  const poisson = (k: number, lambda: number) =>
+    (Math.pow(lambda, k) * Math.exp(-lambda)) / factorial[k];
 
-  const poisson = (k: number, λ: number) =>
-    (Math.pow(λ, k) * Math.exp(-λ)) / factCache[k];
-
-  let homeWin = 0, draw = 0, awayWin = 0;
-  let bttsYes = 0, over15 = 0, over25 = 0, over35 = 0, over45 = 0;
-  let csHome = 0, csAway = 0;
-
+  // Build and normalise the entire score matrix, not only 1X2. This ensures
+  // the Dixon–Coles low-score correction is reflected consistently in every
+  // market derived from the same distribution.
+  const matrix: { h: number; a: number; p: number }[] = [];
+  let matrixTotal = 0;
   for (let h = 0; h <= MAX_GOALS; h++) {
     for (let a = 0; a <= MAX_GOALS; a++) {
-      const p =
-        poisson(h, lambdaHome) *
-        poisson(a, lambdaAway) *
-        dixonColesCorrection(h, a, lambdaHome, lambdaAway);
-
-      if (h > a)      homeWin += p;
-      else if (h < a) awayWin += p;
-      else            draw    += p;
-
-      if (h > 0 && a > 0) bttsYes += p;
-      if (h + a > 1.5)    over15  += p;
-      if (h + a > 2.5)    over25  += p;
-      if (h + a > 3.5)    over35  += p;
-      if (h + a > 4.5)    over45  += p;
-      if (a === 0)         csHome  += p;
-      if (h === 0)         csAway  += p;
+      const raw = poisson(h, lh) * poisson(a, la) *
+        dixonColesCorrection(h, a, lh, la);
+      const p = Number.isFinite(raw) ? Math.max(0, raw) : 0;
+      matrix.push({ h, a, p });
+      matrixTotal += p;
     }
   }
+  const denominator = matrixTotal > 0 ? matrixTotal : 1;
 
-  // Normalise (DC correction perturbs sum slightly)
-  const total = homeWin + draw + awayWin || 1;
-  homeWin /= total;
-  draw    /= total;
-  awayWin /= total;
+  let homeWin = 0, draw = 0, awayWin = 0;
+  let bttsYes = 0, over05 = 0, over15 = 0, over25 = 0, over35 = 0, over45 = 0, over55 = 0;
+  let homeScores = 0, awayScores = 0, csHome = 0, csAway = 0;
+  const scoreProbabilities: Record<string, number> = {};
+  const handicapProbabilities: Record<string, number> = { ahHomeM15: 0, ahHomeM05: 0, ahHomeP05: 0, ahHomeP15: 0, ahAwayM15: 0, ahAwayM05: 0, ahAwayP05: 0, ahAwayP15: 0 };
+  for (const { h, a, p: rawP } of matrix) {
+    const p = rawP / denominator;
+    if (h > a) homeWin += p;
+    else if (h < a) awayWin += p;
+    else draw += p;
 
-  const dnb1 = homeWin / (homeWin + awayWin || 1);
-  const dnb2 = awayWin / (homeWin + awayWin || 1);
+    if (h > 0) homeScores += p;
+    if (a > 0) awayScores += p;
+    if (h + a >= 1) over05 += p;
+    if (h > 0 && a > 0) bttsYes += p;
+    if (h + a >= 2) over15 += p;
+    if (h + a >= 3) over25 += p;
+    if (h + a >= 4) over35 += p;
+    if (h + a >= 5) over45 += p;
+    if (h + a >= 6) over55 += p;
+    if (a === 0) csHome += p;
+    if (h === 0) csAway += p;
+    scoreProbabilities[`cs${h}${a}`] = p;
+    const diff = h - a;
+    if (diff > 1) handicapProbabilities.ahHomeM15 += p;
+    if (diff >= 1) handicapProbabilities.ahHomeM05 += p;
+    if (diff >= 0) handicapProbabilities.ahHomeP05 += p;
+    if (diff >= -1) handicapProbabilities.ahHomeP15 += p;
+    if (diff < -1) handicapProbabilities.ahAwayM15 += p;
+    if (diff <= -1) handicapProbabilities.ahAwayM05 += p;
+    if (diff <= 0) handicapProbabilities.ahAwayP05 += p;
+    if (diff <= 1) handicapProbabilities.ahAwayP15 += p;
+  }
+
+  const outcomeTotal = homeWin + draw + awayWin || 1;
+  homeWin /= outcomeTotal;
+  draw /= outcomeTotal;
+  awayWin /= outcomeTotal;
+  const nonDraw = homeWin + awayWin || 1;
 
   return {
     homeWin, draw, awayWin,
     dc1X: homeWin + draw,
     dcX2: awayWin + draw,
     dc12: homeWin + awayWin,
-    over15,  under15:  1 - over15,
-    over25,  under25:  1 - over25,
-    over35,  under35:  1 - over35,
-    bttsYes, bttsNo:   1 - bttsYes,
-    dnb1,    dnb2,
-    over45,  under45:  1 - over45,
-    csHome,  csAway,
+    over05, under05: 1 - over05,
+    over15, under15: 1 - over15,
+    over25, under25: 1 - over25,
+    over35, under35: 1 - over35,
+    bttsYes, bttsNo: 1 - bttsYes,
+    dnb1: homeWin / nonDraw,
+    dnb2: awayWin / nonDraw,
+    over45, under45: 1 - over45,
+    over55, under55: 1 - over55,
+    homeScores, awayScores,
+    homeOver05: homeScores, awayOver05: awayScores,
+    csHome, csAway,
+    scoreProbabilities,
+    handicapProbabilities,
   };
 }
+
 
 // ─────────────────────────────────────────────────────────────────────────────
 // PART 4 — ELITE CONTEXT ADJUSTMENT
@@ -258,83 +305,58 @@ export function adjustProbabilities(
     away_key_absentee?: string;
   }
 ): Probabilities {
-  let homeAdj = 1.0;
-  let awayAdj = 1.0;
+  // Context is deliberately a restrained adjustment layer. Subjective factors
+  // are kept small; unsupported narrative signals must not overwhelm the
+  // statistical prior. Goal-market probabilities are left unchanged because
+  // scaling them independently would break their relationship to the score model.
+  const bounded = (value: number, min: number, max: number) =>
+    Math.min(max, Math.max(min, Number.isFinite(value) ? value : 1));
+  const motivation: Record<string, number> = { HIGH: 1.04, MEDIUM: 1, LOW: 0.97 };
+  let homeAdj = 1;
+  let awayAdj = 1;
 
-  // ── Injury penalty (-4% per confirmed absentee, capped at -30%) ───────────
-  if ((context.home_missing ?? 0) >= 1)
-    homeAdj *= Math.max(0.70, 1 - (context.home_missing ?? 0) * 0.04);
-  if ((context.away_missing ?? 0) >= 1)
-    awayAdj *= Math.max(0.70, 1 - (context.away_missing ?? 0) * 0.04);
+  const homeMissing = bounded(context.home_missing ?? 0, 0, 11);
+  const awayMissing = bounded(context.away_missing ?? 0, 0, 11);
+  homeAdj *= Math.max(0.82, 1 - homeMissing * 0.018);
+  awayAdj *= Math.max(0.82, 1 - awayMissing * 0.018);
 
-  // ── KEY absentee: extra -6% if the missing player is named (i.e., confirmed important) ─
-  if (context.home_key_absentee && context.home_key_absentee.trim().length > 0)
-    homeAdj *= 0.94;
-  if (context.away_key_absentee && context.away_key_absentee.trim().length > 0)
-    awayAdj *= 0.94;
+  // A named absentee is only a small additional modifier; do not double-count
+  // an entire player penalty as though every named player has equal value.
+  if (context.home_key_absentee?.trim()) homeAdj *= 0.97;
+  if (context.away_key_absentee?.trim()) awayAdj *= 0.97;
+  homeAdj *= motivation[context.home_motivation] ?? 1;
+  awayAdj *= motivation[context.away_motivation] ?? 1;
+  if (context.home_fatigue) homeAdj *= 0.97;
+  if (context.away_fatigue) awayAdj *= 0.97;
 
-  // ── Motivation ──────────────────────────────────────────────────────────────
-  const motivMap: Record<string, number> = { HIGH: 1.12, MEDIUM: 1.0, LOW: 0.90 };
-  homeAdj *= motivMap[context.home_motivation] ?? 1.0;
-  awayAdj *= motivMap[context.away_motivation] ?? 1.0;
-
-  // ── Fatigue ─────────────────────────────────────────────────────────────────
-  if (context.home_fatigue) homeAdj *= 0.94;
-  if (context.away_fatigue) awayAdj *= 0.94;
-
-  // ── Home crowd effect when highly motivated ──────────────────────────────
-  if (context.home_motivation === "HIGH") homeAdj *= 1.04;
-
-  // ── Derby bonus (both teams lift — suppress draw slightly) ───────────────
-  if (context.is_derby) {
-    homeAdj *= 1.03;
-    awayAdj *= 1.03;
+  // League position and derby status are not reliable enough on their own to
+  // assert a directional advantage, so they are not given arbitrary boosts.
+  let homeWin = Math.max(0, probs.homeWin * homeAdj);
+  let draw = Math.max(0, probs.draw);
+  let awayWin = Math.max(0, probs.awayWin * awayAdj);
+  const total = homeWin + draw + awayWin;
+  if (!(total > 0) || !Number.isFinite(total)) {
+    homeWin = probs.homeWin;
+    draw = probs.draw;
+    awayWin = probs.awayWin;
+  } else {
+    homeWin /= total;
+    draw /= total;
+    awayWin /= total;
   }
-
-  // ── League position: relegation-threatened team boost (desperation effect) ─
-  const homeLPos = context.home_league_position ?? 0;
-  const awayLPos = context.away_league_position ?? 0;
-  if (homeLPos >= 17) homeAdj *= 1.06; // bottom 4 = desperation
-  if (awayLPos >= 17) awayAdj *= 1.06;
-
-  // ── 1X2 normalisation ────────────────────────────────────────────────────
-  let homeWin = probs.homeWin * homeAdj;
-  let awayWin = probs.awayWin * awayAdj;
-  let draw    = probs.draw;
-
-  // Draw less likely when one side has a strong edge
-  const pressureDiff = Math.abs(homeAdj - awayAdj);
-  draw *= Math.max(0.80, 1 - pressureDiff * 0.5);
-
-  const total = homeWin + draw + awayWin || 1;
-  homeWin /= total;
-  draw    /= total;
-  awayWin /= total;
-
-  // ── Goals markets — fewer goals when there are significant injuries ────────
-  const injuryPenalty = Math.max(
-    0,
-    ((context.home_missing ?? 0) + (context.away_missing ?? 0)) * 0.025
-  );
-  const goalsMod = Math.max(0.82, 1 - injuryPenalty);
+  const nonDraw = homeWin + awayWin || 1;
 
   return {
+    ...probs,
     homeWin, draw, awayWin,
     dc1X: homeWin + draw,
     dcX2: awayWin + draw,
     dc12: homeWin + awayWin,
-    over15:  Math.min(probs.over15  * goalsMod, 0.99),
-    under15: 1 - Math.min(probs.over15  * goalsMod, 0.99),
-    over25:  Math.min(probs.over25  * goalsMod, 0.97),
-    under25: 1 - Math.min(probs.over25  * goalsMod, 0.97),
-    over35:  Math.min(probs.over35  * goalsMod, 0.93),
-    under35: 1 - Math.min(probs.over35  * goalsMod, 0.93),
-    bttsYes: Math.min(probs.bttsYes * goalsMod, 0.94),
-    bttsNo:  1 - Math.min(probs.bttsYes * goalsMod, 0.94),
-    dnb1:    homeWin / (homeWin + awayWin || 1),
-    dnb2:    awayWin / (homeWin + awayWin || 1),
+    dnb1: homeWin / nonDraw,
+    dnb2: awayWin / nonDraw,
   };
 }
+
 
 // ─────────────────────────────────────────────────────────────────────────────
 // PART 5 — ODDS & VALUE ENGINE (Kelly Criterion aware)
@@ -346,48 +368,140 @@ export function calculateValue(
     under45?: number;
     csHome?: number;
     csAway?: number;
+    over05?: number;
+    under05?: number;
+    over55?: number;
+    under55?: number;
+    homeScores?: number;
+    awayScores?: number;
+    homeOver05?: number;
+    awayOver05?: number;
+    scoreProbabilities?: Record<string, number>;
+    handicapProbabilities?: Record<string, number>;
   },
   odds: MatchData["odds"]
 ): (ValueBet & { ev: number; kellyFraction: number })[] {
-  const MARKETS: { name: string; prob: number; oddsKeys: string[] }[] = [
-    { name: "Home Win",       prob: probs.homeWin, oddsKeys: ["home", "1"]        },
-    { name: "Draw",           prob: probs.draw,    oddsKeys: ["draw", "X"]        },
-    { name: "Away Win",       prob: probs.awayWin, oddsKeys: ["away", "2"]        },
-    { name: "1X",             prob: probs.dc1X,    oddsKeys: ["dc1X", "1X"]       },
-    { name: "X2",             prob: probs.dcX2,    oddsKeys: ["dcX2", "X2"]       },
-    { name: "12",             prob: probs.dc12,    oddsKeys: ["dc12", "12"]       },
-    { name: "Over 1.5 Goals", prob: probs.over15,  oddsKeys: ["over15","Over 1.5"]},
-    { name: "Under 1.5",      prob: probs.under15, oddsKeys: ["under15","Under 1.5"]},
-    { name: "Over 2.5 Goals", prob: probs.over25,  oddsKeys: ["over25","Over 2.5"]},
-    { name: "Under 2.5",      prob: probs.under25, oddsKeys: ["under25","Under 2.5"]},
-    { name: "Over 3.5 Goals", prob: probs.over35,  oddsKeys: ["over35","Over 3.5"]},
-    { name: "Under 3.5",      prob: probs.under35, oddsKeys: ["under35","Under 3.5"]},
-    { name: "Over 4.5 Goals", prob: probs.over45 ?? 0, oddsKeys: ["over45","Over 4.5"]},
-    { name: "BTTS - Yes",     prob: probs.bttsYes, oddsKeys: ["bttsYes","BTTS - Yes"]},
-    { name: "BTTS - No",      prob: probs.bttsNo,  oddsKeys: ["bttsNo","BTTS - No"] },
-    { name: "DNB Home",       prob: probs.dnb1,    oddsKeys: ["dnb1","DNB 1"]     },
-    { name: "DNB Away",       prob: probs.dnb2,    oddsKeys: ["dnb2","DNB 2"]     },
-    { name: "Clean Sheet Home", prob: probs.csHome ?? 0, oddsKeys: ["csHome"]    },
-    { name: "Clean Sheet Away", prob: probs.csAway ?? 0, oddsKeys: ["csAway"]    },
+  const markets: { name: string; prob: number; oddsKeys: string[] }[] = [
+    { name: "Home Win", prob: probs.homeWin, oddsKeys: ["home", "1"] },
+    { name: "Draw", prob: probs.draw, oddsKeys: ["draw", "X"] },
+    { name: "Away Win", prob: probs.awayWin, oddsKeys: ["away", "2"] },
+    { name: "1X", prob: probs.dc1X, oddsKeys: ["dc1X", "1X"] },
+    { name: "X2", prob: probs.dcX2, oddsKeys: ["dcX2", "X2"] },
+    { name: "12", prob: probs.dc12, oddsKeys: ["dc12", "12"] },
+    { name: "Over 0.5 Goals", prob: probs.over05 ?? 0, oddsKeys: ["over05", "over_05_goals", "over_0_5", "Over 0.5"] },
+    { name: "Under 0.5 Goals", prob: probs.under05 ?? 0, oddsKeys: ["under05", "under_05_goals", "under_0_5", "Under 0.5"] },
+    { name: "Over 1.5 Goals", prob: probs.over15, oddsKeys: ["over15", "Over 1.5"] },
+    { name: "Under 1.5", prob: probs.under15, oddsKeys: ["under15", "Under 1.5"] },
+    { name: "Over 2.5 Goals", prob: probs.over25, oddsKeys: ["over25", "Over 2.5"] },
+    { name: "Under 2.5", prob: probs.under25, oddsKeys: ["under25", "Under 2.5"] },
+    { name: "Over 3.5 Goals", prob: probs.over35, oddsKeys: ["over35", "Over 3.5"] },
+    { name: "Under 3.5", prob: probs.under35, oddsKeys: ["under35", "Under 3.5"] },
+    { name: "Over 4.5 Goals", prob: probs.over45 ?? 0, oddsKeys: ["over45", "over_45_goals", "over_4_5", "Over 4.5"] },
+    { name: "Under 4.5 Goals", prob: probs.under45 ?? 0, oddsKeys: ["under45", "under_45_goals", "under_4_5", "Under 4.5"] },
+    { name: "Over 5.5 Goals", prob: probs.over55 ?? 0, oddsKeys: ["over55", "over_55_goals", "over_5_5", "Over 5.5"] },
+    { name: "Under 5.5 Goals", prob: probs.under55 ?? 0, oddsKeys: ["under55", "under_55_goals", "under_5_5", "Under 5.5"] },
+    { name: "Home Team To Score", prob: probs.homeScores ?? probs.homeOver05 ?? 0, oddsKeys: ["homeScores", "home_team_to_score", "home_to_score", "home_team_over_05"] },
+    { name: "Away Team To Score", prob: probs.awayScores ?? probs.awayOver05 ?? 0, oddsKeys: ["awayScores", "away_team_to_score", "away_to_score", "away_team_over_05"] },
+    { name: "BTTS - Yes", prob: probs.bttsYes, oddsKeys: ["bttsYes", "BTTS - Yes"] },
+    { name: "BTTS - No", prob: probs.bttsNo, oddsKeys: ["bttsNo", "BTTS - No"] },
+    { name: "DNB Home", prob: probs.dnb1, oddsKeys: ["dnb1", "DNB 1"] },
+    { name: "DNB Away", prob: probs.dnb2, oddsKeys: ["dnb2", "DNB 2"] },
+    { name: "Clean Sheet Home", prob: probs.csHome ?? 0, oddsKeys: ["csHome"] },
+    { name: "Clean Sheet Away", prob: probs.csAway ?? 0, oddsKeys: ["csAway"] },
+    { name: "Asian Handicap Home -1.5", prob: probs.handicapProbabilities?.ahHomeM15 ?? 0, oddsKeys: ["ahHomeM15", "asian_handicap_home_-1.5"] },
+    { name: "Asian Handicap Home -0.5", prob: probs.handicapProbabilities?.ahHomeM05 ?? 0, oddsKeys: ["ahHomeM05", "asian_handicap_home_-0.5"] },
+    { name: "Asian Handicap Home +0.5", prob: probs.handicapProbabilities?.ahHomeP05 ?? 0, oddsKeys: ["ahHomeP05", "asian_handicap_home_+0.5"] },
+    { name: "Asian Handicap Home +1.5", prob: probs.handicapProbabilities?.ahHomeP15 ?? 0, oddsKeys: ["ahHomeP15", "asian_handicap_home_+1.5"] },
+    { name: "Asian Handicap Away -1.5", prob: probs.handicapProbabilities?.ahAwayM15 ?? 0, oddsKeys: ["ahAwayM15", "asian_handicap_away_-1.5"] },
+    { name: "Asian Handicap Away -0.5", prob: probs.handicapProbabilities?.ahAwayM05 ?? 0, oddsKeys: ["ahAwayM05", "asian_handicap_away_-0.5"] },
+    { name: "Asian Handicap Away +0.5", prob: probs.handicapProbabilities?.ahAwayP05 ?? 0, oddsKeys: ["ahAwayP05", "asian_handicap_away_+0.5"] },
+    { name: "Asian Handicap Away +1.5", prob: probs.handicapProbabilities?.ahAwayP15 ?? 0, oddsKeys: ["ahAwayP15", "asian_handicap_away_+1.5"] },
+    ...Object.entries(probs.scoreProbabilities ?? {}).map(([key, prob]) => ({
+      name: `Correct Score ${key.slice(2)}`,
+      prob,
+      oddsKeys: [key, `correct_score_${key.slice(2)}`],
+    })),
   ];
 
-  return MARKETS.map((m) => {
-    const o = m.oddsKeys.reduce<number | undefined>(
-      (found, key) => found ?? (odds[key] > 1.01 ? odds[key] : undefined),
-      undefined
-    );
-    if (!o || o <= 1.01 || m.prob <= 0) return null;
+  const results: (ValueBet & { ev: number; kellyFraction: number })[] = [];
+  for (const market of markets) {
+    const probability = market.prob;
+    if (!Number.isFinite(probability) || probability <= 0 || probability >= 1) continue;
+    const price = market.oddsKeys
+      .map((key) => Number(odds?.[key]))
+      .find((value) => Number.isFinite(value) && value > 1.01 && value <= 100);
+    if (price === undefined) continue;
 
-    const impliedProb    = 1 / o;
-    const edge           = m.prob - impliedProb;
-    const ev             = m.prob * o - 1;
-    const kellyFraction  = Math.max(0, edge / (o - 1));
+    const impliedProb = 1 / price;
+    const edge = probability - impliedProb;
+    const ev = probability * price - 1;
+    // Standard Kelly: (b*p - q)/b = (p*odds - 1)/(odds - 1).
+    // Report quarter Kelly as a conservative sizing reference, never a promise.
+    const fullKelly = Math.max(0, ev / (price - 1));
+    const kellyFraction = Math.min(0.25, fullKelly * 0.25);
+    if (edge <= 0.01 || ev <= 0.01) continue;
 
-    return { market: m.name, modelProb: m.prob, impliedProb, value: edge, odds: o, ev, kellyFraction };
-  }).filter(
-    (v): v is ValueBet & { ev: number; kellyFraction: number } =>
-      v !== null && v.value > 0.01
-  );
+    results.push({
+      market: market.name,
+      modelProb: probability,
+      impliedProb,
+      value: edge,
+      odds: price,
+      ev,
+      kellyFraction,
+    });
+  }
+  return results.sort((a, b) => b.ev - a.ev);
+}
+
+
+/**
+ * Evaluate BSD-only supplemental markets with their own provider forecast.
+ * These probabilities are never inferred from the goal-score matrix: corners
+ * require a separate model, and markets without a BSD probability or real price
+ * are skipped rather than guessed.
+ */
+function calculateBsdSupplementalValueBets(
+  bsdPredictions: any,
+  odds: MatchData["odds"]
+): (ValueBet & { ev: number; kellyFraction: number })[] {
+  if (bsdPredictions?.source !== "bsd" || !bsdPredictions?.corners) return [];
+  const cornerLines = [
+    { line: "7.5", key: "75", over: bsdPredictions.corners.over75 },
+    { line: "8.5", key: "85", over: bsdPredictions.corners.over85 },
+    { line: "9.5", key: "95", over: bsdPredictions.corners.over95 },
+    { line: "10.5", key: "105", over: bsdPredictions.corners.over105 },
+    { line: "11.5", key: "115", over: bsdPredictions.corners.over115 },
+  ];
+  const results: (ValueBet & { ev: number; kellyFraction: number })[] = [];
+  for (const market of cornerLines) {
+    if (!Number.isFinite(market.over) || market.over <= 0 || market.over >= 1) continue;
+    for (const side of ["Over", "Under"] as const) {
+      const probability = side === "Over" ? market.over : 1 - market.over;
+      const aliases = [
+        `corners${side}${market.key}`,
+        `total_corners_${market.key}_${side.toLowerCase()}_ft`,
+        `total_corners_${market.key}_${side.toLowerCase()}`,
+      ];
+      const price = aliases.map((key) => Number(odds?.[key]))
+        .find((value) => Number.isFinite(value) && value > 1.01 && value <= 100);
+      if (price === undefined) continue;
+      const impliedProb = 1 / price;
+      const value = probability - impliedProb;
+      const ev = probability * price - 1;
+      if (value <= 0.01 || ev <= 0.01) continue;
+      results.push({
+        market: `Corners ${side} ${market.line}`,
+        modelProb: probability,
+        impliedProb,
+        value,
+        odds: price,
+        ev,
+        kellyFraction: Math.min(0.25, Math.max(0, ev / (price - 1)) * 0.25),
+      });
+    }
+  }
+  return results;
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -396,28 +510,33 @@ export function calculateValue(
 // Hard cap at 95 — 100% confidence is always wrong in football.
 // ─────────────────────────────────────────────────────────────────────────────
 export function calculateConfidence(
-  prob:         number,
-  value:        number,
-  dataQuality:  number,
-  formScore?:   number,
-  aiConfidence?: number,
-  searchDataUsed?: boolean
+  prob: number,
+  value: number,
+  dataQuality: number,
+  formScore?: number,
+  _aiConfidence?: number,
+  _searchDataUsed?: boolean
 ): number {
-  const probScore    = Math.min(prob * 42, 42);                        // 0-42
-  const valueScore   = Math.min(value * 250, 25);                      // 0-25
-  const qualScore    = dataQuality * 18;                               // 0-18
-  const formBonus    = formScore ? Math.min(formScore * 10, 10) : 5;  // 0-10
-  const aiBonus      = aiConfidence
-    ? Math.min((aiConfidence / 100) * 4, 4)
-    : 0;                                                               // 0-4
-  const searchBonus  = searchDataUsed ? 3 : 0;                        // 0-3 (real-time grounding)
+  // This is a model-signal score, not a calibrated probability of winning.
+  // Search grounding and an LLM's self-reported confidence are not evidence
+  // that an outcome is more likely, so they intentionally do not add points.
+  const p = Number.isFinite(prob) ? Math.min(1, Math.max(0, prob)) : 0;
+  const edge = Number.isFinite(value) ? Math.max(0, value) : 0;
+  const quality = Number.isFinite(dataQuality)
+    ? Math.min(1, Math.max(0, dataQuality))
+    : 0;
+  const form = Number.isFinite(formScore)
+    ? Math.min(1, Math.max(0, formScore as number))
+    : 0.5;
 
-  // If data quality is very low, cap max confidence (don't report 85% on AI-guessed data)
-  const rawScore = probScore + valueScore + qualScore + formBonus + aiBonus + searchBonus;
-  const maxAllowed = dataQuality < 0.45 ? 70 : 95;
-
-  return Math.min(Math.max(Math.round(rawScore), 5), maxAllowed);
+  const raw = 35 * p + 20 * Math.min(edge / 0.10, 1) +
+    30 * quality + 15 * form;
+  // Until historical calibration exists, cap the displayed score so it cannot
+  // be mistaken for a statistically validated 90–95% win probability.
+  const qualityCap = quality < 0.35 ? 45 : quality < 0.60 ? 55 : 70;
+  return Math.round(Math.min(qualityCap, Math.max(5, raw)));
 }
+
 
 // ─────────────────────────────────────────────────────────────────────────────
 // PART 7 — DECISION ENGINE
@@ -426,67 +545,79 @@ export function calculateConfidence(
 // ─────────────────────────────────────────────────────────────────────────────
 export function selectBestBet(
   valueBets: (ValueBet & { ev?: number; kellyFraction?: number })[],
-  probs: Probabilities
+  _probs: Probabilities
 ): ValueBet | null {
-  if (valueBets.length === 0) {
-    // No value found — fall back to highest-probability safe market
-    const safe = [
-      { market: "Over 1.5 Goals",  prob: probs.over15  },
-      { market: "Home Win or Draw", prob: probs.dc1X    },
-      { market: "Away Win or Draw", prob: probs.dcX2    },
-      { market: "BTTS - Yes",       prob: probs.bttsYes },
-      { market: "Home Win",         prob: probs.homeWin },
-      { market: "Away Win",         prob: probs.awayWin },
-    ].sort((a, b) => b.prob - a.prob)[0];
-    return { market: safe.market, modelProb: safe.prob, impliedProb: 0, value: 0, odds: 0 };
-  }
-
-  const scored = valueBets.map((b) => ({
-    ...b,
-    compositeScore:
-      (b.ev ?? 0)   * 0.40 +
-      b.modelProb    * 0.35 +
-      b.value        * 0.25,
-  }));
-
-  const qualified = scored.filter(
-    (b) => b.modelProb >= 0.42 && b.value >= 0.02 && b.odds >= 1.15
+  // No qualifying positive-EV market means no bet recommendation. Selecting a
+  // high-hit-rate market without odds is not evidence of value.
+  const qualified = valueBets.filter((bet) =>
+    Number.isFinite(bet.modelProb) &&
+    Number.isFinite(bet.value) &&
+    Number.isFinite(bet.odds) &&
+    bet.modelProb > 0 && bet.modelProb < 1 &&
+    bet.odds > 1.01 &&
+    bet.value >= 0.02 &&
+    (bet.ev ?? (bet.modelProb * bet.odds - 1)) > 0.01
   );
+  if (qualified.length === 0) return null;
 
-  return (qualified.length > 0 ? qualified : scored).sort(
-    (a, b) => b.compositeScore - a.compositeScore
-  )[0];
+  return [...qualified].sort((a, b) => {
+    const evA = a.ev ?? a.modelProb * a.odds - 1;
+    const evB = b.ev ?? b.modelProb * b.odds - 1;
+    // Prioritise expected return, with modest preference for larger edge;
+    // probability alone should not dominate value selection.
+    return (evB + b.value * 0.15) - (evA + a.value * 0.15);
+  })[0];
 }
+
 
 // ─────────────────────────────────────────────────────────────────────────────
 // PART 8 — LIVE MATCH PREDICTOR
 // xG pressure signals, possession dominance, set-piece danger.
 // ─────────────────────────────────────────────────────────────────────────────
 export function analyzeLiveMatch(liveStats: {
-  minute:       number;
-  score:        string;
+  minute: number;
+  score: string;
   shotsOnTarget: number;
-  xG:           number;
-  possession?:  number;
-  corners?:     number;
+  xG: number;
+  possession?: number;
+  corners?: number;
 }) {
-  const { minute, xG, shotsOnTarget, possession = 50, corners = 0 } = liveStats;
-  const [homeGoals = 0, awayGoals = 0] = liveStats.score.split("-").map(Number);
+  const minute = Math.min(130, Math.max(0, Number(liveStats.minute) || 0));
+  const xG = Math.max(0, Number(liveStats.xG) || 0);
+  const shotsOnTarget = Math.max(0, Number(liveStats.shotsOnTarget) || 0);
+  const possession = Math.min(100, Math.max(0, Number(liveStats.possession ?? 50) || 0));
+  const corners = Math.max(0, Number(liveStats.corners) || 0);
+  const scoreParts = String(liveStats.score ?? "").split("-").map((value) => Number(value.trim()));
+  const homeGoals = Number.isFinite(scoreParts[0]) ? Math.max(0, scoreParts[0]) : 0;
+  const awayGoals = Number.isFinite(scoreParts[1]) ? Math.max(0, scoreParts[1]) : 0;
+  const totalGoals = homeGoals + awayGoals;
 
-  if (minute > 70 && xG > 2.0 && shotsOnTarget > 6)
-    return { signal: "GOAL_PRESSURE_HIGH", confidence: 90, reasoning: `${xG.toFixed(2)} xG with ${shotsOnTarget} shots on target past 70' — goal imminent.` };
-
-  if (minute > 60 && xG > 1.5 && shotsOnTarget > 5)
-    return { signal: "GOAL_LIKELY", confidence: 78, reasoning: `Sustained pressure with ${xG.toFixed(2)} xG — goal within 15 min is the statistical expectation.` };
-
-  if (possession > 65 && corners > 6 && minute > 45)
-    return { signal: "SET_PIECE_DANGER", confidence: 72, reasoning: `${possession}% possession + ${corners} corners — set piece threat elevated.` };
-
-  if (minute > 60 && homeGoals + awayGoals === 0 && xG > 1.8)
-    return { signal: "LATE_GOAL_WINDOW", confidence: 82, reasoning: `0-0 with ${xG.toFixed(2)} accumulated xG — statistical pressure for a late goal.` };
-
+  // Observational alerts only. Without a calibrated hazard model, do not label
+  // an event "imminent", promise a goal within 15 minutes, or invent confidence.
+  if (minute >= 60 && xG >= 1.8 && shotsOnTarget >= 5) {
+    return {
+      signal: "SUSTAINED_ATTACKING_PRESSURE",
+      confidence: 0,
+      reasoning: `Elevated attacking activity: ${xG.toFixed(2)} combined xG and ${shotsOnTarget} shots on target by ${Math.round(minute)}'. This is a descriptive signal, not a calibrated goal forecast.`,
+    };
+  }
+  if (minute >= 45 && possession >= 65 && corners >= 6) {
+    return {
+      signal: "TERRITORIAL_AND_SET_PIECE_PRESSURE",
+      confidence: 0,
+      reasoning: `${Math.round(possession)}% possession and ${corners} corners indicate territorial/set-piece pressure. This alone does not establish that a goal is likely.`,
+    };
+  }
+  if (minute >= 60 && totalGoals === 0 && xG >= 1.5) {
+    return {
+      signal: "HIGH_CHANCE_VOLUME_SCORELESS",
+      confidence: 0,
+      reasoning: `The match remains 0-0 despite ${xG.toFixed(2)} combined xG at ${Math.round(minute)}'. Chance quality and the remaining-time model should be reviewed; no goal probability is inferred from this threshold alone.`,
+    };
+  }
   return null;
 }
+
 
 // ─────────────────────────────────────────────────────────────────────────────
 // PART 9 — BSD API ENRICHMENT LAYER
@@ -500,6 +631,12 @@ export function enrichMatchDataFromBSD(matchData: MatchData, bsdEvent: any): Mat
     enriched.deepContext = {
       ...enriched.deepContext,
       xG: { home: Number(bsdEvent.xG.home) || 0, away: Number(bsdEvent.xG.away) || 0 },
+    };
+  }
+  if (bsdEvent.bsdPredictions) {
+    enriched.deepContext = {
+      ...enriched.deepContext,
+      bsdPredictions: bsdEvent.bsdPredictions,
     };
   }
 
@@ -574,7 +711,13 @@ export async function runPrediction(
   const adjustedProbs = adjustProbabilities(baseProbs, context as any);
 
   // ── 6. Value / EV engine ───────────────────────────────────────────────
-  const valueBets = calculateValue(adjustedProbs as any, enrichedData.odds ?? {});
+  const valueBets = [
+    ...calculateValue(adjustedProbs as any, enrichedData.odds ?? {}),
+    ...calculateBsdSupplementalValueBets(
+      enrichedData.deepContext?.bsdPredictions ?? enrichedData.deepContext?.bsd?.bsdPredictions,
+      enrichedData.odds ?? {}
+    ),
+  ].sort((a, b) => (b.ev ?? b.modelProb * b.odds - 1) - (a.ev ?? a.modelProb * a.odds - 1));
 
   // ── 7. Best bet selection ──────────────────────────────────────────────
   const bestBet = selectBestBet(valueBets, adjustedProbs);

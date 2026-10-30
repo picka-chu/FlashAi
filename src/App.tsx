@@ -21,6 +21,12 @@ import { init, retrieveLaunchParams } from '@telegram-apps/sdk-react';
 
 export default function App() {
   const [activeTab, setActiveTab] = useState<TabType>("home");
+  // Mount screens on first visit, then keep them mounted so tab changes stay
+  // instant and in-progress work (especially analysis) is not discarded.
+  const [visitedTabs, setVisitedTabs] = useState<TabType[]>(["home"]);
+  useEffect(() => {
+    setVisitedTabs((visited) => visited.includes(activeTab) ? visited : [...visited, activeTab]);
+  }, [activeTab]);
   const { user: tgUser, isReady, initData, setHeaderColor, setBackgroundColor } = useTelegram();
   const { setUser, isLoading, setLoading } = useUserStore();
   const [loadError, setLoadError] = useState<string | null>(null);
@@ -159,44 +165,33 @@ export default function App() {
     setActiveTab(normalizedTab);
   }, []);
 
-  const renderPage = () => {
-    return (
-      <>
-        <div className={activeTab === "home" ? "h-full" : "hidden"}>
-          <Home onTabChange={setActiveTab} />
-        </div>
-        <div className={activeTab === "matches" ? "h-full" : "hidden"}>
-          <Matches onTabChange={setActiveTab} />
-        </div>
-        <div className={activeTab === "analyze" ? "h-full" : "hidden"}>
-          <Analyze onTabChange={setActiveTab} />
-        </div>
-        <div className={activeTab === "history" ? "h-full" : "hidden"}>
-          <History />
-        </div>
-        <div className={activeTab === "profile" ? "h-full" : "hidden"}>
-          <Profile />
-        </div>
-        <div className={activeTab === "admin" ? "h-full" : "hidden"}>
-          <Admin />
-        </div>
-        <div className={activeTab === "livePreview" ? "h-full" : "hidden"}>
-          <LiveMatchPreview onBack={() => setActiveTab("matches")} onGoAnalyze={() => setActiveTab("analyze")} />
-        </div>
-        <div className={activeTab === "subscriptions" ? "h-full" : "hidden"}>
-          <SubscriptionPlansPage />
-        </div>
-        <div className={activeTab === "paymentMethods" ? "h-full" : "hidden"}>
-          <PaymentMethodsPage />
-        </div>
-        <div className={activeTab === "referralEarn" ? "h-full" : "hidden"}>
-          <ReferralEarnPage />
-        </div>
-        <div className={activeTab === "support" ? "h-full" : "hidden"}>
-          <SupportPage />
-        </div>
-      </>
-    );
+  const renderTab = (tab: TabType) => {
+    switch (tab) {
+      case "home":
+        return <Home onTabChange={setActiveTab} />;
+      case "matches":
+        return <Matches onTabChange={setActiveTab} />;
+      case "analyze":
+        return <Analyze onTabChange={setActiveTab} />;
+      case "history":
+        return <History />;
+      case "profile":
+        return <Profile />;
+      case "admin":
+        return <Admin />;
+      case "livePreview":
+        return <LiveMatchPreview onBack={() => setActiveTab("matches")} onGoAnalyze={() => setActiveTab("analyze")} />;
+      case "subscriptions":
+        return <SubscriptionPlansPage />;
+      case "paymentMethods":
+        return <PaymentMethodsPage />;
+      case "referralEarn":
+        return <ReferralEarnPage />;
+      case "support":
+        return <SupportPage />;
+      default:
+        return null;
+    }
   };
 
   if (isLoading) {
@@ -241,8 +236,12 @@ export default function App() {
       activeTab={activeTab} 
       onTabChange={setActiveTab}
     >
-      <div className="h-full">
-        {renderPage()}
+      <div className="relative h-full">
+        {visitedTabs.map((tab) => (
+          <div key={tab} className={activeTab === tab ? "h-full" : "hidden"}>
+            {renderTab(tab)}
+          </div>
+        ))}
       </div>
     </MainLayout>
   );

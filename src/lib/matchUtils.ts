@@ -1,10 +1,16 @@
+const MATCH_TIMEZONE = 'Africa/Addis_Ababa';
+
 export const localDateKey = (value?: Date | string | number | null) => {
   const date = value instanceof Date ? value : new Date(value ?? Date.now());
   if (Number.isNaN(date.getTime())) return '';
-  const year = date.getFullYear();
-  const month = String(date.getMonth() + 1).padStart(2, '0');
-  const day = String(date.getDate()).padStart(2, '0');
-  return `${year}-${month}-${day}`;
+  const parts = new Intl.DateTimeFormat('en-CA', {
+    timeZone: MATCH_TIMEZONE,
+    year: 'numeric',
+    month: '2-digit',
+    day: '2-digit',
+  }).formatToParts(date);
+  const part = (type: string) => parts.find((item) => item.type === type)?.value || '';
+  return `${part('year')}-${part('month')}-${part('day')}`;
 };
 
 export const dateFromKey = (key: string) => {
@@ -15,23 +21,33 @@ export const dateFromKey = (key: string) => {
 export const formatMatch = (m: any) => {
   if (!m) return null;
   const elapsed = Number(m?.fixture?.status?.elapsed || 0);
-  const statusShort = String(m?.fixture?.status?.short || '');
-  const statusState = m?.fixture?.status?.state;
-  // Non-clock states show their label (HT, FT, ET, PENS…); running states show
-  // a proper match clock in whole minutes — BSD minute precision has no seconds.
-  const HOLDING_SHORTS = new Set(['HT', 'FT', 'AET', 'PENS', 'ET', 'CANC', 'PP', 'TBD', 'ABAN', 'SUSP', 'PST']);
-  let displayMinute = statusShort || '--';
-  if (statusState === 'in' && !HOLDING_SHORTS.has(statusShort) && elapsed > 0) {
-    // BSD stores elapsed as minutes × 60 (i.e. seconds); tolerate feeds that
-    // already send seconds or whole minutes, and never render absurd values.
+  const statusShort = String(m?.fixture?.status?.short || '').toUpperCase();
+  let displayMinute = m?.fixture?.status?.short || m?.minute || '--';
+  // Running clock states show whole minutes. Provider elapsed arrives in
+  // seconds (BSD stores minute × 60); tolerate minute- or second-based feeds
+  // and never render absurd values. Stoppage time shows as "45+2'".
+  const HOLDING_SHORTS = ['FT', 'AET', 'PEN', 'PENS', 'ET', 'HT', 'BT', 'P', 'SUSP', 'INT', 'CANC', 'ABD', 'PP', 'TBD'];
+  if (elapsed > 0 && !HOLDING_SHORTS.includes(statusShort)) {
     let minutes = elapsed >= 60 ? Math.round(elapsed / 60) : Math.round(elapsed);
     if (minutes > 135) minutes = Math.round(minutes / 60);
-    displayMinute = `${Math.max(1, minutes)}'`;
+    minutes = Math.max(1, minutes);
+    const extra = Number((m?.fixture?.status as any)?.extra || 0);
+    displayMinute = extra > 0 ? `${minutes}+${extra}'` : `${minutes}'`;
   }
 
   const rawFixtureDate = m?.fixture?.date ?? m?.fixtureDate ?? m?.dateISO ?? null;
-  const parsedFixtureDate = rawFixtureDate ? new Date(rawFixtureDate) : new Date();
-  const matchDate = Number.isNaN(parsedFixtureDate.getTime()) ? new Date() : parsedFixtureDate;
+  // Date-only values are calendar dates, not UTC instants. Parsing YYYY-MM-DD
+  // with new Date() can move the fixture to the previous day in some timezones.
+  let parsedFixtureDate: Date;
+  if (typeof rawFixtureDate === 'string' && /^\d{4}-\d{2}-\d{2}$/.test(rawFixtureDate)) {
+    const [year, month, day] = rawFixtureDate.split('-').map(Number);
+    parsedFixtureDate = new Date(year, month - 1, day);
+  } else {
+    parsedFixtureDate = rawFixtureDate ? new Date(rawFixtureDate) : new Date(Number.NaN);
+  }
+  // Never silently turn a malformed fixture date into "today".
+  if (Number.isNaN(parsedFixtureDate.getTime())) return null;
+  const matchDate = parsedFixtureDate;
 
   const leagueName =
     typeof m.league === 'string'
@@ -53,19 +69,26 @@ export const formatMatch = (m: any) => {
     minute: displayMinute,
     league: leagueName,
     fixtureDate: matchDate.toISOString(),
-    dateKey: localDateKey(matchDate),
-    time: matchDate.toLocaleTimeString('en-GB', { hour: '2-digit', minute: '2-digit' }),
+    // Prefer the provider's original calendar key when available. This avoids
+    // re-deriving a fixture day from a normalized ISO timestamp.
+    dateKey: typeof m?.fixture?.dateKey === 'string' && /^\d{4}-\d{2}-\d{2}$/.test(m.fixture.dateKey)
+      ? m.fixture.dateKey
+      : localDateKey(matchDate),
+    time: matchDate.toLocaleTimeString('en-GB', { timeZone: MATCH_TIMEZONE, hour: '2-digit', minute: '2-digit' }),
     date: (() => {
-      const today = new Date();
+      const todayKey = localDateKey(new Date());
       const tomorrow = new Date();
-      tomorrow.setDate(today.getDate() + 1);
-
-      const matchDateStr = matchDate.toDateString();
-      if (matchDateStr === today.toDateString()) return 'Today';
-      if (matchDateStr === tomorrow.toDateString()) return 'Tomorrow';
-
-      return matchDate.toLocaleDateString('en-GB', { day: '2-digit', month: 'short' });
+      tomorrow.setDate(tomorrow.getDate() + 1);
+      const tomorrowKey = localDateKey(tomorrow);
+      const fixtureKey = localDateKey(matchDate);
+      if (fixtureKey === todayKey) return 'Today';
+      if (fixtureKey === tomorrowKey) return 'Tomorrow';
+      return new Intl.DateTimeFormat('en-GB', {
+        timeZone: MATCH_TIMEZONE,
+        day: '2-digit',
+        month: 'short',
+      }).format(matchDate);
     })(),
-    status: m?.fixture?.status?.state === 'pre' ? 'Upcoming' : (m?.status || 'Live'),
+    status: m?.fixture?.status?.state === 'pre' ? 'Upcoming' : (m?.fixture?.status?.long || m?.status || 'Live'),
   };
 };

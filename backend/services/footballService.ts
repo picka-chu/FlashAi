@@ -25,15 +25,42 @@ const dayFormatter = new Intl.DateTimeFormat('en-CA', {
 });
 
 function getTodayDateString(offset = 0) {
-  return dayFormatter.format(new Date(Date.now() + offset * 24 * 60 * 60 * 1000));
+  // Derive the calendar date in the configured match timezone first, then
+  // apply day offsets in UTC calendar space. Adding 24 hours to the current
+  // instant can otherwise skip/repeat a date around timezone/DST transitions.
+  const parts = dayFormatter.formatToParts(new Date());
+  const part = (type: string) => parts.find((item) => item.type === type)?.value || '';
+  const year = Number(part('year'));
+  const month = Number(part('month'));
+  const day = Number(part('day'));
+  const calendarDate = new Date(Date.UTC(year, month - 1, day + offset));
+  return [
+    calendarDate.getUTCFullYear(),
+    String(calendarDate.getUTCMonth() + 1).padStart(2, '0'),
+    String(calendarDate.getUTCDate()).padStart(2, '0'),
+  ].join('-');
 }
 
 function safeIsoDate(value: any) {
-  if (!value) return new Date().toISOString();
+  if (!value) return '';
+  // Preserve date-only provider values as a stable instant inside that
+  // calendar day. UTC midnight can render as the previous day in negative
+  // offsets, while local midnight can shift in deployments with another TZ.
+  if (typeof value === 'string' && /^\d{4}-\d{2}-\d{2}$/.test(value)) {
+    return new Date(`${value}T12:00:00.000Z`).toISOString();
+  }
   const date = typeof value === 'number'
     ? new Date(value > 9999999999 ? value : value * 1000)
     : new Date(value);
-  return Number.isNaN(date.getTime()) ? new Date().toISOString() : date.toISOString();
+  return Number.isNaN(date.getTime()) ? '' : date.toISOString();
+}
+
+function fixtureCalendarKey(value: any) {
+  if (typeof value === 'string' && /^\d{4}-\d{2}-\d{2}$/.test(value)) return value;
+  const date = typeof value === 'number'
+    ? new Date(value > 9999999999 ? value : value * 1000)
+    : new Date(value);
+  return Number.isNaN(date.getTime()) ? '' : dayFormatter.format(date);
 }
 
 async function bsdGet(path: string, params: Record<string, any> = {}, timeout = 12_000) {
@@ -139,71 +166,168 @@ function flattenBsdMarketPayload(odds: any): Record<string, number> {
   return out;
 }
 
-function normaliseBsdOdds(odds: any) {
-  if (!odds || typeof odds !== 'object') return null;
-  const flat = flattenBsdMarketPayload(odds);
+function normaliseBsdOdds(payload: any) {
+  if (!payload || typeof payload !== 'object') return null;
+  // BSD odds endpoints can return either a nested event object or rows with
+  // market/outcome/line/period/decimal_odds. Preserve market identity instead
+  // of flattening row indexes into meaningless numeric keys.
+  const rowPrices: Record<string, number> = {};
+  const normaliseKey = (key: string) => key.toLowerCase().replace(/[^a-z0-9]+/g, '_').replace(/^_|_$/g, '');
+  const rows = Array.isArray(payload) ? payload : null;
+  if (rows) {
+    for (const row of rows) {
+      if (!row || typeof row !== 'object') continue;
+      const price = Number(row.decimal_odds ?? row.odds ?? row.price ?? row.value);
+      if (!Number.isFinite(price) || price <= 1.01 || price > 100) continue;
+      const market = normaliseKey(String(row.market ?? row.market_name ?? row.market_type ?? ''));
+      const outcome = normaliseKey(String(row.outcome ?? row.selection ?? row.name ?? ''));
+      const line = row.line ?? row.handicap ?? row.total;
+      const period = normaliseKey(String(row.period ?? row.period_name ?? 'ft')) || 'ft';
+      if (!market || !outcome) continue;
+      const lineKey = line !== undefined && line !== null && line !== '' ? normaliseKey(String(line)) : '';
+      rowPrices[`${market}${lineKey ? `_${lineKey}` : ''}_${outcome}_${period}`] = price;
+      rowPrices[`${market}${lineKey ? `_${lineKey}` : ''}_${outcome}`] = price;
+      // Canonical aliases used by the model-based markets below.
+      if (/^(1x2|match_result|match_winner)$/.test(market)) {
+        if (/^(home|home_win|1)$/.test(outcome)) rowPrices.home = price;
+        if (/^(draw|x)$/.test(outcome)) rowPrices.draw = price;
+        if (/^(away|away_win|2)$/.test(outcome)) rowPrices.away = price;
+      }
+      if (/^(btts|both_teams_to_score)$/.test(market)) {
+        if (/^(yes|true)$/.test(outcome)) rowPrices.bttsYes = price;
+        if (/^(no|false)$/.test(outcome)) rowPrices.bttsNo = price;
+      }
+      if (/^(double_chance|dc)$/.test(market) && /^(1x|x2|12)$/.test(outcome)) {
+        rowPrices[outcome === '1x' ? 'dc1X' : outcome === 'x2' ? 'dcX2' : 'dc12'] = price;
+      }
+      if (/^(draw_no_bet|dnb)$/.test(market)) {
+        if (/^(home|home_win|1)$/.test(outcome)) rowPrices.dnb1 = price;
+        if (/^(away|away_win|2)$/.test(outcome)) rowPrices.dnb2 = price;
+      }
+      if (/^(total_corners|corners|corner_total)$/.test(market) && lineKey) {
+        const over = /^(over|o)$/.test(outcome);
+        const under = /^(under|u)$/.test(outcome);
+        if (over) rowPrices[`cornersOver${lineKey.replace(/_/g, '')}`] = price;
+        if (under) rowPrices[`cornersUnder${lineKey.replace(/_/g, '')}`] = price;
+      }
+      if (/^(over_under|total_goals|goals)$/.test(market) && lineKey) {
+        const lineDigits = lineKey.replace(/_/g, '');
+        if (/^(over|o)$/.test(outcome)) rowPrices[`over${lineDigits}`] = price;
+        if (/^(under|u)$/.test(outcome)) rowPrices[`under${lineDigits}`] = price;
+      }
+      if (/^(clean_sheet|to_nil|win_to_nil)$/.test(market)) {
+        if (/home|(^|_)1($|_)/.test(outcome)) rowPrices.csHome = price;
+        if (/away|(^|_)2($|_)/.test(outcome)) rowPrices.csAway = price;
+      }
+      if (/^(total_cards|cards|bookings|booking)$/.test(market) && lineKey) {
+        const digits = lineKey.replace(/_/g, '');
+        if (/^(over|o)$/.test(outcome)) rowPrices[`cardsOver${digits}`] = price;
+        else if (/^(under|u)$/.test(outcome)) rowPrices[`cardsUnder${digits}`] = price;
+      }
+      if (/^(yellow_cards|yellowcards|yellow_card_total)$/.test(market) && lineKey) {
+        const digits = lineKey.replace(/_/g, '');
+        if (/^(over|o)$/.test(outcome)) rowPrices[`yellowOver${digits}`] = price;
+        else if (/^(under|u)$/.test(outcome)) rowPrices[`yellowUnder${digits}`] = price;
+      }
+      if (/^(halftime_fulltime|ht_ft|half_time_full_time)$/.test(market)) {
+        const combo = outcome.replace(/[^12x]/g, '');
+        const htMap: Record<string, string> = { '11': 'htFtHomeHome', '1x': 'htFtHomeDraw', '12': 'htFtHomeAway', 'x1': 'htFtDrawHome', 'xx': 'htFtDrawDraw', 'x2': 'htFtDrawAway', '21': 'htFtAwayHome', '2x': 'htFtAwayDraw', '22': 'htFtAwayAway' };
+        if (htMap[combo]) rowPrices[htMap[combo]] = price;
+      }
+    }
+    return Object.keys(rowPrices).length ? rowPrices : null;
+  }
+  // Providers vary in naming and sometimes wrap prices under an "odds" key.
+  // Flatten numeric leaves without inventing prices or treating market labels as odds.
+  const source = payload.odds && typeof payload.odds === 'object' ? payload.odds : payload;
+  const flattened: Record<string, number> = {};
+
+  const visit = (value: any, prefix = '') => {
+    if (!value || typeof value !== 'object') return;
+    for (const [rawKey, child] of Object.entries(value)) {
+      const key = normaliseKey(rawKey);
+      const fullKey = prefix ? `${prefix}_${key}` : key;
+      if (typeof child === 'number' || (typeof child === 'string' && child.trim() !== '')) {
+        const price = Number(child);
+        if (Number.isFinite(price) && price > 1.01 && price <= 100) {
+          flattened[fullKey] = price;
+          if (!(key in flattened)) flattened[key] = price;
+        }
+      } else if (child && typeof child === 'object' && !Array.isArray(child)) {
+        visit(child, fullKey);
+      }
+    }
+  };
+  visit(source);
   const pick = (...keys: string[]) => {
     for (const key of keys) {
-      const value = Number(odds[key] ?? flat[key]);
-      if (Number.isFinite(value) && value > 1.01) return value;
+      const value = Number(source[key] ?? flattened[normaliseKey(key)]);
+      if (Number.isFinite(value) && value > 1.01 && value <= 100) return value;
     }
     return undefined;
   };
 
-  const normalised = {
-    home: pick('home_win', 'home', '1', 'match_winner_home'),
-    draw: pick('draw', 'X', 'match_winner_draw'),
-    away: pick('away_win', 'away', '2', 'match_winner_away'),
-    dc1X: pick('double_chance_1x', 'dc_1x', '1x', 'double_chance_home_draw'),
-    dcX2: pick('double_chance_x2', 'dc_x2', 'x2', 'double_chance_draw_away'),
-    dc12: pick('double_chance_12', 'dc_12', '12', 'double_chance_home_away'),
-    over15: pick('over_15_goals', 'over15', 'Over 1.5', 'total_goals_over_1.5'),
-    under15: pick('under_15_goals', 'under15', 'Under 1.5', 'total_goals_under_1.5'),
-    over25: pick('over_25_goals', 'over25', 'Over 2.5', 'total_goals_over_2.5'),
-    under25: pick('under_25_goals', 'under25', 'Under 2.5', 'total_goals_under_2.5'),
-    over35: pick('over_35_goals', 'over35', 'Over 3.5', 'total_goals_over_3.5'),
-    under35: pick('under_35_goals', 'under35', 'Under 3.5', 'total_goals_under_3.5'),
-    over45: pick('over_45_goals', 'over45', 'Over 4.5'),
-    under45: pick('under_45_goals', 'under45', 'Under 4.5'),
-    bttsYes: pick('btts_yes', 'bttsYes', 'BTTS Yes', 'both_teams_to_score_yes'),
-    bttsNo: pick('btts_no', 'bttsNo', 'BTTS No', 'both_teams_to_score_no'),
-    dnb1: pick('dnb_home', 'dnb1', 'draw_no_bet_home', 'dnb_1'),
-    dnb2: pick('dnb_away', 'dnb2', 'draw_no_bet_away', 'dnb_2'),
-    htFtHomeHome: pick('halftime_fulltime_home_home', 'ht_ft_hh', '1_1', 'halftime_fulltime_1_1'),
-    htFtHomeDraw: pick('halftime_fulltime_home_draw', 'ht_ft_hd', '1_x'),
-    htFtHomeAway: pick('halftime_fulltime_home_away', 'ht_ft_ha', '1_2'),
-    htFtDrawHome: pick('halftime_fulltime_draw_home', 'ht_ft_dh', 'x_1'),
-    htFtDrawDraw: pick('halftime_fulltime_draw_draw', 'ht_ft_dd', 'x_x'),
-    htFtDrawAway: pick('halftime_fulltime_draw_away', 'ht_ft_da', 'x_2'),
-    htFtAwayHome: pick('halftime_fulltime_away_home', 'ht_ft_ah', '2_1'),
-    htFtAwayDraw: pick('halftime_fulltime_away_draw', 'ht_ft_ad', '2_x'),
-    htFtAwayAway: pick('halftime_fulltime_away_away', 'ht_ft_aa', '2_2'),
-    cornersOver85: pick('corners_over_8.5', 'corner_over_8.5', 'total_corners_over_8.5', 'over_8.5_corners'),
-    cornersUnder85: pick('corners_under_8.5', 'corner_under_8.5', 'total_corners_under_8.5', 'under_8.5_corners'),
-    cornersOver95: pick('corners_over_9.5', 'corner_over_9.5', 'total_corners_over_9.5', 'over_9.5_corners'),
-    cornersUnder95: pick('corners_under_9.5', 'corner_under_9.5', 'total_corners_under_9.5', 'under_9.5_corners'),
-    cornersOver105: pick('corners_over_10.5', 'corner_over_10.5', 'total_corners_over_10.5', 'over_10.5_corners'),
-    cornersUnder105: pick('corners_under_10.5', 'corner_under_10.5', 'total_corners_under_10.5', 'under_10.5_corners'),
-    cardsOver35: pick('cards_over_3.5', 'total_cards_over_3.5', 'over_3.5_cards', 'booking_over_3.5'),
-    cardsUnder35: pick('cards_under_3.5', 'total_cards_under_3.5', 'under_3.5_cards', 'booking_under_3.5'),
-    cardsOver45: pick('cards_over_4.5', 'total_cards_over_4.5', 'over_4.5_cards', 'booking_over_4.5'),
-    cardsUnder45: pick('cards_under_4.5', 'total_cards_under_4.5', 'under_4.5_cards', 'booking_under_4.5'),
-    yellowOver25: pick('yellow_cards_over_2.5', 'over_2.5_yellow_cards', 'yellow_over_2.5'),
-    yellowUnder25: pick('yellow_cards_under_2.5', 'under_2.5_yellow_cards', 'yellow_under_2.5'),
-    yellowOver35: pick('yellow_cards_over_3.5', 'over_3.5_yellow_cards', 'yellow_over_3.5'),
-    yellowUnder35: pick('yellow_cards_under_3.5', 'under_3.5_yellow_cards', 'yellow_under_3.5'),
-    cleanSheetHome: pick('clean_sheet_home', 'cs_home', 'home_clean_sheet'),
-    cleanSheetAway: pick('clean_sheet_away', 'cs_away', 'away_clean_sheet'),
+  const mapped: Record<string, number> = { ...flattened };
+  const aliases: Record<string, string[]> = {
+    home: ['home_win', 'home', '1'],
+    draw: ['draw', 'x'],
+    away: ['away_win', 'away', '2'],
+    over05: ['over_05_goals', 'over05', 'over_0_5'],
+    under05: ['under_05_goals', 'under05', 'under_0_5'],
+    over15: ['over_15_goals', 'over15', 'over_1_5'],
+    under15: ['under_15_goals', 'under15', 'under_1_5'],
+    over25: ['over_25_goals', 'over25', 'over_2_5'],
+    under25: ['under_25_goals', 'under25', 'under_2_5'],
+    over35: ['over_35_goals', 'over35', 'over_3_5'],
+    under35: ['under_35_goals', 'under35', 'under_3_5'],
+    over45: ['over_45_goals', 'over45', 'over_4_5'],
+    under45: ['under_45_goals', 'under45', 'under_4_5'],
+    over55: ['over_55_goals', 'over55', 'over_5_5'],
+    under55: ['under_55_goals', 'under55', 'under_5_5'],
+    bttsYes: ['btts_yes', 'bttsyes', 'both_teams_to_score_yes'],
+    bttsNo: ['btts_no', 'bttsno', 'both_teams_to_score_no'],
+    dc1X: ['double_chance_1x', 'dc1x', '1x'],
+    dcX2: ['double_chance_x2', 'dcx2', 'x2'],
+    dc12: ['double_chance_12', 'dc12', '12'],
+    dnb1: ['draw_no_bet_home', 'dnb1'],
+    dnb2: ['draw_no_bet_away', 'dnb2'],
+    homeScores: ['home_team_to_score', 'home_to_score', 'home_team_over_05'],
+    awayScores: ['away_team_to_score', 'away_to_score', 'away_team_over_05'],
+    csHome: ['clean_sheet_home', 'cs_home', 'home_clean_sheet'],
+    csAway: ['clean_sheet_away', 'cs_away', 'away_clean_sheet'],
+    cleanSheetHome: ['clean_sheet_home', 'cs_home', 'home_clean_sheet'],
+    cleanSheetAway: ['clean_sheet_away', 'cs_away', 'away_clean_sheet'],
+    htFtHomeHome: ['halftime_fulltime_home_home', 'ht_ft_hh', '1_1'],
+    htFtHomeDraw: ['halftime_fulltime_home_draw', 'ht_ft_hd', '1_x'],
+    htFtHomeAway: ['halftime_fulltime_home_away', 'ht_ft_ha', '1_2'],
+    htFtDrawHome: ['halftime_fulltime_draw_home', 'ht_ft_dh', 'x_1'],
+    htFtDrawDraw: ['halftime_fulltime_draw_draw', 'ht_ft_dd', 'x_x'],
+    htFtDrawAway: ['halftime_fulltime_draw_away', 'ht_ft_da', 'x_2'],
+    htFtAwayHome: ['halftime_fulltime_away_home', 'ht_ft_ah', '2_1'],
+    htFtAwayDraw: ['halftime_fulltime_away_draw', 'ht_ft_ad', '2_x'],
+    htFtAwayAway: ['halftime_fulltime_away_away', 'ht_ft_aa', '2_2'],
+    cornersOver85: ['corners_over_8.5', 'corner_over_8.5', 'total_corners_over_8.5', 'over_8.5_corners'],
+    cornersUnder85: ['corners_under_8.5', 'corner_under_8.5', 'total_corners_under_8.5', 'under_8.5_corners'],
+    cornersOver95: ['corners_over_9.5', 'corner_over_9.5', 'total_corners_over_9.5', 'over_9.5_corners'],
+    cornersUnder95: ['corners_under_9.5', 'corner_under_9.5', 'total_corners_under_9.5', 'under_9.5_corners'],
+    cornersOver105: ['corners_over_10.5', 'corner_over_10.5', 'total_corners_over_10.5', 'over_10.5_corners'],
+    cornersUnder105: ['corners_under_10.5', 'corner_under_10.5', 'total_corners_under_10.5', 'under_10.5_corners'],
+    cardsOver35: ['cards_over_3.5', 'total_cards_over_3.5', 'over_3.5_cards', 'booking_over_3.5'],
+    cardsUnder35: ['cards_under_3.5', 'total_cards_under_3.5', 'under_3.5_cards', 'booking_under_3.5'],
+    cardsOver45: ['cards_over_4.5', 'total_cards_over_4.5', 'over_4.5_cards', 'booking_over_4.5'],
+    cardsUnder45: ['cards_under_4.5', 'total_cards_under_4.5', 'under_4.5_cards', 'booking_under_4.5'],
+    yellowOver25: ['yellow_cards_over_2.5', 'over_2.5_yellow_cards', 'yellow_over_2.5'],
+    yellowUnder25: ['yellow_cards_under_2.5', 'under_2.5_yellow_cards', 'yellow_under_2.5'],
+    yellowOver35: ['yellow_cards_over_3.5', 'over_3.5_yellow_cards', 'yellow_over_3.5'],
+    yellowUnder35: ['yellow_cards_under_3.5', 'under_3.5_yellow_cards', 'yellow_under_3.5'],
   };
-
-  const present = Object.fromEntries(
-    Object.entries(normalised).filter(([, v]) => typeof v === 'number'),
-  );
-  if (!Object.keys(present).length) return null;
-  return { ...present, _raw: flat };
+  for (const [market, keys] of Object.entries(aliases)) {
+    const price = pick(...keys);
+    if (price !== undefined) mapped[market] = price;
+  }
+  return Object.keys(mapped).length ? mapped : null;
 }
 
-/** Best-effort view of every distinct market BSD exposed for this event. */
 export function summariseBsdMarkets(odds: any): { name: string; odds: Record<string, number> }[] {
   const flat = flattenBsdMarketPayload(odds);
   const buckets = new Map<string, Record<string, number>>();
@@ -281,8 +405,16 @@ function mapBsdStats(payload: any) {
 function mapBsdXg(payload: any) {
   const stats = payload?.stats || payload;
   if (!stats?.home && !stats?.away) return null;
-  const xg = (side: any) => Number(side?.xg?.actual ?? side?.expected_goals ?? side?.xg ?? 0) || 0;
-  return { home: xg(stats.home), away: xg(stats.away) };
+  const hasXg = (side: any) =>
+    side?.xg?.actual !== undefined || side?.expected_goals !== undefined || side?.xg !== undefined;
+  if (!hasXg(stats.home) || !hasXg(stats.away)) return null;
+  const xg = (side: any) => {
+    const raw = Number(side?.xg?.actual ?? side?.expected_goals ?? side?.xg);
+    return Number.isFinite(raw) && raw >= 0 ? raw : null;
+  };
+  const home = xg(stats.home);
+  const away = xg(stats.away);
+  return home === null || away === null ? null : { home, away };
 }
 
 function mapBSDEvent(event: any, leagueName?: string) {
@@ -326,6 +458,7 @@ function mapBSDEvent(event: any, leagueName?: string) {
     fixture: {
       id: `bsd_${id}`,
       date: safeIsoDate(event?.event_date || event?.date || event?.kickoff),
+      dateKey: fixtureCalendarKey(event?.event_date || event?.date || event?.kickoff),
       status: {
         short: status.short,
         elapsed: Number.isFinite(currentMinute) && currentMinute > 0 ? currentMinute * 60 : 0,
@@ -352,6 +485,9 @@ function mapBSDEvent(event: any, leagueName?: string) {
       saves: { home: '0', away: '0' },
     },
     xG: mappedXg || { home: 0, away: 0 },
+    statsAvailable: Boolean(mappedStats),
+    xGAvailable: Boolean(mappedXg),
+    oddsAvailable: Boolean(odds && Object.keys(odds).length),
     ...(odds ? { odds } : {}),
     provider: 'bsd',
   };
@@ -389,6 +525,37 @@ export async function getLiveMatches() {
 const UPCOMING_CACHE: Record<string, { data: any[]; timestamp: number }> = {};
 const UPCOMING_CACHE_TTL = 5 * 60 * 1000;
 
+// Competition priority keeps high-interest fixtures prominent in featured
+// picks and feeds. Match names are provider-dependent, so use normalized
+// league-name patterns rather than provider-specific numeric IDs.
+const LEAGUE_PRIORITY: Array<{ weight: number; patterns: RegExp[] }> = [
+  { weight: 100, patterns: [/\buefa champions league\b/i, /\bchampions league\b/i] },
+  { weight: 96, patterns: [/\bpremier league\b/i, /\benglish premier league\b/i] },
+  { weight: 94, patterns: [/\blaliga\b/i, /\bla liga\b/i, /\bprimera division\b/i] },
+  { weight: 92, patterns: [/\bserie a\b/i, /\bitalian serie a\b/i] },
+  { weight: 90, patterns: [/\bbundesliga\b/i] },
+  { weight: 88, patterns: [/\bligue 1\b/i] },
+  { weight: 86, patterns: [/\beuropa league\b/i, /\buefa europa\b/i] },
+  { weight: 82, patterns: [/\bfa cup\b/i, /\bcopa del rey\b/i, /\bcoppa italia\b/i, /\bdfb pokal\b/i, /\bdfl cup\b/i] },
+  { weight: 80, patterns: [/\bconference league\b/i, /\buefa conference\b/i] },
+  { weight: 78, patterns: [/\bworld cup\b/i, /\beuro\b/i, /\bcopa america\b/i, /\bnations league\b/i] },
+  { weight: 76, patterns: [/\bmls\b/i, /\bmajor league soccer\b/i] },
+  { weight: 74, patterns: [/\bprimeira liga\b/i, /\bliga portugal\b/i, /\beredivisie\b/i, /\bscottish premiership\b/i] },
+];
+
+function getLeagueWeight(leagueName: unknown): number {
+  const name = String(leagueName || '').trim();
+  if (!name) return 0;
+  const match = LEAGUE_PRIORITY.find(({ patterns }) => patterns.some((pattern) => pattern.test(name)));
+  return match?.weight ?? 10;
+}
+
+function compareFixturesByLeaguePriority(a: any, b: any): number {
+  const weightDifference = getLeagueWeight(b?.league?.name) - getLeagueWeight(a?.league?.name);
+  if (weightDifference !== 0) return weightDifference;
+  return new Date(a?.fixture?.date).getTime() - new Date(b?.fixture?.date).getTime();
+}
+
 export async function getUpcomingMatches(_topFixtures: string[] = []) {
   if (!BSD_API_KEY) return [];
   const cacheKey = `upcoming_${getTodayDateString()}`;
@@ -399,9 +566,10 @@ export async function getUpcomingMatches(_topFixtures: string[] = []) {
 
   try {
     const [events, leagues] = await Promise.all([
-      // Window starts yesterday so users in any timezone near the day boundary
-      // still see their full "today", and includes matches already in play or
-      // finished. Filtering to status=notstarted hid today's games entirely.
+      // Some providers only return complete event sets when the range begins
+      // on the previous day. Keep that wider fetch, then filter to today's
+      // calendar date in MATCH_TIMEZONE below so yesterday never leaks into
+      // the client-facing "upcoming" feed.
       fetchBsdEvents('/events/', {
         date_from: getTodayDateString(-1),
         date_to: getTodayDateString(7),
@@ -409,18 +577,23 @@ export async function getUpcomingMatches(_topFixtures: string[] = []) {
       getBsdLeagueMap().catch(() => ({} as Record<number, string>)),
     ]);
 
+    const todayKey = getTodayDateString();
     const seen = new Set<string>();
     const matches = events
       .map((event: any) => mapBSDEvent(event, leagues[Number(event?.league_id)]))
       .filter((match: any) => {
-        if (seen.has(match.fixture.id)) return false;
-        seen.add(match.fixture.id);
+        const fixtureDate = new Date(match?.fixture?.date);
+        const fixtureKey = String(match?.fixture?.dateKey || (Number.isNaN(fixtureDate.getTime()) ? '' : dayFormatter.format(fixtureDate)));
+        if (!fixtureKey) return false;
+        // The provider range intentionally starts yesterday, but the public
+        // upcoming feed must never include a fixture from a prior calendar day.
+        if (fixtureKey < todayKey) return false;
+        const id = String(match?.fixture?.id ?? '');
+        if (!id || seen.has(id)) return false;
+        seen.add(id);
         return true;
       })
-      .sort(
-        (a: any, b: any) =>
-          new Date(a.fixture.date).getTime() - new Date(b.fixture.date).getTime(),
-      );
+      .sort(compareFixturesByLeaguePriority);
 
     UPCOMING_CACHE[cacheKey] = { data: matches, timestamp: Date.now() };
     return matches;
@@ -518,24 +691,56 @@ export async function getLiveMatchPreview(fixtureId: string) {
   if (!/^\d+$/.test(normalizedId) || !BSD_API_KEY) return null;
 
   try {
-    const [event, oddsResult, statsResult, leagues] = await Promise.all([
+    // Fetch independent provider resources concurrently to keep match analysis
+    // fast while enriching it with real odds and available match statistics.
+    const [event, oddsResult, statsResult, predictionResult, leagues] = await Promise.all([
       fetchBsdEventDetail(normalizedId),
       bsdGet(`/events/${normalizedId}/odds/`).catch(() => null),
       bsdGet(`/events/${normalizedId}/stats/`).catch(() => null),
+      bsdGet(`/events/${normalizedId}/prediction/`).catch(() => null),
       getBsdLeagueMap().catch(() => ({} as Record<number, string>)),
     ]);
     if (!event || typeof event !== 'object') return null;
 
     const mapped: any = mapBSDEvent(event, leagues[Number(event?.league_id)]);
-    const odds = normaliseBsdOdds(oddsResult?.odds ?? oddsResult);
+    const odds = normaliseBsdOdds(oddsResult?.odds ?? oddsResult?.results ?? oddsResult);
     if (odds) mapped.odds = odds;
     const marketSummary = summariseBsdMarkets(oddsResult?.odds ?? oddsResult);
     if (marketSummary.length) mapped.marketBoard = marketSummary;
+
+    // BSD's forecast endpoint supplies market-specific probabilities (including
+    // corners) that must not be fabricated from the goals Poisson model.
+    const forecast = predictionResult?.prediction ?? predictionResult?.data ?? predictionResult;
+    const markets = forecast?.markets;
+    if (markets && typeof markets === 'object') {
+      const asProbability = (value: any) => {
+        const n = Number(value);
+        if (!Number.isFinite(n)) return undefined;
+        const probability = n > 1 ? n / 100 : n;
+        return probability > 0 && probability < 1 ? probability : undefined;
+      };
+      const corners = markets.corners ?? {};
+      mapped.bsdPredictions = {
+        source: 'bsd',
+        model: forecast?.model ?? null,
+        corners: {
+          over75: asProbability(corners.prob_over_75),
+          over85: asProbability(corners.prob_over_85),
+          over95: asProbability(corners.prob_over_95),
+          over105: asProbability(corners.prob_over_105),
+          over115: asProbability(corners.prob_over_115),
+        },
+        rawMarkets: markets,
+      };
+    }
 
     const stats = mapBsdStats(statsResult);
     if (stats) mapped.stats = stats;
     const xg = mapBsdXg(statsResult);
     if (xg) mapped.xG = xg;
+    mapped.statsAvailable = Boolean(stats);
+    mapped.xGAvailable = Boolean(xg);
+    mapped.oddsAvailable = Boolean(odds && Object.keys(odds).length);
 
     return mapped;
   } catch (error: any) {
@@ -597,18 +802,9 @@ export async function getMatchDetails(fixtureId: number | string, match?: any): 
     last5: { goalsScored: 0, goalsConceded: 0, results: [] },
     season: { played: 0, goalsScored: 0, goalsConceded: 0 },
   };
-  const defaultOdds = {
-    home: 2.1,
-    draw: 3.3,
-    away: 3.4,
-    over25: 1.9,
-    under25: 1.9,
-    bttsYes: 1.8,
-    dc1X: 1.3,
-    dcX2: 1.7,
-    over15: 1.3,
-    over35: 3.2,
-  };
+  // Never synthesize bookmaker prices: missing odds must remain missing so
+  // the value engine cannot mistake assumptions for a real market quote.
+  const noOdds: Record<string, number> = {};
 
   try {
     const bsdMatch = /^bsd_\d+$/.test(idStr) || /^\d+$/.test(idStr)
@@ -621,10 +817,7 @@ export async function getMatchDetails(fixtureId: number | string, match?: any): 
         home: { ...homeStats, name: bsdMatch?.teams?.home?.name || homeName },
         away: { ...awayStats, name: bsdMatch?.teams?.away?.name || awayName },
         leagueAvgGoals: 2.6,
-        odds: {
-          ...defaultOdds,
-          ...(bsdMatch.odds || {}),
-        },
+        odds: { ...(bsdMatch.odds || {}) },
         deepContext: {
           bsd: bsdMatch,
           xG: bsdMatch.xG,
@@ -633,6 +826,14 @@ export async function getMatchDetails(fixtureId: number | string, match?: any): 
           elapsed: Math.floor(Number(bsdMatch.fixture?.status?.elapsed || 0) / 60),
           league: bsdMatch.league?.name,
           round: bsdMatch.round,
+          dataSource: 'bsd',
+          oddsAvailable: Boolean(bsdMatch.oddsAvailable && bsdMatch.odds && Object.keys(bsdMatch.odds).length),
+          statsAvailable: Boolean(bsdMatch.statsAvailable),
+          xGAvailable: Boolean(bsdMatch.xGAvailable),
+          fetchedAt: new Date().toISOString(),
+          dataQualityWarning: !bsdMatch.odds || !Object.keys(bsdMatch.odds).length
+            ? 'No bookmaker odds returned by the provider; value bets are unavailable for unpriced markets.'
+            : undefined,
         },
       };
     }
@@ -645,8 +846,14 @@ export async function getMatchDetails(fixtureId: number | string, match?: any): 
     home: homeStats,
     away: awayStats,
     leagueAvgGoals: 2.6,
-    odds: defaultOdds,
-    deepContext: {},
+    odds: noOdds,
+    deepContext: {
+      dataQualityWarning: 'Official match data unavailable; team statistics and bookmaker odds were not verified.',
+      dataSource: 'unavailable',
+      oddsAvailable: false,
+      statsAvailable: false,
+      fetchedAt: new Date().toISOString(),
+    },
   };
 }
 

@@ -48,10 +48,6 @@ export async function fetchMatchH2H(home: string, away: string, initData = '', f
 }
 
 export async function getLiveMatches(initData = '') {
-  const cacheKey = 'live_matches';
-  const cached = getFromCache(cacheKey);
-  if (cached) return cached;
-
   const response = await fetch('/api/football/live', {
     headers: initData ? { 'X-TG-Init-Data': initData } : {},
   });
@@ -62,9 +58,7 @@ export async function getLiveMatches(initData = '') {
     throw new Error('Failed to load live matches.');
   }
 
-  const data = await response.json();
-  setCache(cacheKey, data);
-  return data;
+  return response.json();
 }
 
 export async function getLiveMatchPreview(fixtureId: string, initData = '') {
