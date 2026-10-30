@@ -115,7 +115,7 @@ export const MatchPreviewModal: React.FC<MatchPreviewModalProps> = ({
 
                 <div className="flex items-center justify-center gap-6">
                   <div className="flex flex-col items-center gap-2 flex-1">
-                    <div className="w-16 h-16 rounded-2xl bg-zinc-900 flex items-center justify-center border border-zinc-800 shadow-sm overflow-hidden p-2">
+                    <div className="w-20 h-20 rounded-full bg-zinc-900 flex items-center justify-center border border-zinc-800 shadow-sm overflow-hidden p-1.5">
                       <TeamLogo name={match.home} logo={match.homeLogo} textClassName="text-xl" />
                     </div>
                     <span className="text-[11px] font-black text-zinc-200 text-center line-clamp-1">{match.home}</span>
@@ -133,7 +133,7 @@ export const MatchPreviewModal: React.FC<MatchPreviewModalProps> = ({
                   </div>
 
                   <div className="flex flex-col items-center gap-2 flex-1">
-                    <div className="w-16 h-16 rounded-2xl bg-zinc-900 flex items-center justify-center border border-zinc-800 shadow-sm overflow-hidden p-2">
+                    <div className="w-20 h-20 rounded-full bg-zinc-900 flex items-center justify-center border border-zinc-800 shadow-sm overflow-hidden p-1.5">
                       <TeamLogo name={match.away} logo={match.awayLogo} textClassName="text-xl" />
                     </div>
                     <span className="text-[11px] font-black text-zinc-200 text-center line-clamp-1">{match.away}</span>

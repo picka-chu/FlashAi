@@ -39,11 +39,11 @@ export const FixtureRow: React.FC<FixtureRowProps> = ({ match, onClick, isLast =
 
       <div className="flex min-w-0 flex-1 flex-col gap-2">
         <div className="flex min-w-0 items-center gap-2.5">
-          <TeamLogo name={match.home} logo={match.homeLogo} className="h-6 w-6 shrink-0 rounded-full" textClassName="text-[9px]" />
+          <TeamLogo name={match.home} logo={match.homeLogo} className="h-7 w-7 rounded-full ring-1 ring-white/10" textClassName="text-[10px]" />
           <span className="truncate text-[14px] text-[var(--text-strong)]">{match.home}</span>
         </div>
         <div className="flex min-w-0 items-center gap-2.5">
-          <TeamLogo name={match.away} logo={match.awayLogo} className="h-6 w-6 shrink-0 rounded-full" textClassName="text-[9px]" />
+          <TeamLogo name={match.away} logo={match.awayLogo} className="h-7 w-7 rounded-full ring-1 ring-white/10" textClassName="text-[10px]" />
           <span className="truncate text-[14px] text-[var(--text-strong)]">{match.away}</span>
         </div>
       </div>

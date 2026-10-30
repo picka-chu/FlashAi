@@ -60,28 +60,29 @@ export const TeamLogo: React.FC<TeamLogoProps> = ({
   }, [logo, name, src]);
 
   const showImage = Boolean(src) && !failed;
+  const showInitials = !showImage || !ready;
   const fallbackColor = color || teamFallbackColor(name);
 
   return (
-    <div ref={holderRef} className={`relative w-full h-full flex items-center justify-center overflow-hidden ${className}`}>
-      <div
-        className="absolute inset-0"
-        style={{ background: `linear-gradient(145deg, ${fallbackColor}4d 0%, rgba(24,24,27,0.96) 78%)` }}
-      />
-      <div
-        className="absolute inset-0 opacity-30"
-        style={{ background: 'radial-gradient(circle at 72% 18%, rgba(255,255,255,0.7) 0%, transparent 42%)' }}
-      />
-      <span className={`relative z-10 font-black tracking-[-0.06em] text-white/90 ${textClassName}`}>
-        {teamInitials(name)}
-      </span>
+    <div ref={holderRef} className={`relative flex w-full h-full shrink-0 items-center justify-center overflow-hidden rounded-full ${className}`}>
+      {showInitials && (
+        <>
+          <span
+            className="absolute inset-0 rounded-full"
+            style={{ backgroundColor: `${fallbackColor}26` }}
+          />
+          <span className={`relative z-10 font-black tracking-[-0.06em] text-white/85 ${textClassName}`}>
+            {teamInitials(name)}
+          </span>
+        </>
+      )}
       {showImage && (
         <img
           src={src || ''}
           alt={name}
-          className={`absolute inset-0 z-20 w-full h-full object-contain transition-opacity duration-200 ${ready ? 'opacity-100' : 'opacity-0'}`}
+          className={`absolute inset-0 z-20 h-full w-full rounded-full object-contain transition-opacity duration-200 ${ready ? 'opacity-100' : 'opacity-0'}`}
           referrerPolicy="no-referrer"
-          loading="eager"
+          loading="lazy"
           onLoad={() => setReady(true)}
           onError={() => {
             setFailed(true);

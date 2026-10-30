@@ -64,7 +64,7 @@ export const FeaturedMatchCard: React.FC<FeaturedMatchCardProps> = ({
             <div className="flex flex-col items-center gap-3 min-w-0">
               <div className="relative group-hover:scale-105 transition-transform duration-300">
                 <div className="absolute inset-0 bg-[#ccff00]/20 blur-xl rounded-full opacity-0 group-hover:opacity-100 transition-opacity" />
-                <div className="w-[72px] h-[72px] rounded-2xl bg-zinc-900 border border-zinc-800 p-3 relative z-10 flex items-center justify-center shadow-inner">
+                <div className="w-[76px] h-[76px] rounded-full bg-zinc-900 border border-zinc-800 p-1.5 relative z-10 flex items-center justify-center shadow-inner ring-2 ring-[#ccff00]/15">
                   <TeamLogo name={match.home} logo={match.homeLogo} textClassName="text-lg" />
                 </div>
               </div>
@@ -106,7 +106,7 @@ export const FeaturedMatchCard: React.FC<FeaturedMatchCardProps> = ({
             <div className="flex flex-col items-center gap-3 min-w-0">
               <div className="relative group-hover:scale-105 transition-transform duration-300">
                 <div className="absolute inset-0 bg-[#ccff00]/20 blur-xl rounded-full opacity-0 group-hover:opacity-100 transition-opacity" />
-                <div className="w-[72px] h-[72px] rounded-2xl bg-zinc-900 border border-zinc-800 p-3 relative z-10 flex items-center justify-center shadow-inner">
+                <div className="w-[76px] h-[76px] rounded-full bg-zinc-900 border border-zinc-800 p-1.5 relative z-10 flex items-center justify-center shadow-inner ring-2 ring-[#ccff00]/15">
                   <TeamLogo name={match.away} logo={match.awayLogo} textClassName="text-lg" />
                 </div>
               </div>

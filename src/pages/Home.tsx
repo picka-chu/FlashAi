@@ -12,6 +12,7 @@ import {
   History as HistoryIcon,
   UserPlus,
   Flame,
+  Trophy,
   Newspaper,
   Radio,
   Lock,
@@ -96,7 +97,7 @@ const FeaturedMatch: React.FC<{
 
       <div className="mt-5 grid grid-cols-[1fr_auto_1fr] items-center gap-3">
         <div className="flex flex-col items-center gap-2 text-center">
-          <TeamLogo name={match.home} logo={match.homeLogo} className="h-14 w-14 rounded-full bg-black/10" textClassName="text-base" />
+          <TeamLogo name={match.home} logo={match.homeLogo} className="h-16 w-16 rounded-full bg-black/10 ring-2 ring-black/10" textClassName="text-lg" />
           <span className="line-clamp-1 text-[13px] font-semibold">{match.home}</span>
         </div>
         <div className="flex flex-col items-center">
@@ -110,7 +111,7 @@ const FeaturedMatch: React.FC<{
           )}
         </div>
         <div className="flex flex-col items-center gap-2 text-center">
-          <TeamLogo name={match.away} logo={match.awayLogo} className="h-14 w-14 rounded-full bg-black/10" textClassName="text-base" />
+          <TeamLogo name={match.away} logo={match.awayLogo} className="h-16 w-16 rounded-full bg-black/10 ring-2 ring-black/10" textClassName="text-lg" />
           <span className="line-clamp-1 text-[13px] font-semibold">{match.away}</span>
         </div>
       </div>
@@ -127,6 +128,61 @@ const FeaturedMatch: React.FC<{
         <span>Analyze match</span>
         <ChevronRight className="h-4 w-4" />
       </div>
+    </button>
+  );
+};
+
+const ResultCard: React.FC<{ match: any; onClick: () => void }> = ({ match, onClick }) => {
+  const [rawHome, rawAway] = String(match.score || '0-0').split('-');
+  const homeGoals = Number(rawHome) || 0;
+  const awayGoals = Number(rawAway) || 0;
+  const homeWon = homeGoals > awayGoals;
+  const awayWon = awayGoals > homeGoals;
+  const row = (side: 'home' | 'away') => {
+    const name = side === 'home' ? match.home : match.away;
+    const goals = side === 'home' ? homeGoals : awayGoals;
+    const won = side === 'home' ? homeWon : awayWon;
+    const isDraw = !homeWon && !awayWon;
+    return (
+      <div className="flex items-center gap-2.5">
+        <TeamLogo
+          name={name}
+          logo={side === 'home' ? match.homeLogo : match.awayLogo}
+          className="h-8 w-8 rounded-full ring-1 ring-white/10"
+          textClassName="text-[11px]"
+        />
+        <span
+          className={`min-w-0 flex-1 truncate text-[13px] ${
+            won ? 'font-semibold text-[var(--text-strong)]' : isDraw ? 'text-[var(--text-strong)]' : 'text-[var(--text-muted)]'
+          }`}
+        >
+          {name}
+        </span>
+        <span
+          className={`tabular text-[15px] font-bold leading-none ${
+            won ? 'text-[var(--primary)]' : 'text-[var(--text-strong)]'
+          }`}
+        >
+          {goals}
+        </span>
+      </div>
+    );
+  };
+  return (
+    <button
+      type="button"
+      onClick={onClick}
+      className="group flex w-[240px] shrink-0 flex-col gap-3 rounded-[20px] border border-[var(--border)] bg-[var(--surface-1)] p-4 text-left transition-colors active:bg-[var(--surface-2)]"
+    >
+      <div className="flex items-center justify-between gap-2">
+        <span className="truncate text-[11px] font-medium text-[var(--text-subtle)]">{match.league}</span>
+        <span className="rounded-md bg-white/[0.06] px-1.5 py-0.5 text-[10px] font-bold text-[var(--text-muted)]">FT</span>
+      </div>
+      <div className="space-y-2.5">{row('home')}{row('away')}</div>
+      <span className="flex items-center gap-1 text-[11px] font-medium text-[var(--text-subtle)] transition-colors group-hover:text-[var(--primary)]">
+        Analyze result
+        <ChevronRight className="h-3 w-3" />
+      </span>
     </button>
   );
 };
@@ -405,6 +461,17 @@ export const Home: React.FC<HomeProps> = ({ onTabChange }) => {
   const selectedCount = selectedMatches.length;
   const featuredIsNext = !selectedMajor;
 
+  const finishedMatches = useMemo(
+    () =>
+      upcomingMatches
+        .filter((m: any) => m?.fixture?.status?.state === 'post' && /^\d+\s*-\s*\d+$/.test(String(m.score || '')))
+        .sort((a: any, b: any) => String(b.fixtureDate || '').localeCompare(String(a.fixtureDate || '')))
+        .slice(0, 10),
+    [upcomingMatches],
+  );
+  const liveNowCount = liveMatches.filter((m: any) => m?.fixture?.status?.state === 'in' || m.status === 'Live').length;
+  const finishedTodayCount = finishedMatches.filter((m: any) => m.dateKey === todayKey).length;
+
   const groupedList = useMemo(() => {
     const groups = new Map<string, any[]>();
     for (const m of listMatches) {
@@ -476,6 +543,11 @@ export const Home: React.FC<HomeProps> = ({ onTabChange }) => {
                   <h2 className="mt-0.5 text-[22px] font-semibold tracking-tight text-[var(--text-strong)]">
                     {isToday ? 'Today' : selectedLabel}
                   </h2>
+                  <p className="mt-0.5 text-[12px] text-[var(--text-muted)]">
+                    {selectedCount} fixture{selectedCount === 1 ? '' : 's'}
+                    {liveNowCount > 0 ? ` \u00b7 ${liveNowCount} live` : ''}
+                    {finishedTodayCount > 0 ? ` \u00b7 ${finishedTodayCount} finished` : ''}
+                  </p>
                 </div>
                 <button
                   type="button"
@@ -655,6 +727,23 @@ export const Home: React.FC<HomeProps> = ({ onTabChange }) => {
                 </div>
               )}
             </section>
+
+            {/* Latest results */}
+            {finishedMatches.length > 0 && (
+              <section className="space-y-3">
+                <SectionHeader
+                  title="Latest results"
+                  icon={<Trophy className="h-4 w-4 text-[var(--primary)]" />}
+                  action="See all"
+                  onAction={() => onTabChange('matches')}
+                />
+                <div className="no-scrollbar -mx-5 flex gap-2.5 overflow-x-auto px-5 pb-1">
+                  {finishedMatches.map((match: any, i: number) => (
+                    <ResultCard key={match.id || i} match={match} onClick={() => handleAnalyze(match)} />
+                  ))}
+                </div>
+              </section>
+            )}
 
             {/* Trending */}
             {trendingMatches.length > 0 && (
