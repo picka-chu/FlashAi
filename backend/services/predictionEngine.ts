@@ -80,13 +80,20 @@ export function computeFeatures(data: MatchData) {
     results: string[]
   ) => {
     const recentResults = Array.isArray(results) ? results.slice(0, 5) : [];
+    if (recentResults.length === 0) {
+      return { attack: null as number | null, defense: null as number | null, formScore: 0.5 };
+    }
     const games = Math.max(Math.min(recentResults.length, 5), 1);
     const formScore = recentResults.reduce((sum, result, index) =>
       sum + (result === "W" ? 3 : result === "D" ? 1 : 0) *
         (FORM_WEIGHTS[index] ?? 1), 0) / (WEIGHT_SUM * 3);
+    // Goal totals missing (results-only feed) must not zero out the attack
+    // rate; fall back to league-average rates for that component only.
+    const scored = finiteNonNegative(goalsScored);
+    const conceded = finiteNonNegative(goalsConceded);
     return {
-      attack: safeDiv(finiteNonNegative(goalsScored), games, 1.1),
-      defense: safeDiv(finiteNonNegative(goalsConceded), games, 1.25),
+      attack: scored > 0 || conceded > 0 ? safeDiv(scored, games, 1.1) : 1.1,
+      defense: scored > 0 || conceded > 0 ? safeDiv(conceded, games, 1.25) : 1.25,
       formScore: Math.min(1, Math.max(0, formScore)),
     };
   };
@@ -104,16 +111,27 @@ export function computeFeatures(data: MatchData) {
     awayResults
   );
 
-  const homeAttack = homeAttackSeason * 0.65 + homeForm.attack * 0.35;
-  const awayAttack = awayAttackSeason * 0.65 + awayForm.attack * 0.35;
-  const homeDefense = homeDefenseSeason * 0.65 + homeForm.defense * 0.35;
-  const awayDefense = awayDefenseSeason * 0.65 + awayForm.defense * 0.35;
+  const homeAttack = homeForm.attack === null
+    ? homeAttackSeason
+    : homeAttackSeason * 0.65 + homeForm.attack * 0.35;
+  const awayAttack = awayForm.attack === null
+    ? awayAttackSeason
+    : awayAttackSeason * 0.65 + awayForm.attack * 0.35;
+  const homeDefense = homeForm.defense === null
+    ? homeDefenseSeason
+    : homeDefenseSeason * 0.65 + homeForm.defense * 0.35;
+  const awayDefense = awayForm.defense === null
+    ? awayDefenseSeason
+    : awayDefenseSeason * 0.65 + awayForm.defense * 0.35;
 
   const rawLeague = finiteNonNegative(data.leagueAvgGoals, 2.65);
   const league = rawLeague >= 1.5 && rawLeague <= 4.5 ? rawLeague : 2.65;
+  // leagueAvgGoals is the two-team total; attack/defense rates are per team,
+  // so neutral expectation must scale against league/2, not the total.
+  const leaguePerTeam = league / 2;
 
-  let lambdaHome = safeDiv(homeAttack, league) * safeDiv(awayDefense, league) * league;
-  let lambdaAway = safeDiv(awayAttack, league) * safeDiv(homeDefense, league) * league;
+  let lambdaHome = (homeAttack * awayDefense) / leaguePerTeam;
+  let lambdaAway = (awayAttack * homeDefense) / leaguePerTeam;
 
   // Only use explicitly labelled pre-match expected-goal estimates. Accumulated
   // live xG is not a full-match lambda and must not be mixed into pre-match
@@ -128,6 +146,24 @@ export function computeFeatures(data: MatchData) {
   lambdaHome *= 1.08;
   lambdaHome = Math.min(5, Math.max(0.3, Number.isFinite(lambdaHome) ? lambdaHome : 1.35));
   lambdaAway = Math.min(5, Math.max(0.3, Number.isFinite(lambdaAway) ? lambdaAway : 1.10));
+
+  // ── Market calibration ───────────────────────────────────────────────
+  // When season/form data is thin, anchor the total-goals expectation to the
+  // bookmakers' own over/under market (de-vigged implied probability). Keeps
+  // the model from collapsing into a permanent "Under 1.5 / BTTS No" bias on
+  // fixtures where BSD returned no team statistics.
+  const impliedTotal = impliedTotalLambdaFromOdds(data.odds ?? {});
+  if (impliedTotal !== null) {
+    const quality = computeDataQuality(data);
+    const impliedWeight = Math.min(0.6, Math.max(0, 1 - quality));
+    if (impliedWeight > 0) {
+      const statTotal = Math.max(0.1, lambdaHome + lambdaAway);
+      const total = statTotal * (1 - impliedWeight) + impliedTotal * impliedWeight;
+      const share = lambdaHome / statTotal;
+      lambdaHome = Math.min(5, Math.max(0.3, total * share));
+      lambdaAway = Math.min(5, Math.max(0.3, total * (1 - share)));
+    }
+  }
 
   return {
     lambdaHome,
@@ -174,6 +210,61 @@ function computeDataQuality(data: MatchData): number {
 
 function finiteDataNumber(value: unknown): number {
   return typeof value === "number" && Number.isFinite(value) && value >= 0 ? value : 0;
+}
+
+// ─── Market-implied total-goals lambda ───────────────────────────────────────
+// De-vig a matched over/under pair and solve Poisson(lambda) for the total
+// goals line. Used to keep goals expectations calibrated to real book prices
+// when team season statistics are unavailable.
+function poissonCdf(k: number, lambda: number): number {
+  let term = Math.exp(-lambda);
+  let sum = term;
+  for (let i = 1; i <= k; i++) {
+    term *= lambda / i;
+    sum += term;
+  }
+  return sum;
+}
+
+function solveLambdaForTotalLine(line: number, pOver: number): number | null {
+  const k = Math.floor(line);
+  const targetUnder = 1 - pOver;
+  let lo = 0.05;
+  let hi = 8;
+  for (let i = 0; i < 60; i++) {
+    const mid = (lo + hi) / 2;
+    // P(total <= line) decreases as lambda grows.
+    if (poissonCdf(k, mid) > targetUnder) lo = mid;
+    else hi = mid;
+  }
+  const lambda = (lo + hi) / 2;
+  return Number.isFinite(lambda) && lambda >= 0.2 && lambda <= 6 ? lambda : null;
+}
+
+function impliedTotalLambdaFromOdds(odds: Record<string, unknown>): number | null {
+  const validOdd = (value: unknown): value is number =>
+    typeof value === "number" && Number.isFinite(value) && value > 1.01 && value < 50;
+  const pairs: [number, string, string][] = [
+    [0.5, "over05", "under05"],
+    [1.5, "over15", "under15"],
+    [2.5, "over25", "under25"],
+    [3.5, "over35", "under35"],
+    [4.5, "over45", "under45"],
+  ];
+  // Prefer the longest line with both sides priced — it carries the most
+  // information about the goals tail.
+  for (const [line, overKey, underKey] of [...pairs].reverse()) {
+    const overOdd = odds[overKey];
+    const underOdd = odds[underKey];
+    if (!validOdd(overOdd) || !validOdd(underOdd)) continue;
+    const impliedOver = 1 / overOdd;
+    const impliedUnder = 1 / underOdd;
+    const pOver = impliedOver / (impliedOver + impliedUnder);
+    if (!(pOver > 0.03 && pOver < 0.97)) continue;
+    const lambda = solveLambdaForTotalLine(line, pOver);
+    if (lambda !== null) return lambda;
+  }
+  return null;
 }
 // ─────────────────────────────────────────────────────────────────────────────
 // PART 3 — ELITE POISSON MODEL WITH DIXON-COLES

@@ -1957,6 +1957,10 @@ function extractTelegramChannelFromTaskUrl(taskUrl: string): string | null {
             matchData.away.last5.goalsScored = losses * 1.2 + draws * 0.7;
             matchData.away.last5.goalsConceded = wins * 1.4 + draws * 0.7;
           }
+          const h2hAvgGoals = Number(h2hData?.avgGoals);
+          if (Number.isFinite(h2hAvgGoals) && h2hAvgGoals >= 1.5 && h2hAvgGoals <= 4.5) {
+            matchData.leagueAvgGoals = h2hAvgGoals;
+          }
           const model = computeMarketModel(matchData, { bsdMatch: bsdPreview, h2h: h2hData });
           structuredContext = buildMarketContextBlock(matchData, model, { h2h: h2hData, bsdMatch: bsdPreview });
           modelBlock = {
