@@ -2021,6 +2021,19 @@ function extractTelegramChannelFromTaskUrl(taskUrl: string): string | null {
       if (result && modelBlock) {
         result.model = modelBlock;
       }
+
+      // Do not let fallback/placeholder statistics produce high-confidence picks.
+      // Below this threshold, the model lacks enough verified team/market data
+      // to justify a strong recommendation, regardless of the AI's wording.
+      if (result?.predictions?.length && Number(modelBlock?.dataQuality ?? 0) < 0.35) {
+        result.predictions = result.predictions.map((prediction: any) => ({
+          ...prediction,
+          confidence: Math.min(54, Math.max(0, Number(prediction?.confidence) || 0)),
+          reasoning: `${String(prediction?.reasoning || "").trim()} [Low verified-data quality: treat as speculative, not a strong pick.]`.trim(),
+        }));
+        result.overallReasoning = `${String(result.overallReasoning || "").trim()} Current verified team/market data is incomplete, so confidence has been capped.`.trim();
+      }
+
       const topPrediction = result?.predictions?.[0];
       let home = bsdPreview?.teams?.home?.name || "Home";
       let away = bsdPreview?.teams?.away?.name || "Away";
