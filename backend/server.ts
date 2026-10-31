@@ -2028,20 +2028,17 @@ function extractTelegramChannelFromTaskUrl(taskUrl: string): string | null {
             home: bsdPreview?.teams?.home?.name,
             away: bsdPreview?.teams?.away?.name,
           });
-          // Feed H2H last-5 into the feature table when BSD provided it
-          if (h2hData?.last5?.length && Array.isArray(h2hData.last5)) {
-            const wins = h2hData.last5.filter((r: string) => r === "W").length;
-            const draws = h2hData.last5.filter((r: string) => r === "D").length;
-            const losses = h2hData.last5.filter((r: string) => r === "L").length;
-            matchData.home.last5.results = h2hData.last5.slice(0, 5) as any;
-            matchData.home.last5.goalsScored = wins * 1.4 + draws * 0.8;
-            matchData.home.last5.goalsConceded = losses * 1.3 + draws * 0.8;
-            matchData.away.last5.results = h2hData.last5.slice(0, 5) as any;
-            matchData.away.last5.goalsScored = losses * 1.2 + draws * 0.7;
-            matchData.away.last5.goalsConceded = wins * 1.4 + draws * 0.7;
-          }
+          // H2H is display-only context. Do NOT overwrite each team's form
+          // with past-meeting results: the array is home-perspective (both
+          // teams received identical W/L strings) and the goal counts were
+          // fabricated from W/D/L tallies, which dragged λ down into a
+          // permanent Under 2.5 / BTTS-No bias.
           const h2hAvgGoals = Number(h2hData?.avgGoals);
-          if (Number.isFinite(h2hAvgGoals) && h2hAvgGoals >= 1.5 && h2hAvgGoals <= 4.5) {
+          const h2hMeetings = Number(h2hData?.totalMatches ?? 0);
+          if (
+            Number.isFinite(h2hAvgGoals) && h2hAvgGoals >= 1.5 && h2hAvgGoals <= 4.5 &&
+            h2hMeetings >= 6
+          ) {
             matchData.leagueAvgGoals = h2hAvgGoals;
           }
           const model = computeMarketModel(matchData, { bsdMatch: bsdPreview, h2h: h2hData });
@@ -2113,29 +2110,21 @@ function extractTelegramChannelFromTaskUrl(taskUrl: string): string | null {
         throw lastAnalysisError;
       }
 
-      // 2.5. Shape result based on plan
-      // Free: 1 prediction
-      // Basic: 2 predictions
-      // Pro/Admin: 5 predictions
-      try {
-        if (result && result.predictions) {
-          const plan = user.plan || "free";
-          const predictionCount = plan === "monthly_pro" || plan === "admin" ? 5 : (plan === "monthly_basic" ? 2 : 1);
-          result.predictions = result.predictions.slice(0, predictionCount);
-        }
-      } catch (shapeError) {
-        console.error("Error shaping match analysis result:", shapeError);
-      }
-
       if (result && modelBlock) {
         result.model = modelBlock;
       }
 
-      // Validate every goals-market recommendation against the independent
-      // Poisson model before it can be shown to the user. The language model's
-      // self-reported confidence is not a substitute for market probability.
+      // Validate goals/BTTS recommendations against the independent Poisson
+      // model before they can be shown. The model is considered reliable when
+      // team data is solid OR the goals expectation has been calibrated to
+      // de-vigged bookmaker odds (the market's own answer) — thin placeholder
+      // stats with no odds are not enough to publish a goals pick.
       if (Array.isArray(result?.predictions)) {
         const modelProbabilities = modelBlock?.probs;
+        const validOddsCount = Object.values(capturedMatchData?.odds ?? {}).filter(
+          (odd: any) => typeof odd === "number" && Number.isFinite(odd) && odd > 1.01 && odd <= 100,
+        ).length;
+        const modelReliable = Number(modelBlock?.dataQuality ?? 0) >= 0.35 || validOddsCount >= 3;
         const getGoalsProbability = (market: string): number | null => {
           const normalized = String(market || "").toLowerCase().replace(/[^a-z0-9.]/g, " ");
           const lineMatch = normalized.match(/(?:over|under)\s*(0?\.5|1\.5|2\.5|3\.5|4\.5)/);
@@ -2148,30 +2137,76 @@ function extractTelegramChannelFromTaskUrl(taskUrl: string): string | null {
           return typeof probability === "number" && Number.isFinite(probability) ? probability : null;
         };
 
+        const originalCount = result.predictions.length;
         result.predictions = result.predictions.filter((prediction: any) => {
           const market = String(prediction?.market || "");
-          if (!/\b(over|under)\s*\d?\.5\b/i.test(market)) return true;
-          const modelProbability = getGoalsProbability(market);
-          // Do not use placeholder/fallback statistics to justify a goals pick.
-          if (modelProbability === null || Number(modelBlock?.dataQuality ?? 0) < 0.35) return false;
-          if (modelProbability < 0.50) {
-            console.info("[analyze] Removed goals pick contradicted by model:", market, modelProbability);
-            return false;
+          const isGoalsPick = /\b(over|under)\s*\d?\.5\b/i.test(market);
+          if (isGoalsPick) {
+            const modelProbability = getGoalsProbability(market);
+            if (modelProbability === null || !modelReliable) return false;
+            if (modelProbability < 0.50) {
+              console.info("[analyze] Removed goals pick contradicted by model:", market, modelProbability);
+              return false;
+            }
+            return true;
+          }
+          const isBttsPick = /^(btts|both teams to score)/i.test(market.trim());
+          const bttsYes = modelProbabilities?.bttsYes;
+          if (isBttsPick && typeof bttsYes === "number" && Number.isFinite(bttsYes)) {
+            if (!modelReliable) return false;
+            const wantsYes = /\byes\b/i.test(market);
+            if (wantsYes && bttsYes < 0.50) {
+              console.info("[analyze] Removed BTTS Yes pick contradicted by model:", bttsYes);
+              return false;
+            }
+            if (!wantsYes && bttsYes >= 0.50) {
+              console.info("[analyze] Removed BTTS No pick contradicted by model:", bttsYes);
+              return false;
+            }
           }
           return true;
         });
+
+        // Every pick was gated out: fall back to model-generated rows (they
+        // are consistent with the model by construction) rather than serving
+        // an empty analysis or re-admitting contradicted AI picks.
+        if (result.predictions.length === 0 && originalCount > 0 && marketModel) {
+          console.warn("[analyze] All AI picks contradicted by model; serving statistical model rows");
+          const fallback = buildStatisticalFallbackResult(matchString, marketModel, capturedMatchData);
+          result.predictions = fallback.predictions;
+          result.overallReasoning = fallback.overallReasoning;
+        }
       }
 
       // Do not let fallback/placeholder statistics produce high-confidence picks.
-      // Below this threshold, the model lacks enough verified team/market data
-      // to justify a strong recommendation, regardless of the AI's wording.
-      if (result?.predictions?.length && Number(modelBlock?.dataQuality ?? 0) < 0.35) {
+      // When the model is not reliable (no team data AND no usable odds) the
+      // confidence is capped regardless of the AI's wording.
+      const validOddsForCap = Object.values(capturedMatchData?.odds ?? {}).filter(
+        (odd: any) => typeof odd === "number" && Number.isFinite(odd) && odd > 1.01 && odd <= 100,
+      ).length;
+      const modelReliableForCap = Number(modelBlock?.dataQuality ?? 0) >= 0.35 || validOddsForCap >= 3;
+      if (result?.predictions?.length && !modelReliableForCap) {
         result.predictions = result.predictions.map((prediction: any) => ({
           ...prediction,
           confidence: Math.min(54, Math.max(0, Number(prediction?.confidence) || 0)),
           reasoning: `${String(prediction?.reasoning || "").trim()} [Low verified-data quality: treat as speculative, not a strong pick.]`.trim(),
         }));
         result.overallReasoning = `${String(result.overallReasoning || "").trim()} Current verified team/market data is incomplete, so confidence has been capped.`.trim();
+      }
+
+      // 2.5. Shape result based on plan — AFTER validation so gated picks are
+      // never counted against the plan's prediction allowance.
+      // Free: 1 prediction
+      // Basic: 2 predictions
+      // Pro/Admin: 5 predictions
+      try {
+        if (result && result.predictions) {
+          const plan = user.plan || "free";
+          const predictionCount = plan === "monthly_pro" || plan === "admin" ? 5 : (plan === "monthly_basic" ? 2 : 1);
+          result.predictions = result.predictions.slice(0, predictionCount);
+        }
+      } catch (shapeError) {
+        console.error("Error shaping match analysis result:", shapeError);
       }
 
       const topPrediction = result?.predictions?.[0];

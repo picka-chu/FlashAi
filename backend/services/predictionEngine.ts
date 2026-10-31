@@ -57,6 +57,13 @@ export function computeFeatures(data: MatchData) {
   const safeDiv = (a: number, b: number, fallback = 1.0) =>
     b > 0 ? a / b : fallback;
 
+  // League expectation first: every "no data" fallback below anchors to the
+  // league per-team rate, so an empty feature table produces a neutral model
+  // (λ ≈ league/2 each) instead of a structural Under/BTTS-No lean.
+  const rawLeague = finiteNonNegative(data.leagueAvgGoals, 2.65);
+  const league = rawLeague >= 1.5 && rawLeague <= 4.5 ? rawLeague : 2.65;
+  const leaguePerTeam = league / 2;
+
   const homePlayed = finiteNonNegative(data.home?.season?.played);
   const awayPlayed = finiteNonNegative(data.away?.season?.played);
   const homeScored = finiteNonNegative(data.home?.season?.goalsScored);
@@ -67,10 +74,10 @@ export function computeFeatures(data: MatchData) {
   // Do not manufacture season averages from a zero-game denominator. The
   // conservative fallback is used only to keep the model finite; data quality
   // is reduced below so the UI can communicate that uncertainty.
-  const homeAttackSeason = safeDiv(homeScored, homePlayed, 1.25);
-  const awayAttackSeason = safeDiv(awayScored, awayPlayed, 1.10);
-  const homeDefenseSeason = safeDiv(homeConceded, homePlayed, 1.25);
-  const awayDefenseSeason = safeDiv(awayConceded, awayPlayed, 1.25);
+  const homeAttackSeason = safeDiv(homeScored, homePlayed, leaguePerTeam);
+  const awayAttackSeason = safeDiv(awayScored, awayPlayed, leaguePerTeam);
+  const homeDefenseSeason = safeDiv(homeConceded, homePlayed, leaguePerTeam);
+  const awayDefenseSeason = safeDiv(awayConceded, awayPlayed, leaguePerTeam);
 
   const FORM_WEIGHTS = [5, 4, 3, 2, 1];
   const WEIGHT_SUM = FORM_WEIGHTS.reduce((sum, weight) => sum + weight, 0);
@@ -92,8 +99,8 @@ export function computeFeatures(data: MatchData) {
     const scored = finiteNonNegative(goalsScored);
     const conceded = finiteNonNegative(goalsConceded);
     return {
-      attack: scored > 0 || conceded > 0 ? safeDiv(scored, games, 1.1) : 1.1,
-      defense: scored > 0 || conceded > 0 ? safeDiv(conceded, games, 1.25) : 1.25,
+      attack: scored > 0 || conceded > 0 ? safeDiv(scored, games, leaguePerTeam) : leaguePerTeam,
+      defense: scored > 0 || conceded > 0 ? safeDiv(conceded, games, leaguePerTeam) : leaguePerTeam,
       formScore: Math.min(1, Math.max(0, formScore)),
     };
   };
@@ -124,12 +131,8 @@ export function computeFeatures(data: MatchData) {
     ? awayDefenseSeason
     : awayDefenseSeason * 0.65 + awayForm.defense * 0.35;
 
-  const rawLeague = finiteNonNegative(data.leagueAvgGoals, 2.65);
-  const league = rawLeague >= 1.5 && rawLeague <= 4.5 ? rawLeague : 2.65;
   // leagueAvgGoals is the two-team total; attack/defense rates are per team,
-  // so neutral expectation must scale against league/2, not the total.
-  const leaguePerTeam = league / 2;
-
+  // so neutral expectation scales against leaguePerTeam (= league/2).
   let lambdaHome = (homeAttack * awayDefense) / leaguePerTeam;
   let lambdaAway = (awayAttack * homeDefense) / leaguePerTeam;
 
