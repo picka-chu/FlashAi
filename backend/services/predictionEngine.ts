@@ -286,8 +286,6 @@ export function calculatePoissonProbabilities(
   awayOver05: number;
   csHome: number;
   csAway: number;
-  scoreProbabilities: Record<string, number>;
-  handicapProbabilities: Record<string, number>;
 } {
   // Defensive bounds prevent malformed upstream data from producing NaN,
   // negative probabilities, or factorial overflow.
@@ -375,8 +373,6 @@ export function calculatePoissonProbabilities(
     homeScores, awayScores,
     homeOver05: homeScores, awayOver05: awayScores,
     csHome, csAway,
-    scoreProbabilities,
-    handicapProbabilities,
   };
 }
 
@@ -467,8 +463,6 @@ export function calculateValue(
     awayScores?: number;
     homeOver05?: number;
     awayOver05?: number;
-    scoreProbabilities?: Record<string, number>;
-    handicapProbabilities?: Record<string, number>;
   },
   odds: MatchData["odds"]
 ): (ValueBet & { ev: number; kellyFraction: number })[] {
@@ -499,19 +493,6 @@ export function calculateValue(
     { name: "DNB Away", prob: probs.dnb2, oddsKeys: ["dnb2", "DNB 2"] },
     { name: "Clean Sheet Home", prob: probs.csHome ?? 0, oddsKeys: ["csHome"] },
     { name: "Clean Sheet Away", prob: probs.csAway ?? 0, oddsKeys: ["csAway"] },
-    { name: "Asian Handicap Home -1.5", prob: probs.handicapProbabilities?.ahHomeM15 ?? 0, oddsKeys: ["ahHomeM15", "asian_handicap_home_-1.5"] },
-    { name: "Asian Handicap Home -0.5", prob: probs.handicapProbabilities?.ahHomeM05 ?? 0, oddsKeys: ["ahHomeM05", "asian_handicap_home_-0.5"] },
-    { name: "Asian Handicap Home +0.5", prob: probs.handicapProbabilities?.ahHomeP05 ?? 0, oddsKeys: ["ahHomeP05", "asian_handicap_home_+0.5"] },
-    { name: "Asian Handicap Home +1.5", prob: probs.handicapProbabilities?.ahHomeP15 ?? 0, oddsKeys: ["ahHomeP15", "asian_handicap_home_+1.5"] },
-    { name: "Asian Handicap Away -1.5", prob: probs.handicapProbabilities?.ahAwayM15 ?? 0, oddsKeys: ["ahAwayM15", "asian_handicap_away_-1.5"] },
-    { name: "Asian Handicap Away -0.5", prob: probs.handicapProbabilities?.ahAwayM05 ?? 0, oddsKeys: ["ahAwayM05", "asian_handicap_away_-0.5"] },
-    { name: "Asian Handicap Away +0.5", prob: probs.handicapProbabilities?.ahAwayP05 ?? 0, oddsKeys: ["ahAwayP05", "asian_handicap_away_+0.5"] },
-    { name: "Asian Handicap Away +1.5", prob: probs.handicapProbabilities?.ahAwayP15 ?? 0, oddsKeys: ["ahAwayP15", "asian_handicap_away_+1.5"] },
-    ...Object.entries(probs.scoreProbabilities ?? {}).map(([key, prob]) => ({
-      name: `Correct Score ${key.slice(2)}`,
-      prob,
-      oddsKeys: [key, `correct_score_${key.slice(2)}`],
-    })),
   ];
 
   const results: (ValueBet & { ev: number; kellyFraction: number })[] = [];

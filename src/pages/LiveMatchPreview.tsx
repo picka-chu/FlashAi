@@ -16,6 +16,7 @@ export const LiveMatchPreview: React.FC<{ onBack: () => void; onGoAnalyze: () =>
   const { livePreviewMatch, setLivePreviewMatch, user, setUser, setSelectedMatch, setAnalysisResult, setIsAnalyzing } = useUserStore();
   const { initData, showAlert, hapticFeedback } = useTelegram();
   const [loading, setLoading] = useState(false);
+  const [refreshKey, setRefreshKey] = useState(0);
   const [analyzing, setAnalyzing] = useState(false);
   const [analyzeError, setAnalyzeError] = useState<string | null>(null);
   const [attemptCount, setAttemptCount] = useState(0);
@@ -62,11 +63,17 @@ export const LiveMatchPreview: React.FC<{ onBack: () => void; onGoAnalyze: () =>
       mounted = false;
       clearInterval(interval);
     };
-  }, [fixtureId]);
+  }, [fixtureId, refreshKey]);
 
-  const possessionHome = useMemo(() => {
-    const raw = toNum(livePreviewMatch?.stats?.possession?.home);
-    return raw > 0 ? Math.min(100, Math.round(raw)) : 50;
+  const possession = useMemo(() => {
+    const home = toNum(livePreviewMatch?.stats?.possession?.home);
+    const away = toNum(livePreviewMatch?.stats?.possession?.away);
+    const available = home >= 0 && away >= 0 && home <= 100 && away <= 100 && home + away > 0;
+    return {
+      available,
+      home: available ? Math.round(home) : 0,
+      away: available ? Math.round(away) : 0,
+    };
   }, [livePreviewMatch]);
 
   // Ticking match clock. Provider elapsed arrives in seconds, so convert to
@@ -98,7 +105,7 @@ export const LiveMatchPreview: React.FC<{ onBack: () => void; onGoAnalyze: () =>
       .filter((row) => row.home > 0 || row.away > 0);
   }, [livePreviewMatch]);
 
-  const hasAnyStat = statRows.length > 0 || possessionHome !== 50;
+  const hasAnyStat = statRows.length > 0 || possession.available;
 
   if (!livePreviewMatch) {
     return (
@@ -171,7 +178,15 @@ export const LiveMatchPreview: React.FC<{ onBack: () => void; onGoAnalyze: () =>
             <div className="text-[10px] font-black text-zinc-500 uppercase tracking-[0.2em]">Telegram Live Preview</div>
             <div className="text-xs font-bold text-zinc-300">{livePreviewMatch.league}</div>
           </div>
-          <button onClick={() => setLivePreviewMatch(null)} className="w-9 h-9 rounded-full bg-zinc-900 border border-zinc-800 flex items-center justify-center"><RefreshCw className={`w-4 h-4 ${loading ? 'animate-spin' : ''}`} /></button>
+          <button
+            type="button"
+            onClick={() => setRefreshKey((key) => key + 1)}
+            disabled={loading}
+            aria-label="Refresh live match data"
+            className="w-9 h-9 rounded-full bg-zinc-900 border border-zinc-800 flex items-center justify-center disabled:opacity-60"
+          >
+            <RefreshCw className={`w-4 h-4 ${loading ? 'animate-spin' : ''}`} />
+          </button>
         </div>
       </div>
 
@@ -211,22 +226,23 @@ export const LiveMatchPreview: React.FC<{ onBack: () => void; onGoAnalyze: () =>
 
           {hasAnyStat ? (
             <>
-              {/* Possession */}
-              <div>
-                <div className="flex justify-between items-center text-xs mb-1">
-                  <span className="font-black text-[#ccff00]">{possessionHome}%</span>
-                  <span className="text-zinc-500 font-bold">Possession</span>
-                  <span className="font-black text-sky-400">{100 - possessionHome}%</span>
-                </div>
-                <div className="grid grid-cols-2 gap-2">
-                  <div className="h-2 rounded-full bg-zinc-800 overflow-hidden flex justify-end">
-                    <div className="h-full bg-[#ccff00]" style={{ width: `${possessionHome}%` }} />
+              {possession.available && (
+                <div>
+                  <div className="flex justify-between items-center text-xs mb-1">
+                    <span className="font-black text-[#ccff00]">{possession.home}%</span>
+                    <span className="text-zinc-500 font-bold">Possession</span>
+                    <span className="font-black text-sky-400">{possession.away}%</span>
                   </div>
-                  <div className="h-2 rounded-full bg-zinc-800 overflow-hidden">
-                    <div className="h-full bg-sky-400" style={{ width: `${100 - possessionHome}%` }} />
+                  <div className="grid grid-cols-2 gap-2">
+                    <div className="h-2 rounded-full bg-zinc-800 overflow-hidden flex justify-end">
+                      <div className="h-full bg-[#ccff00]" style={{ width: `${possession.home}%` }} />
+                    </div>
+                    <div className="h-2 rounded-full bg-zinc-800 overflow-hidden">
+                      <div className="h-full bg-sky-400" style={{ width: `${possession.away}%` }} />
+                    </div>
                   </div>
                 </div>
-              </div>
+              )}
 
               <div className="border-t border-zinc-800/70 pt-3 space-y-3">
                 {statRows.map((row) => {

@@ -315,10 +315,14 @@ export const Home: React.FC<HomeProps> = ({ onTabChange }) => {
         setHistoryLoading(Boolean(authInitData));
         const [upcoming, trending, adsRes, historyRes, live] = await Promise.all([
           getUpcomingMatches(authInitData),
-          getTrendingPicks(),
-          fetch('/api/common/ads', { headers: { 'X-TG-Init-Data': authInitData } }).then((r) => r.json()),
+          getTrendingPicks().catch(() => []),
+          fetch('/api/common/ads', { headers: { 'X-TG-Init-Data': authInitData } })
+            .then((response) => (response.ok ? response.json() : []))
+            .catch(() => []),
           authInitData
-            ? fetch('/api/user/history', { headers: { 'X-TG-Init-Data': authInitData } }).then((r) => (r.ok ? r.json() : []))
+            ? fetch('/api/user/history', { headers: { 'X-TG-Init-Data': authInitData } })
+                .then((response) => (response.ok ? response.json() : []))
+                .catch(() => [])
             : Promise.resolve([]),
           user?.plan && user.plan !== 'free'
             ? getLiveMatches(authInitData).catch(() => [])
@@ -357,10 +361,9 @@ export const Home: React.FC<HomeProps> = ({ onTabChange }) => {
         }));
         setRecentAnalysis(normalizedHistory.slice(0, 5));
       } catch (error) {
-        console.error('Failed to fetch matches:', error);
-        setUpcomingMatches([]);
-        setLiveMatches([]);
-        setRecentAnalysis([]);
+        // Keep the last successful snapshot visible when the primary fixture
+        // request fails; a transient network error should not blank the home screen.
+        console.error('Failed to fetch home fixtures:', error);
       } finally {
         setHistoryLoading(false);
         setIsLoading(false);
@@ -374,6 +377,9 @@ export const Home: React.FC<HomeProps> = ({ onTabChange }) => {
     setNewsLoading(true);
     getFootballNews(12)
       .then((articles) => { if (!cancelled) setNews(articles); })
+      .catch((error) => {
+        if (!cancelled) console.warn('Football news could not be loaded:', error);
+      })
       .finally(() => { if (!cancelled) setNewsLoading(false); });
     return () => { cancelled = true; };
   }, []);

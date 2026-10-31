@@ -2025,6 +2025,50 @@ function extractTelegramChannelFromTaskUrl(taskUrl: string): string | null {
       if (result && modelBlock) {
         result.model = modelBlock;
       }
+
+      // Validate every goals-market recommendation against the independent
+      // Poisson model before it can be shown to the user. The language model's
+      // self-reported confidence is not a substitute for market probability.
+      if (Array.isArray(result?.predictions)) {
+        const modelProbabilities = modelBlock?.probs;
+        const getGoalsProbability = (market: string): number | null => {
+          const normalized = String(market || "").toLowerCase().replace(/[^a-z0-9.]/g, " ");
+          const lineMatch = normalized.match(/(?:over|under)\s*(0?\.5|1\.5|2\.5|3\.5|4\.5)/);
+          if (!lineMatch || !modelProbabilities) return null;
+          const direction = normalized.includes("under") ? "under" : normalized.includes("over") ? "over" : "";
+          if (!direction) return null;
+          const line = lineMatch[1].replace(/^0/, "");
+          const key = `${direction}${line.replace(".", "")}`;
+          const probability = modelProbabilities[key];
+          return typeof probability === "number" && Number.isFinite(probability) ? probability : null;
+        };
+
+        result.predictions = result.predictions.filter((prediction: any) => {
+          const market = String(prediction?.market || "");
+          if (!/\b(over|under)\s*\d?\.5\b/i.test(market)) return true;
+          const modelProbability = getGoalsProbability(market);
+          // Do not use placeholder/fallback statistics to justify a goals pick.
+          if (modelProbability === null || Number(modelBlock?.dataQuality ?? 0) < 0.35) return false;
+          if (modelProbability < 0.50) {
+            console.info("[analyze] Removed goals pick contradicted by model:", market, modelProbability);
+            return false;
+          }
+          return true;
+        });
+      }
+
+      // Do not let fallback/placeholder statistics produce high-confidence picks.
+      // Below this threshold, the model lacks enough verified team/market data
+      // to justify a strong recommendation, regardless of the AI's wording.
+      if (result?.predictions?.length && Number(modelBlock?.dataQuality ?? 0) < 0.35) {
+        result.predictions = result.predictions.map((prediction: any) => ({
+          ...prediction,
+          confidence: Math.min(54, Math.max(0, Number(prediction?.confidence) || 0)),
+          reasoning: `${String(prediction?.reasoning || "").trim()} [Low verified-data quality: treat as speculative, not a strong pick.]`.trim(),
+        }));
+        result.overallReasoning = `${String(result.overallReasoning || "").trim()} Current verified team/market data is incomplete, so confidence has been capped.`.trim();
+      }
+
       const topPrediction = result?.predictions?.[0];
       let home = bsdPreview?.teams?.home?.name || "Home";
       let away = bsdPreview?.teams?.away?.name || "Away";
