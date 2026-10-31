@@ -2022,6 +2022,37 @@ function extractTelegramChannelFromTaskUrl(taskUrl: string): string | null {
         result.model = modelBlock;
       }
 
+      // Validate every goals-market recommendation against the independent
+      // Poisson model before it can be shown to the user. The language model's
+      // self-reported confidence is not a substitute for market probability.
+      if (Array.isArray(result?.predictions)) {
+        const modelProbabilities = modelBlock?.probs;
+        const getGoalsProbability = (market: string): number | null => {
+          const normalized = String(market || "").toLowerCase().replace(/[^a-z0-9.]/g, " ");
+          const lineMatch = normalized.match(/(?:over|under)\s*(0?\.5|1\.5|2\.5|3\.5|4\.5)/);
+          if (!lineMatch || !modelProbabilities) return null;
+          const direction = normalized.includes("under") ? "under" : normalized.includes("over") ? "over" : "";
+          if (!direction) return null;
+          const line = lineMatch[1].replace(/^0/, "");
+          const key = `${direction}${line.replace(".", "")}`;
+          const probability = modelProbabilities[key];
+          return typeof probability === "number" && Number.isFinite(probability) ? probability : null;
+        };
+
+        result.predictions = result.predictions.filter((prediction: any) => {
+          const market = String(prediction?.market || "");
+          if (!/\b(over|under)\s*\d?\.5\b/i.test(market)) return true;
+          const modelProbability = getGoalsProbability(market);
+          // If no model probability exists, do not publish an unverified goals pick.
+          if (modelProbability === null) return false;
+          if (modelProbability < 0.50) {
+            console.info("[analyze] Removed goals pick contradicted by model:", market, modelProbability);
+            return false;
+          }
+          return true;
+        });
+      }
+
       // Do not let fallback/placeholder statistics produce high-confidence picks.
       // Below this threshold, the model lacks enough verified team/market data
       // to justify a strong recommendation, regardless of the AI's wording.
