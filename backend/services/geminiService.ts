@@ -12,11 +12,45 @@ import {
 } from "./apiCacheService";
 
 const PREDICTION_MODELS = [
+  process.env.GEMINI_PREDICTION_MODEL || "",
+  "gemini-3.8-flash",
+  "gemini-3.6-flash",
   "gemini-2.5-flash",
   "gemini-2.5-flash-lite",
-  "gemini-1.5-pro",
-  "gemini-1.5-flash",
-];
+].filter((model, index, list) => Boolean(model) && list.indexOf(model) === index);
+
+/** Lightweight chain for small structured helpers (H2H, quick facts). */
+const HELPER_MODELS = [
+  process.env.GEMINI_HELPER_MODEL || "",
+  "gemini-3.6-flash",
+  "gemini-3.5-flash-lite",
+  "gemini-2.5-flash-lite",
+].filter((model, index, list) => Boolean(model) && list.indexOf(model) === index);
+
+/** Try each model in order; throw the last error so key rotation can retry. */
+async function executeModelChain(
+  ai: GoogleGenAI,
+  models: string[],
+  prompt: string,
+  config?: Record<string, any>,
+): Promise<string> {
+  let lastError: any = null;
+  for (const model of models) {
+    try {
+      const result = await ai.models.generateContent({
+        model,
+        contents: [{ role: "user", parts: [{ text: prompt }] }],
+        config,
+      });
+      if (result.text) return result.text;
+      lastError = new Error(`${model} returned an empty response`);
+    } catch (error: any) {
+      lastError = error;
+      if (!isRetryableGeminiError(error)) throw error;
+    }
+  }
+  throw lastError ?? new Error("All Gemini models failed");
+}
 
 function parseJsonFromText(text: string) {
   const extractBalancedJson = (input: string): string | null => {
@@ -364,14 +398,10 @@ export async function fetchMatchH2H(home: string, away: string): Promise<any> {
         "watchingCount": 8400
       }
     `;
-    const result = await ai.models.generateContent({
-      model: "gemini-2.5-flash-lite",
-      contents: [{ role: "user", parts: [{ text: prompt }] }],
-      config: {
-        responseMimeType: "application/json"
-      }
+    const result = await executeModelChain(ai, HELPER_MODELS, prompt, {
+      responseMimeType: "application/json",
     });
-    return parseJsonFromText(result.text);
+    return parseJsonFromText(result);
   }, {
     cache: predictionCache,
     cacheKey,
@@ -460,13 +490,11 @@ export async function fetchLiveMatchesFallback(): Promise<any[]> {
       ]
     `;
 
-    const result = await ai.models.generateContent({
-      model: "gemini-2.5-flash-lite",
-      contents: [{ role: "user", parts: [{ text: prompt }] }],
-      config: { tools: [{ googleSearch: {} }] as any }
+    const text = await executeModelChain(ai, HELPER_MODELS, prompt, {
+      tools: [{ googleSearch: {} }] as any,
     });
 
-    const parsed = parseJsonFromText(result.text || "");
+    const parsed = parseJsonFromText(text || "");
     return parsed || [];
   }, {
     cache: predictionCache,

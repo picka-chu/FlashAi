@@ -27,11 +27,27 @@ import {
 
 // ─── Model tiers ──────────────────────────────────────────────────────────────
 /** High-capability models used for deep reasoning + search grounding */
-const AGENT_MODELS  = ["gemini-2.5-flash", "gemini-2.5-flash-lite", "gemini-1.5-pro", "gemini-1.5-flash"];
+const AGENT_MODELS  = [
+  process.env.GEMINI_AGENT_MODEL || "",
+  "gemini-3.8-flash",
+  "gemini-3.6-flash",
+  "gemini-2.5-flash",
+  "gemini-2.5-flash-lite",
+].filter((m, i, a) => Boolean(m) && a.indexOf(m) === i);
 /** Models that reliably support googleSearch grounding */
-const SEARCH_MODELS = ["gemini-2.5-flash", "gemini-2.5-flash-lite", "gemini-1.5-flash"];
+const SEARCH_MODELS = [
+  process.env.GEMINI_SEARCH_MODEL || "",
+  "gemini-3.8-flash",
+  "gemini-3.6-flash",
+  "gemini-2.5-flash",
+].filter((m, i, a) => Boolean(m) && a.indexOf(m) === i);
 /** Vision-capable models for bet slip image analysis */
-const VISION_MODELS = ["gemini-2.5-flash-lite", "gemini-1.5-flash"];
+const VISION_MODELS = [
+  process.env.GEMINI_VISION_MODEL || "",
+  "gemini-3.8-flash",
+  "gemini-3.6-flash",
+  "gemini-2.5-flash-lite",
+].filter((m, i, a) => Boolean(m) && a.indexOf(m) === i);
 
 // ─── JSON extraction (handles all Gemini response shapes) ────────────────────
 function parseBalancedJson(text: string): any | null {
@@ -645,11 +661,21 @@ Return ONLY a JSON object with this exact structure:
   async getMatchAnalysis(matchId: string) {
     return executeWithRetry(async (apiKey) => {
       const ai = new GoogleGenAI({ apiKey });
-      const result = await ai.models.generateContent({
-        model: "gemini-2.5-flash-lite",
-        contents: [{ role: "user", parts: [{ text: `Analyze match ${matchId} and provide prediction.` }] }],
-      });
-      return result.text;
+      let lastError: any = null;
+      for (const model of AGENT_MODELS) {
+        try {
+          const result = await ai.models.generateContent({
+            model,
+            contents: [{ role: "user", parts: [{ text: `Analyze match ${matchId} and provide prediction.` }] }],
+          });
+          if (result.text) return result.text;
+          lastError = new Error(`${model} returned an empty response`);
+        } catch (error: any) {
+          lastError = error;
+          if (!isRetryableGeminiError(error)) throw error;
+        }
+      }
+      throw lastError ?? new Error("All Gemini models failed");
     }, { maxRetries: 2 }).catch((err) => {
       console.error("getMatchAnalysis failed:", err);
       throw err;

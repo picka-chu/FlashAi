@@ -211,9 +211,11 @@ export class ChannelAgentScheduler {
     this.models = unique([
       process.env.GEMINI_CHANNEL_MODEL || "",
       process.env.GEMINI_AGENT_MODEL || "",
+      "gemini-3.8-flash",
+      "gemini-3.6-flash",
       "gemini-2.5-flash",
       "gemini-2.5-flash-lite",
-    ]);
+    ].filter(Boolean));
   }
 
   get enabled(): boolean {

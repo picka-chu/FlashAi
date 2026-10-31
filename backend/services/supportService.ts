@@ -104,7 +104,12 @@ ${faqContext}
     return 'Sorry, support is temporarily unavailable. Please try again later.';
   }
 
-  const models = ['gemini-2.5-flash-lite'];
+  const models = [
+    process.env.GEMINI_SUPPORT_MODEL || '',
+    'gemini-3.6-flash',
+    'gemini-3.5-flash-lite',
+    'gemini-2.5-flash-lite',
+  ].filter(Boolean);
   let lastError: any = null;
 
   for (const apiKey of supportKeys) {

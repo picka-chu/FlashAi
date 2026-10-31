@@ -8,7 +8,13 @@ import { analysisCache, executeWithRetry, isRetryableGeminiError } from './apiCa
 
 const MAX_MESSAGE = 2000;
 const MAX_HISTORY = 12;
-const CHAT_MODELS = ['gemini-2.5-flash', 'gemini-2.5-flash-lite'];
+const CHAT_MODELS = [
+  process.env.GEMINI_CHAT_MODEL || "",
+  'gemini-3.8-flash',
+  'gemini-3.6-flash',
+  'gemini-2.5-flash',
+  'gemini-2.5-flash-lite',
+].filter((m, i, a) => Boolean(m) && a.indexOf(m) === i);
 
 export interface ChatTurn {
   role: 'user' | 'assistant';
