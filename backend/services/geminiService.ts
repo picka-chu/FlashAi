@@ -138,8 +138,11 @@ CONFIDENCE SCORING RULES (STRICT — do not inflate confidence):
 PROFESSIONAL STANDARDS:
 - Be SPECIFIC: cite actual league positions, actual recent scorelines, actual player names
 - Flag any key absences that shift the prediction
-- If Over 2.5 seems obvious, check if the odds reflect it (value may be in Under instead)
-- Rank predictions by confidence descending
+- Do not default to Under 1.5 (or any single market) across different fixtures. Every match must be assessed independently.
+- For every Over/Under pick, read the corresponding statistical model probability in the supplied context. Only recommend a side when its model probability is at least 50%; if neither side qualifies, omit that goals market.
+- Never infer that a low-scoring pick is "safe" merely because it sounds conservative. Under 1.5 requires specific evidence that both teams create and concede very few chances.
+- Keep the final picks diversified across genuinely supported market types; do not fill the list with multiple correlated goals markets just to reach a count.
+- Rank predictions by evidence-backed confidence descending
 
 Return ONLY a valid JSON object (no markdown, no explanation outside the JSON):
 {
