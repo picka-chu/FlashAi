@@ -2041,6 +2041,30 @@ function extractTelegramChannelFromTaskUrl(taskUrl: string): string | null {
           ) {
             matchData.leagueAvgGoals = h2hAvgGoals;
           }
+
+          // BSD's free tier returns no season/recent-form data at all, which
+          // starved the model. ESPN's team endpoints provide real season goals
+          // and last-5 results (cached + time-boxed so analysis stays fast).
+          try {
+            const { enrichMatchDataWithEspnTeamStats } = await import("./services/espnTeamService.js");
+            const espnEnriched = await Promise.race([
+              enrichMatchDataWithEspnTeamStats(matchData, {
+                leagueName:
+                  typeof bsdPreview?.league === "string"
+                    ? bsdPreview.league
+                    : bsdPreview?.league?.name,
+                homeName: bsdPreview?.teams?.home?.name || matchData.home?.name,
+                awayName: bsdPreview?.teams?.away?.name || matchData.away?.name,
+              }),
+              new Promise<boolean>((resolve) => setTimeout(() => resolve(false), 8_000)),
+            ]);
+            if (espnEnriched) {
+              console.info("[analyze] ESPN team form applied for", matchString);
+            }
+          } catch (espnError: any) {
+            console.warn("[analyze] ESPN team stats skipped:", espnError?.message || espnError);
+          }
+
           const model = computeMarketModel(matchData, { bsdMatch: bsdPreview, h2h: h2hData });
           structuredContext = buildMarketContextBlock(matchData, model, { h2h: h2hData, bsdMatch: bsdPreview });
           marketModel = model;

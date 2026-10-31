@@ -200,6 +200,20 @@ export function buildMarketContextBlock(
   const scoreLine = model.scorelines
     .map((s) => `${s.score} ${pct(s.prob)}`)
     .join(', ');
+  const ranks = (matchData.deepContext as any)?.espnRanks;
+  const describeTeam = (team: any, rank: number | null | undefined) => {
+    const played = Number(team?.season?.played || 0);
+    if (played < 1) return null;
+    const form = (team?.last5?.results || []).join('') || 'n/a';
+    const goals = `${Number(team.season.goalsScored)}/${Number(team.season.goalsConceded)}`;
+    return `${team?.name || 'Team'} last5 ${form}, ${goals} goals in ${played}${rank ? `, league rank ${rank}` : ''}`;
+  };
+  const homeFormText = describeTeam(matchData.home, ranks?.home);
+  const awayFormText = describeTeam(matchData.away, ranks?.away);
+  const teamFormLine =
+    homeFormText || awayFormText
+      ? `- TEAM FORM (${(matchData.deepContext as any)?.teamStatsSource === 'espn' ? 'ESPN, verified' : 'verified'}): ${[homeFormText, awayFormText].filter(Boolean).join(' | ')}`
+      : '';
 
   return [
     'STATISTICAL MARKET MODEL (Dixon-Coles Poisson, computed server-side — trust these over guesses):',
@@ -219,6 +233,7 @@ export function buildMarketContextBlock(
     model.bestBet
       ? `- BEST MODEL PICK: ${model.bestBet.market} @ ${model.bestBet.odds ? model.bestBet.odds.toFixed(2) : 'n/a'} (model ${pct(model.bestBet.modelProb)})`
       : '- BEST MODEL PICK: no strong edge',
+    teamFormLine,
     h2h
       ? `- H2H: ${h2h.summary || 'n/a'} over ${h2h.totalMatches ?? '?'} matches; avg goals ${h2h.avgGoals ?? '?'}; home wins ${h2h.homeWins ?? 0}, draws ${h2h.draws ?? 0}, away wins ${h2h.awayWins ?? 0}; last5 ${JSON.stringify(h2h.last5 || [])}`
       : '- H2H: unavailable',
