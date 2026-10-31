@@ -92,7 +92,8 @@ function parseJsonFromText(text: string) {
  * BACKEND ONLY: Performs deep match analysis using Gemini with Search.
  */
 export async function analyzeMatchWithSearch(matchString: string, structuredContext?: string): Promise<PredictionResult> {
-  const cacheKey = predictionCache.generateKey('match_analysis', { matchString, structuredContext: structuredContext || null });
+  const analysisDate = new Date().toISOString().slice(0, 10);
+  const cacheKey = predictionCache.generateKey('match_analysis', { matchString, analysisDate, structuredContext: structuredContext || null });
   
   return executeWithRetry(async (apiKey, keyIndex) => {
     for (const model of PREDICTION_MODELS) {
@@ -125,11 +126,14 @@ Using the gathered data + any provided statistical model data, produce exactly 1
 - Any high-confidence corners/cards market if strong signal exists
 - Best value bet (where model probability significantly exceeds market-implied probability)
 
-CONFIDENCE SCORING RULES:
-- 85-95: Statistical + qualitative + odds value all aligned. Sharp, specific evidence.
-- 70-84: Good statistical signal, moderate qualitative support.
-- 55-69: Mixed signals, thin data, or high variance match.
-- Below 55: Low conviction — still include but flag as speculative.
+CONFIDENCE SCORING RULES (STRICT — do not inflate confidence):
+- 80-90: Current, independently verified team data AND current bookmaker odds support the same pick.
+- 65-79: Current team form and at least one reliable market/data source support the pick.
+- 55-64: Partial or conflicting current evidence; clearly state what is missing.
+- 50-54: Insufficient current evidence or speculative pick. Never present this as a strong/value bet.
+- If structured statistics or current odds are unavailable AND Google Search does not return verifiable current match-specific facts, cap EVERY prediction at 54.
+- Never invent recent scores, injuries, player names, league positions, odds, or statistics. If a fact cannot be verified, say it is unavailable.
+- Confidence is an evidence-quality score, not a claim that the bet will win.
 
 PROFESSIONAL STANDARDS:
 - Be SPECIFIC: cite actual league positions, actual recent scorelines, actual player names
@@ -207,6 +211,7 @@ Return ONLY a valid JSON object (no markdown, no explanation outside the JSON):
   }, {
     cache: predictionCache,
     cacheKey,
+    customTtl: 5 * 60 * 1000,
     metadata: { model: PREDICTION_MODELS[0], apiKeyIndex: 0 }
   });
 }
