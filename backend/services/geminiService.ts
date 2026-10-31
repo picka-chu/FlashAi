@@ -143,14 +143,12 @@ Today: ${today}. Target match: **${matchString}**
 ${structuredDataPrompt}
 
 PHASE 1 — INTELLIGENCE GATHERING (use Google Search)
-Search for ALL of the following:
-1. "${matchString} injuries suspensions team news ${today}"
-2. "${matchString} form standings league table"
-3. "${matchString} odds betting tips prediction"
-4. "${matchString} head to head h2h history"
+Two focused searches (keep it fast):
+1. "${matchString} team news injuries form ${today}"
+2. "${matchString} odds prediction head to head"
 
 PHASE 2 — ELITE ANALYSIS
-Using the gathered data + any provided statistical model data, produce exactly 10 betting predictions covering:
+Using the gathered data + any provided statistical model data, produce exactly 6 betting predictions covering:
 - Match Winner (1, X, 2)
 - Double Chance (1X, X2, 12)
 - Goals markets (Over/Under 1.5, 2.5, 3.5)
@@ -187,7 +185,7 @@ Return ONLY a valid JSON object (no markdown, no explanation outside the JSON):
       "reasoning": "<2-3 sentences: specific evidence for this pick. Name players, results, statistics.>"
     }
   ],
-  "overallReasoning": "<5-8 sentence professional match preview. Cover: team form, key absences, head-to-head pattern, tactical outlook, and the single sharpest insight. Be specific and data-driven.>",
+  "overallReasoning": "<3-5 sentence professional match preview. Cover: team form, key absences, head-to-head pattern, tactical outlook, and the single sharpest insight. Be specific and data-driven.>",
   "teamData": {
     "home": {
       "name": "<team name>",
@@ -249,6 +247,7 @@ Return ONLY a valid JSON object (no markdown, no explanation outside the JSON):
     cache: predictionCache,
     cacheKey,
     customTtl: 5 * 60 * 1000,
+    maxRetries: 2,
     metadata: { model: PREDICTION_MODELS[0], apiKeyIndex: 0 }
   });
 }

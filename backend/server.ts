@@ -990,6 +990,87 @@ async function resolveHistoryItemResult(item: UserHistoryItem): Promise<UserHist
   return item;
 }
 
+/**
+ * Deterministic fallback for /api/analyze: when Gemini (search-grounded AI)
+ * is too slow or unavailable, serve the Dixon-Coles market model directly so
+ * the user always receives an analysis instead of an "AI analysis timeout"
+ * error. Confidence is evidence-graded and capped when data quality is thin.
+ */
+function buildStatisticalFallbackResult(matchString: string, model: any, matchData: any) {
+  const dataQuality = Number(model?.dataQuality ?? 0);
+  const lowQuality = dataQuality < 0.45;
+  const cap = lowQuality ? 54 : 84;
+  const clampConf = (value: number) => Math.min(cap, Math.max(50, Math.round(value)));
+  const confFor = (modelProb: number, edge = 0) =>
+    clampConf(50 + (modelProb - 0.5) * 60 + Math.min(0.25, Math.max(0, edge)) * 40);
+  const pct = (x: number) => `${Math.round(Number(x || 0) * 100)}%`;
+
+  const rows: { market: string; confidence: number; reasoning: string }[] = [];
+  const seen = new Set<string>();
+
+  for (const bet of Array.isArray(model?.valueBets) ? model.valueBets : []) {
+    if (rows.length >= 5) break;
+    if (!bet || typeof bet.modelProb !== "number" || !bet.market) continue;
+    if (seen.has(bet.market)) continue;
+    seen.add(bet.market);
+    rows.push({
+      market: String(bet.market),
+      confidence: confFor(bet.modelProb, Number(bet.value) || 0),
+      reasoning: `Statistical model: ${pct(bet.modelProb)} vs market-implied ${pct(bet.impliedProb)} (edge ${pct(bet.value)}${bet.odds ? ` @ ${Number(bet.odds).toFixed(2)}` : ""}). Dixon-Coles λ ${Number(model.lambdaHome).toFixed(2)} vs ${Number(model.lambdaAway).toFixed(2)}, data quality ${pct(dataQuality)}.`,
+    });
+  }
+
+  const probs = model?.probs || {};
+  const probCandidates = [
+    ["Home Win", probs.homeWin], ["Draw", probs.draw], ["Away Win", probs.awayWin],
+    ["Double Chance 1X", probs.dc1X], ["Double Chance X2", probs.dcX2], ["Double Chance 12", probs.dc12],
+    ["Over 2.5 Goals", probs.over25], ["Under 2.5 Goals", probs.under25],
+    ["BTTS - Yes", probs.bttsYes], ["BTTS - No", probs.bttsNo],
+  ] as [string, number][];
+  for (const [name, p] of probCandidates) {
+    if (rows.length >= 3) break;
+    if (typeof p !== "number" || p < 0.5 || seen.has(name)) continue;
+    seen.add(name);
+    rows.push({
+      market: name,
+      confidence: confFor(p),
+      reasoning: `Dixon-Coles model probability ${pct(p)} on a ${Number(model.lambdaHome).toFixed(2)}/${Number(model.lambdaAway).toFixed(2)} expected-goals split (data quality ${pct(dataQuality)}).`,
+    });
+  }
+
+  rows.sort((a, b) => b.confidence - a.confidence);
+
+  const homeName = matchData?.home?.name || "Home";
+  const awayName = matchData?.away?.name || "Away";
+  const line = `Model 1X2: Home ${pct(probs.homeWin)} / Draw ${pct(probs.draw)} / Away ${pct(probs.awayWin)}. Goals λ ${Number(model.lambdaHome).toFixed(2)} vs ${Number(model.lambdaAway).toFixed(2)} (O2.5 ${pct(probs.over25)}, BTTS Yes ${pct(probs.bttsYes)}). Most likely score ${model.correctScore || "n/a"}.`;
+
+  return {
+    matchId: matchString,
+    predictions: rows,
+    overallReasoning: `${homeName} vs ${awayName}: live AI search was unavailable, so this preview comes straight from the statistical model — ${line} ${lowQuality ? "Data quality is limited, so confidence is capped — verify team news before acting." : "Re-run the analysis for the full search-grounded preview."}`,
+    teamData: {
+      home: {
+        name: homeName,
+        form: (matchData?.home?.last5?.results || []).join("") || "N/A",
+        injuries: [],
+        keyStats: matchData?.home?.season?.played
+          ? [`Season: ${matchData.home.season.goalsScored} scored / ${matchData.home.season.goalsConceded} conceded in ${matchData.home.season.played}`]
+          : [],
+      },
+      away: {
+        name: awayName,
+        form: (matchData?.away?.last5?.results || []).join("") || "N/A",
+        injuries: [],
+        keyStats: matchData?.away?.season?.played
+          ? [`Season: ${matchData.away.season.goalsScored} scored / ${matchData.away.season.goalsConceded} conceded in ${matchData.away.season.played}`]
+          : [],
+      },
+    },
+    source: "statistical_model",
+    aiFallback: true,
+  };
+}
+
 async function startServer() {
   const app = new Hono();
   const PORT = Number(process.env.PORT || 3000);
@@ -1919,6 +2000,8 @@ function extractTelegramChannelFromTaskUrl(taskUrl: string): string | null {
       // 2. Build statistical + market context (BSD odds/stats/H2H + Dixon-Coles model)
       let structuredContext = "";
       let modelBlock: any = null;
+      let marketModel: any = null;
+      let capturedMatchData: any = null;
       let bsdPreview: any = null;
       let h2hData: any = null;
       try {
@@ -1963,6 +2046,8 @@ function extractTelegramChannelFromTaskUrl(taskUrl: string): string | null {
           }
           const model = computeMarketModel(matchData, { bsdMatch: bsdPreview, h2h: h2hData });
           structuredContext = buildMarketContextBlock(matchData, model, { h2h: h2hData, bsdMatch: bsdPreview });
+          marketModel = model;
+          capturedMatchData = matchData;
           modelBlock = {
             lambdaHome: model.lambdaHome,
             lambdaAway: model.lambdaAway,
@@ -1981,28 +2066,48 @@ function extractTelegramChannelFromTaskUrl(taskUrl: string): string | null {
         console.warn("[analyze] Market model context skipped:", contextError?.message || contextError);
       }
 
-      // 2b. AI analysis (Gemini + Search), grounded by the market model
+      // 2b. AI analysis (Gemini + Search), grounded by the market model.
+      // One 26s budget covers BOTH attempts. If Gemini can't finish inside it
+      // (slow grounding, quota, outage), fall back to the deterministic
+      // statistical model instead of failing the request with
+      // "AI analysis timeout". No credit is charged on the error path.
       const { analyzeMatchWithSearch } = await import("./services/geminiService.js");
-      const runTimedAnalysis = () => Promise.race([
-        analyzeMatchWithSearch(matchString, structuredContext || undefined),
-        new Promise((_, reject) => setTimeout(() => reject(new Error("AI analysis timeout")), 50_000))
-      ]) as Promise<any>;
+      const withTimeout = <T,>(promise: Promise<T>, timeoutMs: number): Promise<T> =>
+        new Promise<T>((resolve, reject) => {
+          const timer = setTimeout(() => reject(new Error("AI analysis timeout")), timeoutMs);
+          promise
+            .then((value) => {
+              clearTimeout(timer);
+              resolve(value);
+            })
+            .catch((error) => {
+              clearTimeout(timer);
+              reject(error);
+            });
+        });
 
+      const analysisDeadline = Date.now() + 26_000;
       let result: any = null;
       let lastAnalysisError: any = null;
       for (let attempt = 1; attempt <= 2; attempt += 1) {
+        const remainingMs = analysisDeadline - Date.now();
+        if (remainingMs < 3_000) break;
         try {
-          result = await runTimedAnalysis();
+          result = await withTimeout(analyzeMatchWithSearch(matchString, structuredContext || undefined), remainingMs);
           break;
         } catch (attemptError: any) {
           lastAnalysisError = attemptError;
           const message = String(attemptError?.message || "");
           const isTransient = message.includes("timeout") || message.includes("UNAVAILABLE") || message.includes("RESOURCE_EXHAUSTED") || attemptError?.status === 429 || attemptError?.status === 503;
-          if (!isTransient || attempt === 2) {
-            throw attemptError;
-          }
-          await new Promise((resolve) => setTimeout(resolve, 800));
+          if (!isTransient) break;
+          await new Promise((resolve) => setTimeout(resolve, 500));
         }
+      }
+      if (!result && marketModel) {
+        console.warn(
+          `[analyze] AI step unavailable (${lastAnalysisError?.message || "timeout"}); serving statistical model result for ${matchString}`,
+        );
+        result = buildStatisticalFallbackResult(matchString, marketModel, capturedMatchData);
       }
       if (!result && lastAnalysisError) {
         throw lastAnalysisError;
