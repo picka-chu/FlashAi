@@ -2043,8 +2043,8 @@ function extractTelegramChannelFromTaskUrl(taskUrl: string): string | null {
           const market = String(prediction?.market || "");
           if (!/\b(over|under)\s*\d?\.5\b/i.test(market)) return true;
           const modelProbability = getGoalsProbability(market);
-          // If no model probability exists, do not publish an unverified goals pick.
-          if (modelProbability === null) return false;
+          // Do not use placeholder/fallback statistics to justify a goals pick.
+          if (modelProbability === null || Number(modelBlock?.dataQuality ?? 0) < 0.35) return false;
           if (modelProbability < 0.50) {
             console.info("[analyze] Removed goals pick contradicted by model:", market, modelProbability);
             return false;
