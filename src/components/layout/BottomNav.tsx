@@ -26,7 +26,10 @@ export const BottomNav: React.FC<BottomNavProps> = ({ activeTab, onTabChange }) 
   return (
     <nav
       aria-label="Primary"
-      className="flex-none z-50 px-4 pb-[max(env(safe-area-inset-bottom),0.75rem)] pt-2 bg-[var(--surface-0)]/90 backdrop-blur-md"
+      className="flex-none z-50 px-4 pt-2 bg-[var(--surface-0)]/90 backdrop-blur-md"
+      style={{
+        paddingBottom: 'max(var(--tg-safe-bottom, env(safe-area-inset-bottom, 0px)), 0.75rem)',
+      }}
     >
       <div className="mx-auto w-full max-w-md flex items-center gap-1 rounded-2xl border border-[var(--border)] bg-[var(--surface-1)] p-1.5 shadow-[var(--shadow-card)]">
         {NAV_ITEMS.map((item) => {
