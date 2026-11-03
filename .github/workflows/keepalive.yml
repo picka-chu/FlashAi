@@ -1,7 +1,9 @@
 name: Keep Render awake
 
 # Render's free tier spins a web service down after 15 minutes without inbound
-# traffic. A 5-minute ping keeps it warm 24/7 without any third-party account.
+# traffic. GitHub's scheduled jobs can start a few minutes late, so each run
+# pings once a minute for ~4 minutes: consecutive runs then leave at most a
+# ~2-3 minute idle gap even when the cron is delayed. No third-party account.
 on:
   schedule:
     - cron: "*/5 * * * *"
@@ -16,20 +18,23 @@ concurrency:
 jobs:
   ping:
     runs-on: ubuntu-latest
-    timeout-minutes: 5
+    timeout-minutes: 10
     steps:
-      - name: Ping /api/health
+      - name: Ping /api/health (4x, 60s apart)
         shell: bash
         run: |
           url="https://flash-6tuz.onrender.com/api/health"
-          for attempt in 1 2 3; do
+          ok=0
+          for i in 1 2 3 4; do
             code="$(curl -sS -o /tmp/health.json -w '%{http_code}' --max-time 90 "$url" || true)"
             body="$(cat /tmp/health.json 2>/dev/null || true)"
-            echo "attempt ${attempt}: HTTP ${code:-000} ${body}"
+            echo "ping ${i}: HTTP ${code:-000} ${body}"
             if [ "$code" = "200" ] && printf '%s' "$body" | grep -q '"status"[[:space:]]*:[[:space:]]*"ok"'; then
-              exit 0
+              ok=1
             fi
-            [ "$attempt" -lt 3 ] && sleep 20
+            [ "$i" -lt 4 ] && sleep 60
           done
-          echo "::error::Health check failed after 3 attempts - the service may be down or cold-starting."
-          exit 1
+          if [ "$ok" != "1" ]; then
+            echo "::error::All 4 health checks failed - the service may be down or out of free instance hours."
+            exit 1
+          fi
