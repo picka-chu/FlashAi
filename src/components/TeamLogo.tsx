@@ -44,12 +44,15 @@ export const TeamLogo: React.FC<TeamLogoProps> = ({
     if (!element || typeof IntersectionObserver === 'undefined') {
       load();
     } else {
-      observer = new IntersectionObserver((entries) => {
-        if (entries.some((entry) => entry.isIntersecting)) {
-          observer?.disconnect();
-          load();
-        }
-      }, { rootMargin: '240px' });
+      observer = new IntersectionObserver(
+        (entries) => {
+          if (entries.some((entry) => entry.isIntersecting)) {
+            observer?.disconnect();
+            load();
+          }
+        },
+        { rootMargin: '240px' },
+      );
       observer.observe(element);
     }
 
@@ -63,25 +66,33 @@ export const TeamLogo: React.FC<TeamLogoProps> = ({
   const fallbackColor = color || teamFallbackColor(name);
 
   return (
-    <div ref={holderRef} className={`relative w-full h-full flex items-center justify-center overflow-hidden ${className}`}>
-      <div
-        className="absolute inset-0"
-        style={{ background: `linear-gradient(145deg, ${fallbackColor}4d 0%, rgba(24,24,27,0.96) 78%)` }}
-      />
-      <div
-        className="absolute inset-0 opacity-30"
-        style={{ background: 'radial-gradient(circle at 72% 18%, rgba(255,255,255,0.7) 0%, transparent 42%)' }}
-      />
-      <span className={`relative z-10 font-black tracking-[-0.06em] text-white/90 ${textClassName}`}>
+    <div
+      ref={holderRef}
+      className={`relative flex items-center justify-center overflow-hidden rounded-full bg-zinc-900/80 ${className}`}
+      style={{
+        background: showImage && ready
+          ? 'rgba(24,24,27,0.9)'
+          : `linear-gradient(145deg, ${fallbackColor}55 0%, rgba(24,24,27,0.95) 75%)`,
+      }}
+    >
+      {/* Initials fallback — always under the image */}
+      <span
+        className={`relative z-10 select-none font-black tracking-[-0.06em] text-white/90 ${textClassName} ${
+          showImage && ready ? 'opacity-0' : 'opacity-100'
+        } transition-opacity duration-150`}
+      >
         {teamInitials(name)}
       </span>
+
       {showImage && (
         <img
           src={src || ''}
-          alt={name}
-          className={`absolute inset-0 z-20 w-full h-full object-contain transition-opacity duration-200 ${ready ? 'opacity-100' : 'opacity-0'}`}
+          alt=""
+          className={`absolute inset-[14%] z-20 h-[72%] w-[72%] object-contain transition-opacity duration-200 ${
+            ready ? 'opacity-100' : 'opacity-0'
+          }`}
           referrerPolicy="no-referrer"
-          loading="eager"
+          loading="lazy"
           onLoad={() => setReady(true)}
           onError={() => {
             setFailed(true);
