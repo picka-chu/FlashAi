@@ -8,33 +8,32 @@ declare global {
   }
 }
 
+/** Minimum top inset when Telegram chrome is present but API reports 0. */
+const MIN_TG_TOP_PX = 52;
+
 /** Push Telegram safe-area insets into CSS variables used by the layout. */
 function syncSafeAreaCssVars(webApp: any) {
   if (typeof document === "undefined") return;
 
   const root = document.documentElement;
 
-  // Full device safe area (notch / home indicator)
   const safe = webApp.safeAreaInset || {};
-  // Content safe area — accounts for Telegram native chrome (close X, etc.)
   const content = webApp.contentSafeAreaInset || {};
 
-  const top = Math.max(Number(content.top) || 0, Number(safe.top) || 0);
+  const apiTop = Math.max(Number(content.top) || 0, Number(safe.top) || 0);
   const bottom = Math.max(Number(content.bottom) || 0, Number(safe.bottom) || 0);
   const left = Math.max(Number(content.left) || 0, Number(safe.left) || 0);
   const right = Math.max(Number(content.right) || 0, Number(safe.right) || 0);
 
-  // Extra top padding in fullscreen so content never sits under the close button.
-  // Telegram contentSafeAreaInset.top is the correct value when available;
-  // fall back to a sensible minimum when the API is missing.
-  const headerOffset = top > 0 ? top : 0;
+  // Always reserve room for the native close button in Mini Apps.
+  // contentSafeAreaInset is correct when present; otherwise use a floor.
+  const isFullscreen = Boolean(webApp.isFullscreen);
+  const headerOffset = Math.max(apiTop, isFullscreen ? MIN_TG_TOP_PX : apiTop > 0 ? apiTop : MIN_TG_TOP_PX);
 
   root.style.setProperty("--tg-safe-top", `${headerOffset}px`);
   root.style.setProperty("--tg-safe-bottom", `${bottom}px`);
   root.style.setProperty("--tg-safe-left", `${left}px`);
   root.style.setProperty("--tg-safe-right", `${right}px`);
-
-  // Also mirror into standard env()-compatible custom props used by CSS
   root.style.setProperty("--sat", `${headerOffset}px`);
   root.style.setProperty("--sab", `${bottom}px`);
 }
@@ -50,14 +49,14 @@ export const useTelegram = () => {
 
     let disposed = false;
     let attempts = 0;
-    const maxAttempts = 30; // ~6 seconds
+    const maxAttempts = 30;
 
     const syncTelegram = () => {
       const webApp = window.Telegram?.WebApp;
       if (!webApp) {
         attempts += 1;
         if (attempts >= maxAttempts && !disposed) {
-          setIsReady(true); // graceful fallback so app never hangs
+          setIsReady(true);
         }
         return;
       }
@@ -66,16 +65,14 @@ export const useTelegram = () => {
       webApp.ready();
       webApp.expand();
 
-      // Fullscreen when supported (Bot API 8.0+) — reduces sheet chrome
       try {
         if (typeof webApp.requestFullscreen === "function") {
           webApp.requestFullscreen();
         }
       } catch {
-        // Older clients ignore this
+        /* older clients */
       }
 
-      // Disable vertical swipes that can conflict with scroll in fullscreen
       try {
         if (typeof webApp.disableVerticalSwipes === "function") {
           webApp.disableVerticalSwipes();
@@ -85,7 +82,6 @@ export const useTelegram = () => {
       }
 
       syncSafeAreaCssVars(webApp);
-
       setUser(webApp.initDataUnsafe?.user);
       setTheme(webApp.themeParams);
       setIsReady(true);
@@ -103,16 +99,10 @@ export const useTelegram = () => {
   useEffect(() => {
     if (!tg) return;
 
-    const handleThemeChange = () => {
-      setTheme(tg.themeParams);
-    };
-
-    const handleSafeArea = () => {
-      syncSafeAreaCssVars(tg);
-    };
+    const handleThemeChange = () => setTheme(tg.themeParams);
+    const handleSafeArea = () => syncSafeAreaCssVars(tg);
 
     tg.onEvent("themeChanged", handleThemeChange);
-    // Keep insets in sync when entering/leaving fullscreen or rotating
     try {
       tg.onEvent("safeAreaChanged", handleSafeArea);
       tg.onEvent("contentSafeAreaChanged", handleSafeArea);
@@ -122,10 +112,10 @@ export const useTelegram = () => {
       /* older clients */
     }
 
-    // Initial + delayed re-sync (insets often arrive after ready)
     syncSafeAreaCssVars(tg);
     const t1 = window.setTimeout(() => syncSafeAreaCssVars(tg), 100);
     const t2 = window.setTimeout(() => syncSafeAreaCssVars(tg), 500);
+    const t3 = window.setTimeout(() => syncSafeAreaCssVars(tg), 1500);
 
     return () => {
       tg.offEvent("themeChanged", handleThemeChange);
@@ -139,40 +129,33 @@ export const useTelegram = () => {
       }
       window.clearTimeout(t1);
       window.clearTimeout(t2);
+      window.clearTimeout(t3);
     };
   }, [tg]);
 
   const hapticFeedback = useCallback(
     (type: "light" | "medium" | "heavy" | "rigid" | "soft" = "medium") => {
-      if (tg?.HapticFeedback) {
-        tg.HapticFeedback.impactOccurred(type);
-      }
+      if (tg?.HapticFeedback) tg.HapticFeedback.impactOccurred(type);
     },
-    [tg]
+    [tg],
   );
 
   const showAlert = useCallback(
     (message: string) => {
       try {
-        if (tg && tg.isVersionAtLeast && tg.isVersionAtLeast("6.2")) {
-          tg.showAlert(message);
-        } else {
-          alert(message);
-        }
+        if (tg?.isVersionAtLeast?.("6.2")) tg.showAlert(message);
+        else alert(message);
       } catch {
         alert(message);
       }
     },
-    [tg]
+    [tg],
   );
 
   const showConfirm = useCallback((message: string, callback: (ok: boolean) => void) => {
     try {
-      if (tg && tg.isVersionAtLeast && tg.isVersionAtLeast("6.2")) {
-        tg.showConfirm(message, callback);
-      } else {
-        callback(confirm(message));
-      }
+      if (tg?.isVersionAtLeast?.("6.2")) tg.showConfirm(message, callback);
+      else callback(confirm(message));
     } catch {
       callback(confirm(message));
     }
@@ -181,27 +164,23 @@ export const useTelegram = () => {
   const setHeaderColor = useCallback(
     (color: string) => {
       try {
-        if (tg && tg.isVersionAtLeast && tg.isVersionAtLeast("6.1")) {
-          tg.setHeaderColor(color);
-        }
+        if (tg?.isVersionAtLeast?.("6.1")) tg.setHeaderColor(color);
       } catch (e) {
         console.warn("setHeaderColor not supported", e);
       }
     },
-    [tg]
+    [tg],
   );
 
   const setBackgroundColor = useCallback(
     (color: string) => {
       try {
-        if (tg && tg.isVersionAtLeast && tg.isVersionAtLeast("6.1")) {
-          tg.setBackgroundColor(color);
-        }
+        if (tg?.isVersionAtLeast?.("6.1")) tg.setBackgroundColor(color);
       } catch (e) {
         console.warn("setBackgroundColor not supported", e);
       }
     },
-    [tg]
+    [tg],
   );
 
   return {
