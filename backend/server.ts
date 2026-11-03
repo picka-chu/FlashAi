@@ -1657,11 +1657,11 @@ function extractTelegramChannelFromTaskUrl(taskUrl: string): string | null {
         return c.json({ error: "Live matches are available on paid plans only." }, 403);
       }
 
+      // Only return genuinely in-play fixtures. Never fall back to a stale
+      // api_cache snapshot: it can contain fixtures that have already kicked
+      // off or finished, which made the live list show 0-0 pre-match rows.
       const matches = await getLiveMatches();
-      if (matches.length > 0) return c.json(matches);
-
-      const { data } = await supabase.from("api_cache").select("data").eq("endpoint", "live").single();
-      return c.json(data?.data || []);
+      return c.json(Array.isArray(matches) ? matches : []);
     } catch (error: any) {
       console.error("Football live API error:", error?.message || error);
       return c.json({ error: "Failed to fetch live matches" }, 500);

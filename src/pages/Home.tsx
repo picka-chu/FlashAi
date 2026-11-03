@@ -81,8 +81,11 @@ const FeaturedMatch: React.FC<{
   eyebrow: string;
   onClick: () => void;
 }> = ({ match, eyebrow, onClick }) => {
-  const isLive = match.status === 'Live' || match?.fixture?.status?.state === 'in';
-  const hasScore = match.score && match.score !== '--';
+  const state = match?.fixture?.status?.state;
+  const isLive = state === 'in' || match.status === 'Live';
+  const isPre = state === 'pre' || match.status === 'Upcoming';
+  // Not-started fixtures must show kick-off time, never a 0-0 scoreline.
+  const hasScore = !isPre && Boolean(match.score) && match.score !== '--';
   const odds = match.odds;
   return (
     <button
@@ -422,6 +425,30 @@ export const Home: React.FC<HomeProps> = ({ onTabChange }) => {
     return () => window.clearInterval(interval);
   }, [dynamicAds, isTabActive, prefersReducedMotion]);
 
+  // Live scores and minutes move quickly: refresh the live strip every 30s
+  // while the tab is visible instead of only once on mount.
+  useEffect(() => {
+    if (!isPaid || !isTabActive) return;
+    const authInitData = initData || tg?.initData || '';
+    if (!authInitData) return;
+    let cancelled = false;
+    const refreshLive = async () => {
+      if (document.visibilityState !== 'visible') return;
+      try {
+        const live = await getLiveMatches(authInitData);
+        if (cancelled || !Array.isArray(live)) return;
+        setLiveMatches(live.map((m: any) => formatMatch(m)).filter(Boolean).slice(0, 20));
+      } catch {
+        // Keep the last snapshot when a refresh fails.
+      }
+    };
+    const interval = window.setInterval(refreshLive, 30_000);
+    return () => {
+      cancelled = true;
+      window.clearInterval(interval);
+    };
+  }, [isPaid, isTabActive, initData, tg?.initData]);
+
   const handleScroll = () => {
     if (adsRef.current) {
       const width = adsRef.current.offsetWidth || 1;
@@ -449,12 +476,14 @@ export const Home: React.FC<HomeProps> = ({ onTabChange }) => {
   const firstName = user?.phone ? String(user?.name || 'there').split(' ')[0] : 'Guest';
 
   const selectedMatches = useMemo(
-    () => upcomingMatches.filter((match: any) => match?.dateKey === todayKey),
+    // Finished fixtures belong in "Latest results"; the today strip shows what
+    // is live or still to come.
+    () => upcomingMatches.filter((match: any) => match?.dateKey === todayKey && match?.fixture?.status?.state !== 'post'),
     [todayKey, upcomingMatches],
   );
   // Home always features today's fixtures; date browsing lives on the Matches page.
   const featuredMatch = selectedMatches[0] || null;
-  const listMatches = selectedMatches.slice(0, 4);
+  const listMatches = selectedMatches.slice(0, 10);
   const selectedCount = selectedMatches.length;
   const featuredIsNext = selectedCount === 0;
 
@@ -468,16 +497,6 @@ export const Home: React.FC<HomeProps> = ({ onTabChange }) => {
   );
   const liveNowCount = liveMatches.filter((m: any) => m?.fixture?.status?.state === 'in' || m.status === 'Live').length;
   const finishedTodayCount = finishedMatches.filter((m: any) => m.dateKey === todayKey).length;
-
-  const groupedList = useMemo(() => {
-    const groups = new Map<string, any[]>();
-    for (const m of listMatches) {
-      const key = m.league || 'Other competitions';
-      if (!groups.has(key)) groups.set(key, []);
-      groups.get(key)!.push(m);
-    }
-    return Array.from(groups.entries());
-  }, [listMatches]);
 
   return (
     <div className="flex h-full flex-col overflow-hidden bg-[var(--background)] text-[var(--foreground)]">
@@ -626,28 +645,24 @@ export const Home: React.FC<HomeProps> = ({ onTabChange }) => {
             <section className="space-y-3">
               <SectionHeader
                 title={selectedCount ? "Today's fixtures" : 'Upcoming fixtures'}
-                action={selectedCount > 4 || upcomingMatches.length > 4 ? 'View all' : undefined}
+                action={selectedCount > 0 ? 'View all' : undefined}
                 onAction={() => onTabChange('matches')}
               />
-              {groupedList.length > 0 ? (
-                <div className="space-y-5">
-                  {groupedList.map(([league, rows]) => (
-                    <div key={league} className="space-y-2.5">
-                      <div className="flex items-center justify-between px-0.5">
-                        <span className="truncate text-[12px] font-medium text-[var(--text-muted)]">{league}</span>
-                        <span className="tabular text-[11px] text-[var(--text-subtle)]">{rows.length}</span>
-                      </div>
-                      {rows.map((match: any, idx: number) => (
+              {listMatches.length > 0 ? (
+                <div className="no-scrollbar -mx-5 flex snap-x snap-mandatory gap-3 overflow-x-auto px-5 pb-1">
+                  {listMatches.map((match: any, idx: number) => {
+                    const inPlay = match?.fixture?.status?.state === 'in';
+                    return (
+                      <div key={match.id || idx} className="w-[264px] shrink-0 snap-start">
                         <ModernMatchCard
-                          key={match.id || idx}
                           match={match}
-                          variant="prematch"
-                          showLeague={false}
-                          onClick={() => handleAnalyze(match)}
+                          variant={inPlay ? 'live' : 'prematch'}
+                          showLeague
+                          onClick={() => (inPlay ? onTabChange('matches') : handleAnalyze(match))}
                         />
-                      ))}
-                    </div>
-                  ))}
+                      </div>
+                    );
+                  })}
                 </div>
               ) : (
                 <div className="rounded-2xl border border-[var(--border)] bg-[var(--surface-1)] p-6 text-center">
@@ -671,20 +686,29 @@ export const Home: React.FC<HomeProps> = ({ onTabChange }) => {
               />
               {isPaid ? (
                 liveMatches.length > 0 ? (
-                  <div className="space-y-2.5">
-                    {liveMatches.slice(0, 6).map((match: any, idx: number) => (
-                      <ModernMatchCard
-                        key={match.id || idx}
-                        match={match}
-                        variant="live"
-                        showLeague={false}
-                        onClick={() => onTabChange('matches')}
-                      />
+                  <div className="no-scrollbar -mx-5 flex snap-x snap-mandatory gap-3 overflow-x-auto px-5 pb-1">
+                    {liveMatches.slice(0, 10).map((match: any, idx: number) => (
+                      <div key={match.id || idx} className="w-[264px] shrink-0 snap-start">
+                        <ModernMatchCard
+                          match={match}
+                          variant="live"
+                          showLeague
+                          onClick={() => onTabChange('matches')}
+                        />
+                      </div>
                     ))}
                   </div>
                 ) : (
-                  <div className="rounded-2xl border border-[var(--border)] bg-[var(--surface-1)] p-5 text-center text-[13px] text-[var(--text-muted)]">
-                    No live fixtures right now.
+                  <div className="flex items-center gap-3 rounded-2xl border border-[var(--border)] bg-[var(--surface-1)] p-4">
+                    <div className="flex h-9 w-9 shrink-0 items-center justify-center rounded-xl bg-white/[0.05]">
+                      <Radio className="h-4 w-4 text-[var(--text-muted)]" />
+                    </div>
+                    <div className="min-w-0">
+                      <p className="text-[14px] font-medium text-[var(--text-strong)]">No live matches right now</p>
+                      <p className="mt-0.5 text-[12px] leading-relaxed text-[var(--text-muted)]">
+                        Live scores and minute-by-minute AI updates appear here as soon as a match kicks off.
+                      </p>
+                    </div>
                   </div>
                 )
               ) : (

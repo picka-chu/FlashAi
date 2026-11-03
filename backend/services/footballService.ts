@@ -117,22 +117,47 @@ async function getBsdLeagueMap(): Promise<Record<number, string>> {
 }
 
 function bsdStatus(event: any): { state: 'pre' | 'in' | 'post'; short: string } {
-  const status = String(event?.status || '').toLowerCase();
-  const period = String(event?.period || '').toLowerCase();
+  const rawStatus = String(event?.status || '').toLowerCase().trim();
+  const status = rawStatus.replace(/[\s_-]+/g, '');
+  const rawPeriod = String(event?.period || '').toLowerCase().trim();
+  const period = rawPeriod.replace(/[\s_-]+/g, '');
 
-  if (status === 'notstarted') return { state: 'pre', short: 'NS' };
+  if (['notstarted', 'scheduled', 'upcoming', 'ns', 'pre', 'pregame', 'pending', 'tbd', 'fixture'].includes(status)) {
+    return { state: 'pre', short: 'NS' };
+  }
   if (status === 'delayed') return { state: 'pre', short: 'DLY' };
   if (status === 'postponed') return { state: 'post', short: 'PP' };
-  if (status === 'cancelled') return { state: 'post', short: 'CANC' };
-  if (status === 'unresolved') return { state: 'post', short: 'TBD' };
-  if (status === 'finished') return { state: 'post', short: 'FT' };
-  if (status === 'aet') return { state: 'post', short: 'AET' };
-  if (status === 'halftime' || period === 'halftime') return { state: 'in', short: 'HT' };
-  if (status === 'penalties' || period === 'penalties') return { state: 'in', short: 'PENS' };
-  if (status === 'extratime' || period === 'extra_time') return { state: 'in', short: 'ET' };
-  if (period === '1st_half') return { state: 'in', short: '1H' };
-  if (period === '2nd_half') return { state: 'in', short: '2H' };
-  return { state: 'in', short: 'LIVE' };
+  if (['cancelled', 'canceled', 'abandoned'].includes(status)) return { state: 'post', short: 'CANC' };
+  if (['unresolved', 'awarded'].includes(status)) return { state: 'post', short: 'TBD' };
+  if (['finished', 'fulltime', 'ft', 'ended', 'end', 'after', 'post'].includes(status)) {
+    return { state: 'post', short: 'FT' };
+  }
+  if (status === 'aet' || period === 'aet') return { state: 'post', short: 'AET' };
+  if (['halftime', 'ht'].includes(status) || ['halftime', 'ht'].includes(period)) {
+    return { state: 'in', short: 'HT' };
+  }
+  if (['penalties', 'pens'].includes(status) || period === 'penalties') {
+    return { state: 'in', short: 'PENS' };
+  }
+  if (['extratime', 'et'].includes(status) || ['extratime', 'et'].includes(period)) {
+    return { state: 'in', short: 'ET' };
+  }
+  if (['live', 'inprogress', 'inplay', 'playing', 'started'].includes(status)) {
+    return { state: 'in', short: 'LIVE' };
+  }
+  if (status === '1h' || period === '1sthalf' || period === '1h') return { state: 'in', short: '1H' };
+  if (status === '2h' || period === '2ndhalf' || period === '2h') return { state: 'in', short: '2H' };
+
+  // Unknown status: infer from kick-off time instead of defaulting to "live",
+  // which used to put upcoming fixtures in the live feed with a 0-0 score.
+  const kickoffMs = Date.parse(String(event?.event_date || event?.date || event?.kickoff || ''));
+  if (Number.isFinite(kickoffMs)) {
+    const minutesSinceKickoff = (Date.now() - kickoffMs) / 60_000;
+    if (minutesSinceKickoff < 0) return { state: 'pre', short: 'NS' };
+    if (minutesSinceKickoff > 180) return { state: 'post', short: 'FT' };
+    return { state: 'in', short: 'LIVE' };
+  }
+  return { state: 'pre', short: 'NS' };
 }
 
 function normaliseBsdOdds(payload: any) {
@@ -247,7 +272,19 @@ function mapBsdXg(payload: any) {
 
 function mapBSDEvent(event: any, leagueName?: string) {
   const status = bsdStatus(event);
-  const currentMinute = Number(event?.current_minute ?? event?.minute ?? 0);
+  const providerMinute = Number(event?.current_minute ?? event?.minute ?? event?.elapsed ?? 0);
+  let elapsedMinutes = Number.isFinite(providerMinute) && providerMinute > 0 ? Math.floor(providerMinute) : 0;
+  if (!elapsedMinutes && status.state === 'in') {
+    // Providers occasionally omit the clock; derive it from kick-off so the
+    // live badge still shows a realistic minute (with a half-time allowance).
+    const kickoffMs = Date.parse(String(event?.event_date || event?.date || event?.kickoff || ''));
+    if (Number.isFinite(kickoffMs)) {
+      const wallMinutes = Math.floor((Date.now() - kickoffMs) / 60_000);
+      if (wallMinutes > 0) {
+        elapsedMinutes = wallMinutes <= 45 ? wallMinutes : wallMinutes <= 60 ? 45 : Math.min(90, wallMinutes - 15);
+      }
+    }
+  }
   const teamName = (...values: any[]) => {
     for (const value of values) {
       if (typeof value === 'string' && value.trim()) return value.trim();
@@ -289,7 +326,9 @@ function mapBSDEvent(event: any, leagueName?: string) {
       dateKey: fixtureCalendarKey(event?.event_date || event?.date || event?.kickoff),
       status: {
         short: status.short,
-        elapsed: Number.isFinite(currentMinute) && currentMinute > 0 ? currentMinute * 60 : 0,
+        // Match clock in minutes (all consumers render it as e.g. "67'").
+        elapsed: elapsedMinutes,
+        extra: 0,
         state: status.state,
       },
     },
@@ -616,7 +655,7 @@ export async function getMatchDetails(fixtureId: number | string, match?: any): 
           xG: bsdMatch.xG,
           liveStats: bsdMatch.stats,
           score: `${bsdMatch.goals?.home ?? 0}-${bsdMatch.goals?.away ?? 0}`,
-          elapsed: Math.floor(Number(bsdMatch.fixture?.status?.elapsed || 0) / 60),
+          elapsed: Number(bsdMatch.fixture?.status?.elapsed || 0),
           league: bsdMatch.league?.name,
           round: bsdMatch.round,
           dataSource: 'bsd',
