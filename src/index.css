@@ -97,6 +97,12 @@
     --accent-soft: oklch(0.9 0.19 128 / 12%);
     --shadow-card: 0 1px 0 oklch(1 0 0 / 4%) inset, 0 8px 24px -12px oklch(0 0 0 / 60%);
     --ease-out: cubic-bezier(0.2, 0.8, 0.2, 1);
+
+    /* Telegram safe areas — overwritten at runtime by useTelegram */
+    --tg-safe-top: env(safe-area-inset-top, 0px);
+    --tg-safe-bottom: env(safe-area-inset-bottom, 0px);
+    --tg-safe-left: env(safe-area-inset-left, 0px);
+    --tg-safe-right: env(safe-area-inset-right, 0px);
 }
 
 .dark {
@@ -132,7 +138,6 @@
     --sidebar-accent-foreground: oklch(0.97 0.005 120);
     --sidebar-border: oklch(1 0 0 / 7%);
     --sidebar-ring: oklch(0.9 0.19 128 / 60%);
-    /* App-level tokens used by pages and components */
     --surface-0: oklch(0.12 0.004 130);
     --surface-1: oklch(0.17 0.005 130);
     --surface-2: oklch(0.21 0.006 130);
@@ -160,7 +165,14 @@
 @layer base {
   * {
     @apply border-border outline-ring/50;
-    }
+  }
+
+  html {
+    @apply font-sans;
+    /* Prevent overscroll bounce revealing content under Telegram chrome */
+    overscroll-behavior: none;
+  }
+
   body {
     @apply bg-background text-foreground;
     font-family: 'Geist Variable', ui-sans-serif, system-ui, sans-serif;
@@ -168,20 +180,16 @@
     text-rendering: optimizeLegibility;
     -webkit-font-smoothing: antialiased;
     -moz-osx-font-smoothing: grayscale;
-    /* Telegram safe area handling */
-    padding-top: env(safe-area-inset-top, 0px);
-    padding-bottom: env(safe-area-inset-bottom, 0px);
-    padding-left: env(safe-area-inset-left, 0px);
-    padding-right: env(safe-area-inset-right, 0px);
-    }
-  html {
-    @apply font-sans;
-    }
+    letter-spacing: -0.005em;
+    -webkit-tap-highlight-color: transparent;
+    /* Padding is applied on MainLayout using --tg-safe-* vars to avoid double offset */
+    margin: 0;
+    min-height: 100dvh;
+  }
 
   #root {
     font-family: 'Geist Variable', ui-sans-serif, system-ui, sans-serif;
     min-height: 100dvh;
-    min-height: calc(100vh - env(safe-area-inset-top, 0px) - env(safe-area-inset-bottom, 0px));
   }
 
   .font-black {
@@ -190,11 +198,6 @@
 
   .font-bold {
     font-weight: 600 !important;
-  }
-
-  body {
-    letter-spacing: -0.005em;
-    -webkit-tap-highlight-color: transparent;
   }
 }
 
