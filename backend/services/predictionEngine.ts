@@ -6,17 +6,11 @@
  *   Context Adjustments → Value / EV Engine → AI Deep Analysis →
  *   Confidence Calibration → Ranked Predictions Output
  *
- * Key improvements in this version:
- *  1. Data quality gating: predictions below quality threshold 0.40 are
- *     flagged with a WARNING so users know confidence is penalized.
- *  2. Context adjustments now incorporate league position (relegation vs title)
- *     and key-absentee signals for stronger probability shifts.
- *  3. Confidence engine now factors search_data_used from AI analysis —
- *     if grounding was available, confidence is rewarded; if not, capped.
- *  4. Dixon-Coles rho is league-specific via leaguePriors.
- *  5. leagueAvgGoals + home advantage come from league-specific priors.
- *  7. Market blending + quality gates (calibration.ts) for stricter tips.
- *  6. All null/undefined fields gracefully handled — no more NaN in Poisson.
+ * Key improvements:
+ *  1. League-specific priors (avg goals, home advantage, rho)
+ *  2. Market blending weighted by data quality
+ *  3. Quality / no-bet gates for stricter tip publishing
+ *  4. Full value engine with Kelly fractions
  */
 
 import {
@@ -30,11 +24,6 @@ import { multiAgentService } from "./multiAgentService";
 import { getLeaguePrior } from "./leaguePriors";
 import { blendWithMarket, applyQualityGates } from "./calibration";
 
-// ─────────────────────────────────────────────────────────────────────────────
-// PART 1 — DIXON-COLES CORRECTION
-// Corrects Poisson underestimation of low-scoring scorelines.
-// rho = -0.13: empirically tuned for top European leagues (2023-25 data).
-// ─────────────────────────────────────────────────────────────────────────────
 function dixonColesCorrection(
   h: number,
   a: number,
@@ -49,11 +38,6 @@ function dixonColesCorrection(
   return 1;
 }
 
-// ─────────────────────────────────────────────────────────────────────────────
-// PART 2 — ELITE FEATURE ENGINEERING
-// Season avg + form decay blended. xG overlay when available.
-// Home advantage from league-specific priors.
-// ─────────────────────────────────────────────────────────────────────────────
 export function computeFeatures(data: MatchData) {
   const finiteNonNegative = (value: unknown, fallback = 0) =>
     typeof value === "number" && Number.isFinite(value) && value >= 0 ? value : fallback;
@@ -74,16 +58,16 @@ export function computeFeatures(data: MatchData) {
 
   const FORM_WEIGHTS = [5, 4, 3, 2, 1];
   const WEIGHT_SUM = FORM_WEIGHTS.reduce((sum, weight) => sum + weight, 0);
-  const computeFormMetrics = (
-    goalsScored: number,
-    goalsConceded: number,
-    results: string[]
-  ) => {
+  const computeFormMetrics = (goalsScored: number, goalsConceded: number, results: string[]) => {
     const recentResults = Array.isArray(results) ? results.slice(0, 5) : [];
     const games = Math.max(Math.min(recentResults.length, 5), 1);
-    const formScore = recentResults.reduce((sum, result, index) =>
-      sum + (result === "W" ? 3 : result === "D" ? 1 : 0) *
-        (FORM_WEIGHTS[index] ?? 1), 0) / (WEIGHT_SUM * 3);
+    const formScore =
+      recentResults.reduce(
+        (sum, result, index) =>
+          sum + (result === "W" ? 3 : result === "D" ? 1 : 0) * (FORM_WEIGHTS[index] ?? 1),
+        0
+      ) /
+      (WEIGHT_SUM * 3);
     return {
       attack: safeDiv(finiteNonNegative(goalsScored), games, 1.1),
       defense: safeDiv(finiteNonNegative(goalsConceded), games, 1.25),
@@ -91,17 +75,15 @@ export function computeFeatures(data: MatchData) {
     };
   };
 
-  const homeResults = data.home?.last5?.results ?? [];
-  const awayResults = data.away?.last5?.results ?? [];
   const homeForm = computeFormMetrics(
     data.home?.last5?.goalsScored ?? 0,
     data.home?.last5?.goalsConceded ?? 0,
-    homeResults
+    data.home?.last5?.results ?? []
   );
   const awayForm = computeFormMetrics(
     data.away?.last5?.goalsScored ?? 0,
     data.away?.last5?.goalsConceded ?? 0,
-    awayResults
+    data.away?.last5?.results ?? []
   );
 
   const homeAttack = homeAttackSeason * 0.65 + homeForm.attack * 0.35;
@@ -109,7 +91,6 @@ export function computeFeatures(data: MatchData) {
   const homeDefense = homeDefenseSeason * 0.65 + homeForm.defense * 0.35;
   const awayDefense = awayDefenseSeason * 0.65 + awayForm.defense * 0.35;
 
-  // League-specific priors (avg goals, home advantage, rho)
   const leagueName =
     (data as any).league ||
     (data as any).leagueName ||
@@ -147,34 +128,28 @@ export function computeFeatures(data: MatchData) {
 }
 
 function computeDataQuality(data: MatchData): number {
-  let score = 0.20;
-
+  let score = 0.2;
   const homePlayed = finiteDataNumber(data.home?.season?.played);
   const awayPlayed = finiteDataNumber(data.away?.season?.played);
-  if (homePlayed >= 5) score += 0.10;
+  if (homePlayed >= 5) score += 0.1;
   if (homePlayed >= 10) score += 0.08;
-  if (awayPlayed >= 5) score += 0.10;
+  if (awayPlayed >= 5) score += 0.1;
   if (awayPlayed >= 10) score += 0.08;
-
   if ((data.home?.last5?.results?.length ?? 0) >= 3) score += 0.07;
   if ((data.home?.last5?.results?.length ?? 0) >= 5) score += 0.04;
   if ((data.away?.last5?.results?.length ?? 0) >= 3) score += 0.07;
   if ((data.away?.last5?.results?.length ?? 0) >= 5) score += 0.04;
-
-  const validOdds = Object.values(data.odds ?? {}).filter((odd) =>
-    typeof odd === "number" && Number.isFinite(odd) && odd > 1.01 && odd <= 100
+  const validOdds = Object.values(data.odds ?? {}).filter(
+    (odd) => typeof odd === "number" && Number.isFinite(odd) && odd > 1.01 && odd <= 100
   ).length;
   if (validOdds >= 3) score += 0.08;
-
   const context = data.deepContext ?? {};
   const source = (data as any).dataSource ?? context.dataSource;
-  const warning = (data as any).dataQualityWarning ?? context.dataQualityWarning;
   if (source === "gemini_search") score -= 0.15;
-  if (warning) score -= 0.10;
+  if ((data as any).dataQualityWarning ?? context.dataQualityWarning) score -= 0.1;
   if (context.oddsAvailable === false) score -= 0.08;
-  if (context.statsAvailable === false) score -= 0.10;
+  if (context.statsAvailable === false) score -= 0.1;
   if (homePlayed === 0 || awayPlayed === 0) score -= 0.15;
-
   return Math.min(1, Math.max(0, score));
 }
 
@@ -205,7 +180,6 @@ export function calculatePoissonProbabilities(
     Number.isFinite(value) ? Math.min(5.5, Math.max(0.01, value)) : 1.25;
   const lh = safeLambda(lambdaHome);
   const la = safeLambda(lambdaAway);
-
   const factorial = [1];
   for (let i = 1; i <= MAX_GOALS; i++) factorial[i] = factorial[i - 1] * i;
   const poisson = (k: number, lambda: number) =>
@@ -215,8 +189,7 @@ export function calculatePoissonProbabilities(
   let matrixTotal = 0;
   for (let h = 0; h <= MAX_GOALS; h++) {
     for (let a = 0; a <= MAX_GOALS; a++) {
-      const raw = poisson(h, lh) * poisson(a, la) *
-        dixonColesCorrection(h, a, lh, la, rho);
+      const raw = poisson(h, lh) * poisson(a, la) * dixonColesCorrection(h, a, lh, la, rho);
       const p = Number.isFinite(raw) ? Math.max(0, raw) : 0;
       matrix.push({ h, a, p });
       matrixTotal += p;
@@ -224,15 +197,25 @@ export function calculatePoissonProbabilities(
   }
   const denominator = matrixTotal > 0 ? matrixTotal : 1;
 
-  let homeWin = 0, draw = 0, awayWin = 0;
-  let bttsYes = 0, over05 = 0, over15 = 0, over25 = 0, over35 = 0, over45 = 0, over55 = 0;
-  let homeScores = 0, awayScores = 0, csHome = 0, csAway = 0;
+  let homeWin = 0,
+    draw = 0,
+    awayWin = 0;
+  let bttsYes = 0,
+    over05 = 0,
+    over15 = 0,
+    over25 = 0,
+    over35 = 0,
+    over45 = 0,
+    over55 = 0;
+  let homeScores = 0,
+    awayScores = 0,
+    csHome = 0,
+    csAway = 0;
   for (const { h, a, p: rawP } of matrix) {
     const p = rawP / denominator;
     if (h > a) homeWin += p;
     else if (h < a) awayWin += p;
     else draw += p;
-
     if (h > 0) homeScores += p;
     if (a > 0) awayScores += p;
     if (h + a >= 1) over05 += p;
@@ -253,31 +236,40 @@ export function calculatePoissonProbabilities(
   const nonDraw = homeWin + awayWin || 1;
 
   return {
-    homeWin, draw, awayWin,
+    homeWin,
+    draw,
+    awayWin,
     dc1X: homeWin + draw,
     dcX2: awayWin + draw,
     dc12: homeWin + awayWin,
-    over05, under05: 1 - over05,
-    over15, under15: 1 - over15,
-    over25, under25: 1 - over25,
-    over35, under35: 1 - over35,
-    bttsYes, bttsNo: 1 - bttsYes,
+    over05,
+    under05: 1 - over05,
+    over15,
+    under15: 1 - over15,
+    over25,
+    under25: 1 - over25,
+    over35,
+    under35: 1 - over35,
+    bttsYes,
+    bttsNo: 1 - bttsYes,
     dnb1: homeWin / nonDraw,
     dnb2: awayWin / nonDraw,
-    over45, under45: 1 - over45,
-    over55, under55: 1 - over55,
-    homeScores, awayScores,
-    homeOver05: homeScores, awayOver05: awayScores,
-    csHome, csAway,
+    over45,
+    under45: 1 - over45,
+    over55,
+    under55: 1 - over55,
+    homeScores,
+    awayScores,
+    homeOver05: homeScores,
+    awayOver05: awayScores,
+    csHome,
+    csAway,
   };
 }
 
 export function adjustProbabilities(
   probs: Probabilities,
   context: ContextData & {
-    home_league_position?: number;
-    away_league_position?: number;
-    is_derby?: boolean;
     home_key_absentee?: string;
     away_key_absentee?: string;
   }
@@ -287,12 +279,8 @@ export function adjustProbabilities(
   const motivation: Record<string, number> = { HIGH: 1.04, MEDIUM: 1, LOW: 0.97 };
   let homeAdj = 1;
   let awayAdj = 1;
-
-  const homeMissing = bounded(context.home_missing ?? 0, 0, 11);
-  const awayMissing = bounded(context.away_missing ?? 0, 0, 11);
-  homeAdj *= Math.max(0.82, 1 - homeMissing * 0.018);
-  awayAdj *= Math.max(0.82, 1 - awayMissing * 0.018);
-
+  homeAdj *= Math.max(0.82, 1 - bounded(context.home_missing ?? 0, 0, 11) * 0.018);
+  awayAdj *= Math.max(0.82, 1 - bounded(context.away_missing ?? 0, 0, 11) * 0.018);
   if (context.home_key_absentee?.trim()) homeAdj *= 0.97;
   if (context.away_key_absentee?.trim()) awayAdj *= 0.97;
   homeAdj *= motivation[context.home_motivation] ?? 1;
@@ -314,10 +302,11 @@ export function adjustProbabilities(
     awayWin /= total;
   }
   const nonDraw = homeWin + awayWin || 1;
-
   return {
     ...probs,
-    homeWin, draw, awayWin,
+    homeWin,
+    draw,
+    awayWin,
     dc1X: homeWin + draw,
     dcX2: awayWin + draw,
     dc12: homeWin + awayWin,
@@ -326,10 +315,134 @@ export function adjustProbabilities(
   };
 }
 
-// NOTE: Remaining functions (calculateValue, selectBestBet, calculateConfidence,
-// enrichMatchDataFromBSD, runPrediction, buildFallbackReasoning, live signals)
-// are restored from the last known good commit in the follow-up content block.
-// This file is intentionally kept complete via the artifacts copy.
+export function calculateValue(
+  probs: Probabilities & Record<string, number>,
+  odds: MatchData["odds"]
+): (ValueBet & { ev: number; kellyFraction: number })[] {
+  const markets: { name: string; prob: number; oddsKeys: string[] }[] = [
+    { name: "Home Win", prob: probs.homeWin, oddsKeys: ["home", "1"] },
+    { name: "Draw", prob: probs.draw, oddsKeys: ["draw", "X"] },
+    { name: "Away Win", prob: probs.awayWin, oddsKeys: ["away", "2"] },
+    { name: "1X", prob: probs.dc1X, oddsKeys: ["dc1X", "1X"] },
+    { name: "X2", prob: probs.dcX2, oddsKeys: ["dcX2", "X2"] },
+    { name: "12", prob: probs.dc12, oddsKeys: ["dc12", "12"] },
+    { name: "Over 1.5 Goals", prob: probs.over15, oddsKeys: ["over15", "Over 1.5"] },
+    { name: "Under 1.5", prob: probs.under15, oddsKeys: ["under15", "Under 1.5"] },
+    { name: "Over 2.5 Goals", prob: probs.over25, oddsKeys: ["over25", "Over 2.5"] },
+    { name: "Under 2.5", prob: probs.under25, oddsKeys: ["under25", "Under 2.5"] },
+    { name: "Over 3.5 Goals", prob: probs.over35, oddsKeys: ["over35", "Over 3.5"] },
+    { name: "Under 3.5", prob: probs.under35, oddsKeys: ["under35", "Under 3.5"] },
+    { name: "BTTS - Yes", prob: probs.bttsYes, oddsKeys: ["bttsYes", "BTTS - Yes"] },
+    { name: "BTTS - No", prob: probs.bttsNo, oddsKeys: ["bttsNo", "BTTS - No"] },
+    { name: "DNB Home", prob: probs.dnb1, oddsKeys: ["dnb1", "DNB 1"] },
+    { name: "DNB Away", prob: probs.dnb2, oddsKeys: ["dnb2", "DNB 2"] },
+  ];
+
+  const results: (ValueBet & { ev: number; kellyFraction: number })[] = [];
+  for (const market of markets) {
+    let price: number | null = null;
+    for (const key of market.oddsKeys) {
+      const v = odds?.[key];
+      if (typeof v === "number" && Number.isFinite(v) && v > 1.01 && v <= 100) {
+        price = v;
+        break;
+      }
+    }
+    if (price === null) continue;
+    const probability = Math.min(0.95, Math.max(0.01, market.prob));
+    const impliedProb = 1 / price;
+    const edge = probability - impliedProb;
+    if (edge < 0.01) continue;
+    const ev = probability * price - 1;
+    const b = price - 1;
+    const kelly = b > 0 ? Math.max(0, (probability * price - 1) / b) : 0;
+    results.push({
+      market: market.name,
+      modelProb: probability,
+      impliedProb,
+      value: edge,
+      odds: price,
+      ev,
+      kellyFraction: kelly * 0.25,
+    });
+  }
+  return results.sort((a, b) => b.ev - a.ev);
+}
+
+export function calculateConfidence(
+  modelProb: number,
+  edge: number,
+  dataQuality: number,
+  formScore: number,
+  aiConfidence?: number,
+  searchUsed?: boolean
+): number {
+  let conf = typeof aiConfidence === "number" ? aiConfidence : 55 + modelProb * 25;
+  conf += Math.min(8, Math.max(0, edge * 40));
+  conf += (dataQuality - 0.5) * 12;
+  conf += (formScore - 0.5) * 6;
+  if (searchUsed) conf += 3;
+  else conf -= 4;
+  return Math.round(Math.min(92, Math.max(50, conf)));
+}
+
+export function selectBestBet(
+  valueBets: (ValueBet & { ev: number; kellyFraction: number })[],
+  _probs: Probabilities
+): (ValueBet & { ev: number; kellyFraction: number }) | null {
+  if (!valueBets.length) return null;
+  const ranked = [...valueBets].sort((a, b) => b.ev * 0.6 + b.value * 0.4 - (a.ev * 0.6 + a.value * 0.4));
+  return ranked[0] ?? null;
+}
+
+export function enrichMatchDataFromBSD(matchData: MatchData, bsdEvent: any): MatchData {
+  if (!bsdEvent) return matchData;
+  const enriched = { ...matchData };
+  if (bsdEvent.xG?.home && bsdEvent.xG?.away) {
+    enriched.deepContext = {
+      ...enriched.deepContext,
+      expectedGoals: {
+        home: Number(bsdEvent.xG.home) || 0,
+        away: Number(bsdEvent.xG.away) || 0,
+      },
+    };
+  }
+  if (bsdEvent.odds) {
+    const o = bsdEvent.odds;
+    enriched.odds = {
+      ...enriched.odds,
+      home: o["1"] || o.home || enriched.odds?.home,
+      draw: o["X"] || o.draw || enriched.odds?.draw,
+      away: o["2"] || o.away || enriched.odds?.away,
+      over25: o.over25 || o["Over 2.5"] || enriched.odds?.over25,
+      under25: o.under25 || o["Under 2.5"] || enriched.odds?.under25,
+      bttsYes: o.bttsYes || o["BTTS Yes"] || enriched.odds?.bttsYes,
+    };
+  }
+  return enriched;
+}
+
+function buildFallbackReasoning(
+  matchData: MatchData,
+  probs: Probabilities,
+  bestBet: ValueBet | null,
+  lambdaH: number,
+  lambdaA: number
+): string {
+  const favourite =
+    probs.homeWin > probs.awayWin && probs.homeWin > probs.draw
+      ? `${matchData.home.name} (${(probs.homeWin * 100).toFixed(1)}%)`
+      : probs.awayWin > probs.draw
+      ? `${matchData.away.name} (${(probs.awayWin * 100).toFixed(1)}%)`
+      : `Draw (${(probs.draw * 100).toFixed(1)}%)`;
+  return (
+    `Dixon-Coles Poisson model favours ${favourite}. ` +
+    `Expected goals: ${matchData.home.name} λ=${lambdaH.toFixed(2)}, ${matchData.away.name} λ=${lambdaA.toFixed(2)}. ` +
+    (bestBet
+      ? `Top pick: ${bestBet.market} at ${(bestBet.modelProb * 100).toFixed(1)}% model probability.`
+      : "")
+  );
+}
 
 export async function runPrediction(
   matchId: string,
@@ -354,11 +467,9 @@ export async function runPrediction(
   } = computeFeatures(enrichedData) as ReturnType<typeof computeFeatures> & { rho?: number };
 
   const baseProbs = calculatePoissonProbabilities(lambdaHome, lambdaAway, rho);
-
   const context = await multiAgentService.fetchContextData(
     `${matchData.home.name} vs ${matchData.away.name}`
   );
-
   const adjustedProbs = adjustProbabilities(baseProbs, context as any);
   const valueBets = calculateValue(adjustedProbs as any, enrichedData.odds ?? {});
   const bestBet = selectBestBet(valueBets, adjustedProbs);
@@ -441,15 +552,16 @@ export async function runPrediction(
     ? ` ⚠️ No-bet recommendation: ${noBetReason || "insufficient edge or data quality"}.`
     : "";
 
-  const topPredictions = bestBet && !noBet
-    ? [
-        {
-          market: bestBet.market,
-          confidence: Math.round(confidence),
-          reasoning: reasoning + dataWarning + noBetWarning,
-        },
-      ]
-    : [];
+  const topPredictions =
+    bestBet && !noBet
+      ? [
+          {
+            market: bestBet.market,
+            confidence: Math.round(confidence),
+            reasoning: reasoning + dataWarning + noBetWarning,
+          },
+        ]
+      : [];
 
   return {
     matchId,
@@ -462,9 +574,7 @@ export async function runPrediction(
         injuries: context.home_key_absentee ? [context.home_key_absentee] : [],
         keyStats: [
           `Goals/game: ${(matchData.home.season.goalsScored / (matchData.home.season.played || 1)).toFixed(2)}`,
-          `Conceded/game: ${(matchData.home.season.goalsConceded / (matchData.home.season.played || 1)).toFixed(2)}`,
           `xG lambda: ${lambdaHome.toFixed(3)}`,
-          `Form score: ${(homeFormScore * 100).toFixed(0)}%`,
           `Data quality: ${(dataQuality * 100).toFixed(0)}%`,
         ],
       },
@@ -474,59 +584,10 @@ export async function runPrediction(
         injuries: context.away_key_absentee ? [context.away_key_absentee] : [],
         keyStats: [
           `Goals/game: ${(matchData.away.season.goalsScored / (matchData.away.season.played || 1)).toFixed(2)}`,
-          `Conceded/game: ${(matchData.away.season.goalsConceded / (matchData.away.season.played || 1)).toFixed(2)}`,
           `xG lambda: ${lambdaAway.toFixed(3)}`,
-          `Form score: ${(awayFormScore * 100).toFixed(0)}%`,
           `Data quality: ${(dataQuality * 100).toFixed(0)}%`,
         ],
       },
     },
   };
-}
-
-// Stubs for helpers that exist in the full module — keep runtime safe if tree-shaken incorrectly.
-function enrichMatchDataFromBSD(matchData: MatchData, _bsdEvent: any): MatchData {
-  return matchData;
-}
-
-function calculateValue(probs: any, odds: any): (ValueBet & { ev: number; kellyFraction: number })[] {
-  return [];
-}
-
-function selectBestBet(valueBets: any[], _probs: any): (ValueBet & { ev: number; kellyFraction: number }) | null {
-  return valueBets[0] ?? null;
-}
-
-function calculateConfidence(
-  _modelProb: number,
-  _edge: number,
-  dataQuality: number,
-  _formScore: number,
-  aiConfidence?: number,
-  _searchUsed?: boolean
-): number {
-  if (typeof aiConfidence === "number") return Math.min(92, Math.max(50, aiConfidence));
-  return Math.round(55 + dataQuality * 25);
-}
-
-function buildFallbackReasoning(
-  matchData: MatchData,
-  probs: Probabilities,
-  bestBet: ValueBet | null,
-  lambdaH: number,
-  lambdaA: number
-): string {
-  const favourite =
-    probs.homeWin > probs.awayWin && probs.homeWin > probs.draw
-      ? `${matchData.home.name} (${(probs.homeWin * 100).toFixed(1)}%)`
-      : probs.awayWin > probs.draw
-      ? `${matchData.away.name} (${(probs.awayWin * 100).toFixed(1)}%)`
-      : `Draw (${(probs.draw * 100).toFixed(1)}%)`;
-  return (
-    `Dixon-Coles Poisson model favours ${favourite}. ` +
-    `Expected goals: ${matchData.home.name} λ=${lambdaH.toFixed(2)}, ${matchData.away.name} λ=${lambdaA.toFixed(2)}. ` +
-    (bestBet
-      ? `Top pick: ${bestBet.market} at ${(bestBet.modelProb * 100).toFixed(1)}% model probability.`
-      : "")
-  );
 }
