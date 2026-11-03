@@ -9,6 +9,28 @@ const DEFAULT_RATE_BAND = 5;
 
 export const isChapaEnabled = () => Boolean(String(process.env.CHAPA_SECRET_KEY || "").trim());
 
+/** Turn Chapa error payloads into a readable string (never "[object Object]"). */
+function formatChapaError(payload: any, fallback: string): string {
+  const msg = payload?.message ?? payload?.error ?? payload?.data?.message;
+  if (typeof msg === "string" && msg.trim()) return msg.trim();
+  if (msg && typeof msg === "object") {
+    try {
+      return JSON.stringify(msg);
+    } catch {
+      /* fall through */
+    }
+  }
+  if (payload && typeof payload === "object") {
+    try {
+      const s = JSON.stringify(payload);
+      if (s && s !== "{}") return s.slice(0, 400);
+    } catch {
+      /* fall through */
+    }
+  }
+  return fallback;
+}
+
 const digitsOnly = (value: unknown) => String(value ?? "").replace(/\D/g, "");
 
 // Ethiopian mobile numbers: Ethio Telecom (9XXXXXXXX) and Safaricom (7XXXXXXXX).
@@ -20,7 +42,6 @@ export function normalizeEthiopianPhone(value: unknown): string | null {
   if (digits.startsWith("251")) digits = digits.slice(3);
   else if (digits.startsWith("0")) digits = digits.slice(1);
   if (!/^[79]\d{8}$/.test(digits)) return null;
-  // Return in the format classic Chapa prefers
   return `0${digits}`;
 }
 
@@ -45,9 +66,6 @@ async function fetchLiveUsdEtbRate(): Promise<number | null> {
   }
 }
 
-// The rate is banded (rounded to the nearest N birr per USD) and cached, so the
-// displayed ETB price only changes when the market rate leaves its band. This
-// keeps prices stable for days while still following the current rate.
 export async function getUsdEtbRate(): Promise<number> {
   const override = Number(process.env.CHAPA_USD_ETB_RATE || 0);
   if (Number.isFinite(override) && override > 0) return override;
@@ -81,7 +99,6 @@ export async function getChapaPricing(usdPrices: Record<string, number>): Promis
   return { currency: "ETB", rate, plans };
 }
 
-// Classic Chapa tx_ref should be unique and reasonably short.
 export function buildMerchantReference(telegramId: number, planId: string): string {
   const planCode = planId === "monthly_pro" ? "p" : planId === "monthly_basic" ? "b" : "x";
   const idPart = Math.abs(Math.trunc(Number(telegramId) || 0)).toString(36);
@@ -113,14 +130,12 @@ export async function verifyChapaTransaction(reference: string): Promise<ChapaVe
   );
   const payload: any = await response.json().catch(() => ({}));
   if (!response.ok) {
-    throw new Error(payload?.message || `Chapa verification failed (${response.status})`);
+    throw new Error(formatChapaError(payload, `Chapa verification failed (${response.status})`));
   }
 
   const data = payload?.data || {};
-  // Classic Chapa returns amount in major units (e.g. 100 for 100 ETB)
   const amountMajor = Number(data?.amount);
   const amountCents = Number.isFinite(amountMajor) ? Math.round(amountMajor * 100) : null;
-
   const status = String(data?.status || "").toLowerCase();
   return {
     success: status === "success",
@@ -160,14 +175,30 @@ export async function initializeChapaCheckout(
   const callbackUrl = `${appUrl}/api/payments/chapa-webhook`;
   const returnUrl = process.env.CHAPA_RETURN_URL || appUrl;
 
-  // Classic Chapa expects amount in major units (ETB), not cents
   const amountMajor = Math.max(1, Math.round(params.amountCents / 100));
-
-  // Classic Chapa prefers phone as 09xxxxxxxx / 07xxxxxxxx
   const phone = normalizeEthiopianPhone(params.phone) || params.phone;
-
-  // Email is required by classic Chapa. Use a synthetic one if none is available.
   const email = `user${params.telegramId}@flashai.telegram`;
+
+  const body = {
+    amount: String(amountMajor),
+    currency: "ETB",
+    email,
+    first_name: (params.firstName || CHAPA_MERCHANT_NAME).slice(0, 50),
+    last_name: (params.lastName || "AI").slice(0, 50),
+    phone_number: phone,
+    tx_ref: params.merchantReference,
+    callback_url: callbackUrl,
+    return_url: returnUrl,
+    customization: {
+      title: `${CHAPA_MERCHANT_NAME} — ${params.planName}`.slice(0, 16),
+      description: `${params.planName} subscription (1 month)`.slice(0, 100),
+    },
+    meta: {
+      telegram_id: String(params.telegramId),
+      plan_id: params.planId,
+      merchant_reference: params.merchantReference,
+    },
+  };
 
   const response = await fetch(`${CHAPA_API_BASE}/v1/transaction/initialize`, {
     method: "POST",
@@ -176,32 +207,19 @@ export async function initializeChapaCheckout(
       "Content-Type": "application/json",
       Accept: "application/json",
     },
-    body: JSON.stringify({
-      amount: String(amountMajor),
-      currency: "ETB",
-      email,
-      first_name: params.firstName || CHAPA_MERCHANT_NAME,
-      last_name: params.lastName || "AI",
-      phone_number: phone,
-      tx_ref: params.merchantReference,
-      callback_url: callbackUrl,
-      return_url: returnUrl,
-      customization: {
-        title: `${CHAPA_MERCHANT_NAME} — ${params.planName}`,
-        description: `${params.planName} subscription (1 month)`,
-      },
-      meta: {
-        telegram_id: String(params.telegramId),
-        plan_id: params.planId,
-        merchant_reference: params.merchantReference,
-      },
-    }),
+    body: JSON.stringify(body),
     signal: AbortSignal.timeout(15000),
   });
 
   const payload: any = await response.json().catch(() => ({}));
   if (!response.ok) {
-    throw new Error(payload?.message || `Chapa checkout failed (${response.status})`);
+    const message = formatChapaError(payload, `Chapa checkout failed (${response.status})`);
+    console.error("Chapa initialize rejected:", response.status, message, {
+      amount: body.amount,
+      phone: body.phone_number,
+      tx_ref: body.tx_ref,
+    });
+    throw new Error(message);
   }
 
   const checkoutUrl = String(payload?.data?.checkout_url || "");
@@ -209,11 +227,6 @@ export async function initializeChapaCheckout(
   return { checkoutUrl };
 }
 
-/**
- * Classic Chapa webhook signature verification.
- * Header is usually "Chapa-Signature" (or sometimes "x-chapa-signature").
- * Signature is HMAC-SHA256 of the raw body using the secret key.
- */
 export function verifyChapaWebhookSignature(
   rawBody: string,
   signature: string | undefined | null,
@@ -221,16 +234,13 @@ export function verifyChapaWebhookSignature(
 ): boolean {
   if (!secret || !signature) return false;
 
-  // Classic Chapa commonly sends hex HMAC
   const expected = crypto.createHmac("sha256", secret).update(rawBody).digest("hex");
 
   try {
-    // Accept both plain hex and possible prefixed formats
     const cleanSig = signature.includes(",") ? signature.split(",").pop()!.trim() : signature.trim();
     if (/^[a-f0-9]{64}$/i.test(cleanSig)) {
       return crypto.timingSafeEqual(Buffer.from(cleanSig, "hex"), Buffer.from(expected, "hex"));
     }
-    // Fallback: direct string compare (some older implementations)
     return cleanSig === expected;
   } catch {
     return false;
