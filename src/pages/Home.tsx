@@ -25,6 +25,8 @@ import { useTelegram } from '../hooks/useTelegram';
 import { SignUpSheet } from '../components/SignUpSheet';
 import { TeamLogo } from '../components/TeamLogo';
 import { formatMatch, localDateKey } from '../lib/matchUtils';
+import { useTabActive } from '../hooks/useTabActive';
+import { ModernMatchCard } from '../components/ModernMatchCard';
 
 interface HomeProps {
   onTabChange: (tab: any) => void;
@@ -142,48 +144,57 @@ const FeaturedMatch: React.FC<{
   );
 };
 
-const FixtureRow: React.FC<{ match: any; onClick: () => void; isLast: boolean }> = ({ match, onClick, isLast }) => {
-  const started = match?.fixture?.status?.state && match.fixture.status.state !== 'pre';
-  const isLive = match?.fixture?.status?.state === 'in';
-  const hasScore = match.score && match.score !== '--';
+const ResultCard: React.FC<{ match: any; onClick: () => void }> = ({ match, onClick }) => {
+  const [rawHome, rawAway] = String(match.score || '0-0').split('-');
+  const homeGoals = Number(rawHome) || 0;
+  const awayGoals = Number(rawAway) || 0;
+  const homeWon = homeGoals > awayGoals;
+  const awayWon = awayGoals > homeGoals;
+  const row = (side: 'home' | 'away') => {
+    const name = side === 'home' ? match.home : match.away;
+    const goals = side === 'home' ? homeGoals : awayGoals;
+    const won = side === 'home' ? homeWon : awayWon;
+    const isDraw = !homeWon && !awayWon;
+    return (
+      <div className="flex items-center gap-2.5">
+        <TeamLogo
+          name={name}
+          logo={side === 'home' ? match.homeLogo : match.awayLogo}
+          className="h-8 w-8 rounded-full ring-1 ring-white/10"
+          textClassName="text-[11px]"
+        />
+        <span
+          className={`min-w-0 flex-1 truncate text-[13px] ${
+            won ? 'font-semibold text-[var(--text-strong)]' : isDraw ? 'text-[var(--text-strong)]' : 'text-[var(--text-muted)]'
+          }`}
+        >
+          {name}
+        </span>
+        <span
+          className={`tabular text-[15px] font-bold leading-none ${
+            won ? 'text-[var(--primary)]' : 'text-[var(--text-strong)]'
+          }`}
+        >
+          {goals}
+        </span>
+      </div>
+    );
+  };
   return (
     <button
       type="button"
       onClick={onClick}
-      className={`flex w-full items-center gap-3 px-4 py-3.5 text-left transition-colors hover:bg-white/[0.02] active:bg-white/[0.04] ${isLast ? '' : 'border-b border-[var(--border)]'}`}
+      className="group flex w-[240px] shrink-0 flex-col gap-3 rounded-[20px] border border-[var(--border)] bg-[var(--surface-1)] p-4 text-left transition-colors active:bg-[var(--surface-2)]"
     >
-      <div className="flex min-w-0 flex-1 flex-col gap-2.5">
-        <div className="flex items-center gap-2.5 min-w-0">
-          <TeamLogo name={match.home} logo={match.homeLogo} className="h-7 w-7 shrink-0 rounded-full" textClassName="text-[10px]" />
-          <span className="truncate text-[14px] font-medium text-[var(--text-strong)]">{match.home}</span>
-        </div>
-        <div className="flex items-center gap-2.5 min-w-0">
-          <TeamLogo name={match.away} logo={match.awayLogo} className="h-7 w-7 shrink-0 rounded-full" textClassName="text-[10px]" />
-          <span className="truncate text-[14px] font-medium text-[var(--text-strong)]">{match.away}</span>
-        </div>
+      <div className="flex items-center justify-between gap-2">
+        <span className="truncate text-[11px] font-medium text-[var(--text-subtle)]">{match.league}</span>
+        <span className="rounded-md bg-white/[0.06] px-1.5 py-0.5 text-[10px] font-bold text-[var(--text-muted)]">FT</span>
       </div>
-
-      <div className="flex shrink-0 flex-col items-end gap-2.5 tabular">
-        {started && hasScore ? (
-          <>
-            <span className="text-[14px] font-semibold text-[var(--text-strong)]">{match.score.split('-')[0]}</span>
-            <span className="text-[14px] font-semibold text-[var(--text-strong)]">{match.score.split('-')[1]}</span>
-          </>
-        ) : (
-          <>
-            <span className="text-[14px] font-semibold text-[var(--text-strong)]">{match.time}</span>
-            <span className="text-[12px] text-[var(--text-subtle)]">{match.date}</span>
-          </>
-        )}
-      </div>
-
-      {started && (
-        <div className="shrink-0 w-14 text-right">
-          <span className={`text-[11px] font-medium ${isLive ? 'text-[var(--primary)]' : 'text-[var(--text-subtle)]'}`}>
-            {isLive ? match.minute : match?.fixture?.status?.short === 'FT' ? 'Final' : match.minute}
-          </span>
-        </div>
-      )}
+      <div className="space-y-2.5">{row('home')}{row('away')}</div>
+      <span className="flex items-center gap-1 text-[11px] font-medium text-[var(--text-subtle)] transition-colors group-hover:text-[var(--primary)]">
+        Analyze result
+        <ChevronRight className="h-3 w-3" />
+      </span>
     </button>
   );
 };
@@ -202,6 +213,17 @@ export const Home: React.FC<HomeProps> = ({ onTabChange }) => {
   const [newsLoading, setNewsLoading] = useState(true);
   const [isLoading, setIsLoading] = useState(true);
   const [isSignUpOpen, setIsSignUpOpen] = useState(false);
+  const [loadFailed, setLoadFailed] = useState(false);
+  const [reloadNonce, setReloadNonce] = useState(0);
+  const isTabActive = useTabActive();
+  const [prefersReducedMotion, setPrefersReducedMotion] = useState(false);
+  useEffect(() => {
+    const mq = window.matchMedia('(prefers-reduced-motion: reduce)');
+    const sync = () => setPrefersReducedMotion(mq.matches);
+    sync();
+    mq.addEventListener?.('change', sync);
+    return () => mq.removeEventListener?.('change', sync);
+  }, []);
 
   const adsRef = React.useRef<HTMLDivElement>(null);
 
@@ -300,44 +322,59 @@ export const Home: React.FC<HomeProps> = ({ onTabChange }) => {
 
   useEffect(() => {
     const fetchData = async () => {
-      try {
-        const authInitData = initData || tg?.initData || '';
-        setHistoryLoading(Boolean(authInitData));
-        const [upcoming, trending, adsRes, historyRes, live] = await Promise.all([
-          getUpcomingMatches(authInitData),
-          getTrendingPicks(),
-          fetch('/api/common/ads', { headers: { 'X-TG-Init-Data': authInitData } }).then((r) => r.json()),
-          authInitData
-            ? fetch('/api/user/history', { headers: { 'X-TG-Init-Data': authInitData } }).then((r) => (r.ok ? r.json() : []))
-            : Promise.resolve([]),
-          user?.plan && user.plan !== 'free'
-            ? getLiveMatches(authInitData).catch(() => [])
-            : Promise.resolve([]),
-        ]);
+      const authInitData = initData || tg?.initData || '';
+      setHistoryLoading(Boolean(authInitData));
+      setLoadFailed(false);
 
-        if (adsRes && adsRes.length > 0) setDynamicAds(adsRes);
+      // Independent requests must not take each other down: one failing ad/news
+      // call should never blank the fixture list.
+      const [upcomingR, trendingR, adsR, historyR, liveR] = await Promise.allSettled([
+        getUpcomingMatches(authInitData),
+        getTrendingPicks(),
+        fetch('/api/common/ads', { headers: { 'X-TG-Init-Data': authInitData } }).then((r) => r.json()),
+        authInitData
+          ? fetch('/api/user/history', { headers: { 'X-TG-Init-Data': authInitData } }).then((r) => (r.ok ? r.json() : []))
+          : Promise.resolve([]),
+        user?.plan && user.plan !== 'free'
+          ? getLiveMatches(authInitData).catch(() => [])
+          : Promise.resolve([]),
+      ]);
 
-        const mappedUpcoming = (Array.isArray(upcoming) ? upcoming : [])
+      const settle = <T,>(r: PromiseSettledResult<T>): T | null =>
+        r.status === 'fulfilled' ? r.value : null;
+
+      const adsRes = settle(adsR) as any;
+      if (Array.isArray(adsRes) && adsRes.length > 0) setDynamicAds(adsRes);
+
+      const upcoming = settle(upcomingR) as any;
+      if (Array.isArray(upcoming)) {
+        const mappedUpcoming = upcoming
           .map((m: any) => {
             const formatted = formatMatch(m);
             return formatted ? { ...formatted, odds: m.odds || null } : null;
           })
           .filter(Boolean);
-
-        const mappedLive = (Array.isArray(live) ? live : []).map((m: any) => formatMatch(m)).filter(Boolean);
-        setLiveMatches(mappedLive.slice(0, 20));
-
-        if (trending && trending.length > 0) {
-          setTrendingMatches(
-            trending.map((t: any) => ({ id: t.id, teams: t.teams, activity: Number(t.clicks || 0) })),
-          );
-        } else {
-          setTrendingMatches([]);
-        }
-
         setUpcomingMatches(mappedUpcoming.slice(0, 200));
+      } else {
+        setLoadFailed(true);
+      }
 
-        const normalizedHistory = (Array.isArray(historyRes) ? historyRes : []).map((item: any) => ({
+      const live = settle(liveR) as any;
+      if (Array.isArray(live)) {
+        const mappedLive = live.map((m: any) => formatMatch(m)).filter(Boolean);
+        setLiveMatches(mappedLive.slice(0, 20));
+      }
+
+      const trending = settle(trendingR) as any;
+      if (Array.isArray(trending) && trending.length > 0) {
+        setTrendingMatches(
+          trending.map((t: any) => ({ id: t.id, teams: t.teams, activity: Number(t.clicks || 0) })),
+        );
+      }
+
+      const historyRes = settle(historyR) as any;
+      if (Array.isArray(historyRes)) {
+        const normalizedHistory = historyRes.map((item: any) => ({
           id: String(item.id),
           match: item.match || `${item.home || 'Home'} vs ${item.away || 'Away'}`,
           predictionMarket: item.predictionMarket || 'Unknown market',
@@ -346,41 +383,44 @@ export const Home: React.FC<HomeProps> = ({ onTabChange }) => {
           created_at: item.created_at || new Date().toISOString(),
         }));
         setRecentAnalysis(normalizedHistory.slice(0, 5));
-      } catch (error) {
-        console.error('Failed to fetch matches:', error);
-        setUpcomingMatches([]);
-        setLiveMatches([]);
-        setRecentAnalysis([]);
-      } finally {
-        setHistoryLoading(false);
-        setIsLoading(false);
+
       }
+
+      if (upcomingR.status === 'rejected') {
+        console.error('Failed to fetch matches:', upcomingR.reason);
+      }
+      setHistoryLoading(false);
+      setIsLoading(false);
     };
-    fetchData();
-  }, [initData, tg?.initData, user?.phone, user?.plan]);
+    void fetchData();
+  }, [initData, tg?.initData, user?.phone, user?.plan, reloadNonce]);
 
   useEffect(() => {
     let cancelled = false;
     setNewsLoading(true);
     getFootballNews(12)
       .then((articles) => { if (!cancelled) setNews(articles); })
+      .catch((error) => {
+        if (!cancelled) console.warn('Football news could not be loaded:', error);
+      })
       .finally(() => { if (!cancelled) setNewsLoading(false); });
     return () => { cancelled = true; };
   }, []);
 
   useEffect(() => {
     const adsToScroll = dynamicAds;
-    if (!adsToScroll.length) return;
-    const interval = setInterval(() => {
-      if (adsRef.current) {
-        const nextIndex = (adIndex + 1) % adsToScroll.length;
-        const width = adsRef.current.offsetWidth;
-        adsRef.current.scrollTo({ left: nextIndex * width, behavior: 'smooth' });
-        setAdIndex(nextIndex);
-      }
-    }, 5000);
-    return () => clearInterval(interval);
-  }, [adIndex, dynamicAds]);
+    if (!adsToScroll.length || !isTabActive || prefersReducedMotion) return;
+    const interval = window.setInterval(() => {
+      const el = adsRef.current;
+      if (!el || document.visibilityState !== 'visible') return;
+      const width = el.offsetWidth || 1;
+      const current = Math.round(el.scrollLeft / width);
+      const next = (current + 1) % adsToScroll.length;
+      el.scrollTo({ left: next * width, behavior: 'smooth' });
+      setAdIndex(next);
+    }, 6000);
+    return () => window.clearInterval(interval);
+  }, [dynamicAds, isTabActive, prefersReducedMotion]);
 
   const handleScroll = () => {
     if (adsRef.current) {
@@ -418,10 +458,21 @@ export const Home: React.FC<HomeProps> = ({ onTabChange }) => {
   const selectedCount = selectedMatches.length;
   const featuredIsNext = selectedCount === 0;
 
+  const finishedMatches = useMemo(
+    () =>
+      upcomingMatches
+        .filter((m: any) => m?.fixture?.status?.state === 'post' && /^\d+\s*-\s*\d+$/.test(String(m.score || '')))
+        .sort((a: any, b: any) => String(b.fixtureDate || '').localeCompare(String(a.fixtureDate || '')))
+        .slice(0, 10),
+    [upcomingMatches],
+  );
+  const liveNowCount = liveMatches.filter((m: any) => m?.fixture?.status?.state === 'in' || m.status === 'Live').length;
+  const finishedTodayCount = finishedMatches.filter((m: any) => m.dateKey === todayKey).length;
+
   const groupedList = useMemo(() => {
     const groups = new Map<string, any[]>();
     for (const m of listMatches) {
-      const key = m.league || 'Football';
+      const key = m.league || 'Other competitions';
       if (!groups.has(key)) groups.set(key, []);
       groups.get(key)!.push(m);
     }
@@ -481,6 +532,19 @@ export const Home: React.FC<HomeProps> = ({ onTabChange }) => {
           </div>
         ) : (
           <>
+            {loadFailed && (
+              <div role="status" className="flex items-center justify-between gap-3 rounded-2xl border border-[var(--danger)]/30 bg-[var(--danger-soft)] p-4">
+                <p className="text-[13px] font-medium text-[var(--text-strong)]">Couldn't refresh fixtures.</p>
+                <button
+                  type="button"
+                  onClick={() => { setReloadNonce((n) => n + 1); setIsLoading(true); }}
+                  className="shrink-0 rounded-xl bg-[var(--primary)] px-3 py-2 text-meta font-semibold text-[var(--primary-foreground)] press"
+                >
+                  Retry
+                </button>
+              </div>
+            )}
+
             {/* Featured */}
             {featuredMatch ? (
               <FeaturedMatch
@@ -495,15 +559,15 @@ export const Home: React.FC<HomeProps> = ({ onTabChange }) => {
               </div>
             )}
 
-            {selectedCount === 0 && featuredMatch && (
+            {featuredIsNext && featuredMatch && (
               <div className="flex items-start gap-3 rounded-2xl border border-[var(--border)] bg-[var(--surface-1)] p-4">
                 <Info className="mt-0.5 h-4 w-4 shrink-0 text-[var(--text-muted)]" />
                 <div className="min-w-0">
                   <p className="text-[13px] font-medium text-[var(--text-strong)]">
-                    'No more fixtures today'
+                    No more fixtures today
                   </p>
                   <p className="mt-0.5 text-[12px] leading-relaxed text-[var(--text-muted)]">
-                    Showing the next scheduled fixtures below.
+                    Showing the next major fixture, then the rest of the selected day.
                   </p>
                 </div>
               </div>
@@ -566,18 +630,19 @@ export const Home: React.FC<HomeProps> = ({ onTabChange }) => {
                 onAction={() => onTabChange('matches')}
               />
               {groupedList.length > 0 ? (
-                <div className="space-y-3">
+                <div className="space-y-5">
                   {groupedList.map(([league, rows]) => (
-                    <div key={league} className="overflow-hidden rounded-[20px] border border-[var(--border)] bg-[var(--surface-1)]">
-                      <div className="flex items-center justify-between border-b border-[var(--border)] px-4 py-2.5">
-                        <span className="text-[12px] font-medium text-[var(--text-muted)] truncate">{league}</span>
-                        <span className="text-[11px] text-[var(--text-subtle)]">{rows.length}</span>
+                    <div key={league} className="space-y-2.5">
+                      <div className="flex items-center justify-between px-0.5">
+                        <span className="truncate text-[12px] font-medium text-[var(--text-muted)]">{league}</span>
+                        <span className="tabular text-[11px] text-[var(--text-subtle)]">{rows.length}</span>
                       </div>
                       {rows.map((match: any, idx: number) => (
-                        <FixtureRow
-                          key={match.id}
+                        <ModernMatchCard
+                          key={match.id || idx}
                           match={match}
-                          isLast={idx === rows.length - 1}
+                          variant="prematch"
+                          showLeague={false}
                           onClick={() => handleAnalyze(match)}
                         />
                       ))}
@@ -586,8 +651,12 @@ export const Home: React.FC<HomeProps> = ({ onTabChange }) => {
                 </div>
               ) : (
                 <div className="rounded-2xl border border-[var(--border)] bg-[var(--surface-1)] p-6 text-center">
-                  <p className="text-[14px] font-medium text-[var(--text-strong)]">No fixtures scheduled</p>
-                  <p className="mt-1 text-[12px] text-[var(--text-muted)]">Check back later for new matches.</p>
+                  <p className="text-[14px] font-medium text-[var(--text-strong)]">
+                    {selectedCount ? 'No more fixtures today' : 'No fixtures scheduled'}
+                  </p>
+                  <p className="mt-1 text-[12px] text-[var(--text-muted)]">
+                    {selectedCount ? 'Browse the Matches tab for other dates.' : 'Check back later for new matches.'}
+                  </p>
                 </div>
               )}
             </section>
@@ -602,9 +671,15 @@ export const Home: React.FC<HomeProps> = ({ onTabChange }) => {
               />
               {isPaid ? (
                 liveMatches.length > 0 ? (
-                  <div className="overflow-hidden rounded-[20px] border border-[var(--border)] bg-[var(--surface-1)]">
-                    {liveMatches.slice(0, 6).map((match: any, idx: number, arr: any[]) => (
-                      <FixtureRow key={match.id} match={match} isLast={idx === arr.length - 1} onClick={() => onTabChange('matches')} />
+                  <div className="space-y-2.5">
+                    {liveMatches.slice(0, 6).map((match: any, idx: number) => (
+                      <ModernMatchCard
+                        key={match.id || idx}
+                        match={match}
+                        variant="live"
+                        showLeague={false}
+                        onClick={() => onTabChange('matches')}
+                      />
                     ))}
                   </div>
                 ) : (
@@ -618,12 +693,38 @@ export const Home: React.FC<HomeProps> = ({ onTabChange }) => {
                     <Lock className="h-4 w-4 text-[var(--text-muted)]" />
                   </div>
                   <div className="min-w-0">
-                    <p className="text-[14px] font-medium text-[var(--text-strong)]">Live matches are on paid plans</p>
-                    <p className="mt-0.5 text-[12px] leading-relaxed text-[var(--text-muted)]">Upgrade to unlock live scores and live AI analysis.</p>
+                    <div className="min-w-0 flex-1">
+                      <p className="text-[14px] font-medium text-[var(--text-strong)]">Live matches are on paid plans</p>
+                      <p className="mt-0.5 text-[12px] leading-relaxed text-[var(--text-muted)]">Upgrade to unlock live scores and live AI analysis.</p>
+                      <button
+                        type="button"
+                        onClick={() => onTabChange('subscriptions')}
+                        className="mt-2.5 rounded-xl bg-[var(--primary)] px-3.5 py-2 text-meta font-semibold text-[var(--primary-foreground)] press"
+                      >
+                        View plans
+                      </button>
+                    </div>
                   </div>
                 </div>
               )}
             </section>
+
+            {/* Latest results */}
+            {finishedMatches.length > 0 && (
+              <section className="space-y-3">
+                <SectionHeader
+                  title="Latest results"
+                  icon={<Trophy className="h-4 w-4 text-[var(--primary)]" />}
+                  action="See all"
+                  onAction={() => onTabChange('matches')}
+                />
+                <div className="no-scrollbar -mx-5 flex gap-2.5 overflow-x-auto px-5 pb-1">
+                  {finishedMatches.map((match: any, i: number) => (
+                    <ResultCard key={match.id || i} match={match} onClick={() => handleAnalyze(match)} />
+                  ))}
+                </div>
+              </section>
+            )}
 
             {/* Trending */}
             {trendingMatches.length > 0 && (
