@@ -477,7 +477,7 @@ async function getTelegramProfilePhotoUrl(telegramId: number, bot: Telegraf | nu
   }
 }
 
-type HistoryStatus = "pending" | "won" | "lost";
+type HistoryStatus = "pending" | "won" | "lost" | "not_applicable";
 
 type UserHistoryItem = {
   id: string;
@@ -490,6 +490,8 @@ type UserHistoryItem = {
   reasoning: string;
   analysisPayload?: any;
   status: HistoryStatus;
+  /** Final score attached when the row resolves (persisted in analysis_payload.outcome). */
+  outcome?: { home: number; away: number } | null;
   created_at: string;
   resolved_at?: string | null;
 };
@@ -534,6 +536,7 @@ async function getUserHistory(telegramId: number): Promise<UserHistoryItem[]> {
     confidence: Number(row.confidence || 0),
     reasoning: row.reasoning || "",
     analysisPayload: row.analysis_payload || null,
+    outcome: row.analysis_payload?.outcome || null,
     status: row.status || "pending",
     created_at: row.created_at,
     resolved_at: row.resolved_at || null,
@@ -577,11 +580,24 @@ async function insertHistoryItem(telegramId: number, item: UserHistoryItem) {
  */
 async function updateHistoryItem(
   telegramId: number,
-  item: Pick<UserHistoryItem, "id" | "status" | "resolved_at">,
+  item: Pick<UserHistoryItem, "id" | "status" | "resolved_at" | "outcome">,
 ) {
+  const patch: Record<string, any> = {
+    status: item.status,
+    resolved_at: item.resolved_at || null,
+  };
+  if (item.outcome) {
+    const { data: row } = await supabase
+      .from("user_history")
+      .select("analysis_payload")
+      .eq("id", item.id)
+      .eq("telegram_id", telegramId)
+      .maybeSingle();
+    patch.analysis_payload = { ...(row?.analysis_payload || {}), outcome: item.outcome };
+  }
   const { error } = await supabase
     .from("user_history")
-    .update({ status: item.status, resolved_at: item.resolved_at || null })
+    .update(patch)
     .eq("id", item.id)
     .eq("telegram_id", telegramId);
   if (error) throw error;
@@ -641,6 +657,54 @@ function isNonResolvableMarket(mk: string): boolean {
   return NON_RESOLVABLE_MARKETS.some((kw) => mk.includes(kw));
 }
 
+// Team-name normalisation used when matching stored names against provider data.
+const TEAM_TOKEN_ALIASES: Record<string, string> = {
+  man: "manchester",
+  utd: "united",
+  wand: "wanderers",
+  wolves: "wolverhampton",
+  spurs: "tottenham",
+};
+
+function normalizeTeamName(value: unknown): string {
+  return String(value || "")
+    .toLowerCase()
+    .normalize("NFD")
+    .replace(/[\u0300-\u036f]/g, "")
+    .replace(/&/g, " and ")
+    .replace(/\b(fc|cf|sc|ac|afc|cfc|fk|sk|as|ss|sv|club|the|calcio)\b/g, " ")
+    .replace(/[^a-z0-9]+/g, " ")
+    .replace(/\s+/g, " ")
+    .trim();
+}
+
+function teamNameTokens(value: string): Set<string> {
+  return new Set(
+    normalizeTeamName(value)
+      .split(" ")
+      .map((token) => TEAM_TOKEN_ALIASES[token] || token)
+      .filter((token) => token.length > 1),
+  );
+}
+
+/** Tolerant team-name match: handles "Man City" ↔ "Manchester City", "&" vs "and", accents, FC/CF suffixes. */
+function teamNamesMatch(a: unknown, b: unknown): boolean {
+  const left = normalizeTeamName(a);
+  const right = normalizeTeamName(b);
+  if (!left || !right) return false;
+  if (left === right) return true;
+  if (left.includes(right) || right.includes(left)) return true;
+
+  const leftTokens = teamNameTokens(left);
+  const rightTokens = teamNameTokens(right);
+  if (!leftTokens.size || !rightTokens.size) return false;
+  let shared = 0;
+  for (const token of leftTokens) {
+    if (rightTokens.has(token)) shared += 1;
+  }
+  return shared > 0 && shared >= Math.ceil(Math.min(leftTokens.size, rightTokens.size) * 0.6);
+}
+
 function evaluatePredictionMarket(market: string, homeGoals: number, awayGoals: number): HistoryStatus {
   const mk = normalizeMarket(market);
   const total = homeGoals + awayGoals;
@@ -648,34 +712,46 @@ function evaluatePredictionMarket(market: string, homeGoals: number, awayGoals: 
   if (!mk) return "pending";
 
   // Skip markets that can't be resolved from a final score — leave as pending
-  // rather than silently awarding "lost" via the 24h guardrail.
+  // rather than silently awarding "lost" via the 48h guardrail.
   if (isNonResolvableMarket(mk)) return "pending";
 
-  // 1. Full Match Results (1X2)
-  // Handles: "1", "Home Win", "Match Winner - Home", "Home Team Win", "1X2 - Home"
-  if (
-    mk === "1" ||
-    mk === "home win" ||
-    mk === "home" ||
-    (mk.includes("home") && (mk.includes("win") || mk.includes("winner")) && !mk.includes("draw") && !mk.includes("away"))
-  ) {
-    return homeGoals > awayGoals ? "won" : "lost";
+  // Compound markets: "Home Win & Over 2.5" needs every leg, "BTTS or Over 2.5"
+  // needs any leg. Double-chance wording ("Home or Draw") is handled below.
+  const isDoubleChance = mk.includes("double chance");
+  if (!isDoubleChance && /\s(?:&|and)\s/.test(mk)) {
+    const legs = mk.split(/\s+&\s+|\s+and\s+/).map((leg) => leg.trim()).filter(Boolean);
+    const results = legs.map((leg) => evaluatePredictionMarket(leg, homeGoals, awayGoals));
+    if (results.some((result) => result === "pending")) return "pending";
+    return results.every((result) => result === "won") ? "won" : "lost";
   }
-  // Handles: "2", "Away Win", "Match Winner - Away", "Away Team Win"
-  if (
-    mk === "2" ||
-    mk === "away win" ||
-    mk === "away" ||
-    (mk.includes("away") && (mk.includes("win") || mk.includes("winner")) && !mk.includes("draw") && !mk.includes("home"))
-  ) {
-    return awayGoals > homeGoals ? "won" : "lost";
-  }
-  // Handles: "X", "Draw", "Match Winner - Draw", "Full Time Draw"
-  if (mk === "x" || mk === "draw" || (mk.includes("draw") && !mk.includes("no"))) {
-    return homeGoals === awayGoals ? "won" : "lost";
+  if (!isDoubleChance && /\sor\s/.test(mk)) {
+    const legs = mk.split(/\s+or\s+/).map((leg) => leg.trim()).filter(Boolean);
+    const results = legs.map((leg) => evaluatePredictionMarket(leg, homeGoals, awayGoals));
+    if (results.includes("won")) return "won";
+    if (results.every((result) => result === "lost")) return "lost";
+    return "pending";
   }
 
-  // 2. Double Chance — remove the brittle length<=3 guard, use keyword matching instead
+  // 1. Full Match Results (1X2)
+  // Handles: "1", "X", "Home Win", "Match Winner - Home", "1X2 - Home",
+  // "Match Result: Away", "Full Time Result - Draw".
+  const isResultMarket =
+    mk === "1" ||
+    mk === "2" ||
+    mk === "x" ||
+    mk === "home" ||
+    mk === "away" ||
+    mk === "draw" ||
+    mk === "home win" ||
+    mk === "away win" ||
+    /\b(1x2|match result|full time result|match winner|winner|win)\b/.test(mk);
+  if (isResultMarket) {
+    if (/(^|\b)home(\b|$)/.test(mk)) return homeGoals > awayGoals ? "won" : "lost";
+    if (/(^|\b)away(\b|$)/.test(mk)) return awayGoals > homeGoals ? "won" : "lost";
+    if (/(^|\b)draw(\b|$)/.test(mk)) return homeGoals === awayGoals ? "won" : "lost";
+  }
+
+  // 2. Double Chance
   // Handles: "1X", "1x", "Home or Draw", "Double Chance - 1X", "Double Chance (Home/Draw)"
   if (
     mk === "1x" ||
@@ -701,18 +777,19 @@ function evaluatePredictionMarket(market: string, homeGoals: number, awayGoals: 
     return homeGoals !== awayGoals ? "won" : "lost";
   }
 
-  // 3. Over/Under — only match if it looks like a goals market (not corners/cards/shots)
-  // Prefix "goals" detection: market must contain "goal" or have no sport-specific qualifier
-  const overMatch = mk.match(/over\s*(\d+\.?\d*)/);
-  if (overMatch) {
-    // Ensure this is a goals over/under, not corners, cards, etc.
-    const threshold = parseFloat(overMatch[1]);
-    return total > threshold ? "won" : "lost";
-  }
-  const underMatch = mk.match(/under\s*(\d+\.?\d*)/);
-  if (underMatch) {
-    const threshold = parseFloat(underMatch[1]);
-    return total < threshold ? "won" : "lost";
+  // 3. Over/Under goals (defensive guard against other "over/under" props)
+  const isGoalsMarket = !/(corner|card|booking|shot|offside|foul|save|throw|substitution|handicap)/.test(mk);
+  if (isGoalsMarket) {
+    const overMatch = mk.match(/over\s*(\d+\.?\d*)/);
+    if (overMatch) {
+      const threshold = parseFloat(overMatch[1]);
+      return total > threshold ? "won" : "lost";
+    }
+    const underMatch = mk.match(/under\s*(\d+\.?\d*)/);
+    if (underMatch) {
+      const threshold = parseFloat(underMatch[1]);
+      return total < threshold ? "won" : "lost";
+    }
   }
 
   // 4. Both Teams to Score (BTTS)
@@ -766,7 +843,14 @@ async function getRecentScoreboardEvents(): Promise<any[]> {
   if (recentScoreboardInFlight) return recentScoreboardInFlight;
 
   recentScoreboardInFlight = (async () => {
-    const dates = [getUtcDateString(-1), getUtcDateString(0)];
+    // Cover yesterday through tomorrow so fixtures that kicked off late (or in
+    // another timezone) are still found when a history row is settled.
+    const dates = [
+      getUtcDateString(-2),
+      getUtcDateString(-1),
+      getUtcDateString(0),
+      getUtcDateString(1),
+    ];
     const responses = await Promise.all(
       dates.map((date) =>
         axios.get(
@@ -807,12 +891,18 @@ function extractTonComment(payload: unknown): string | null {
 }
 
 async function resolveHistoryItemResult(item: UserHistoryItem): Promise<UserHistoryItem> {
-  if (item.status !== "pending") {
+  // Older builds forced unresolved rows to "lost" after 24h without ever
+  // recording a score. Those rows are re-checked once (a real loss simply
+  // re-confirms and gains an outcome). Everything else is left untouched.
+  const isRepairableLoss = item.status === "lost" && !item.outcome;
+  if (item.status !== "pending" && !isRepairableLoss) {
     return item;
   }
 
   const createdAtMs = new Date(item.created_at).getTime();
-  const isOlderThan24h = Number.isFinite(createdAtMs) && (Date.now() - createdAtMs) >= (24 * 60 * 60 * 1000);
+  const ageMs = Number.isFinite(createdAtMs) ? Date.now() - createdAtMs : 0;
+  const isOlderThan48h = ageMs >= 48 * 60 * 60 * 1000;
+  const withinBsdSearchWindow = ageMs >= 0 && ageMs < 7 * 24 * 60 * 60 * 1000;
 
   const tryResolveFromAllScoreboard = async (): Promise<UserHistoryItem | null> => {
     try {
@@ -823,20 +913,23 @@ async function resolveHistoryItemResult(item: UserHistoryItem): Promise<UserHist
         const state = comp?.status?.type?.state;
         if (state !== "post") continue;
 
+        // Never match a fixture from before the row was created (e.g. the
+        // reverse fixture from a few days earlier).
+        const eventMs = Date.parse(String(event?.date || ""));
+        if (Number.isFinite(eventMs) && Number.isFinite(createdAtMs) && eventMs < createdAtMs - 6 * 60 * 60 * 1000) {
+          continue;
+        }
+
         const competitors = comp?.competitors || [];
         const home = competitors.find((c: any) => c.homeAway === "home");
         const away = competitors.find((c: any) => c.homeAway === "away");
-        const homeName = String(home?.team?.displayName || home?.team?.name || "").toLowerCase().trim();
-        const awayName = String(away?.team?.displayName || away?.team?.name || "").toLowerCase().trim();
-        const expectedHome = String(item.home || "").toLowerCase().trim();
-        const expectedAway = String(item.away || "").toLowerCase().trim();
+        const homeName = home?.team?.displayName || home?.team?.name;
+        const awayName = away?.team?.displayName || away?.team?.name;
 
-        if (!homeName || !awayName || !expectedHome || !expectedAway) continue;
+        if (!homeName || !awayName || !item.home || !item.away) continue;
 
-        // Bidirectional fuzzy match: ESPN name contains stored name OR stored name contains ESPN name
-        const nameMatches = (a: string, b: string) => a.includes(b) || b.includes(a);
-        const sameOrder = nameMatches(homeName, expectedHome) && nameMatches(awayName, expectedAway);
-        const reverseOrder = nameMatches(homeName, expectedAway) && nameMatches(awayName, expectedHome);
+        const sameOrder = teamNamesMatch(homeName, item.home) && teamNamesMatch(awayName, item.away);
+        const reverseOrder = teamNamesMatch(homeName, item.away) && teamNamesMatch(awayName, item.home);
         if (!sameOrder && !reverseOrder) continue;
 
         const espnHomeGoals = Number(home?.score ?? 0);
@@ -847,13 +940,41 @@ async function resolveHistoryItemResult(item: UserHistoryItem): Promise<UserHist
         const result = evaluatePredictionMarket(item.predictionMarket, homeGoals, awayGoals);
         if (result === "pending") return null;
 
-        return { ...item, status: result, resolved_at: new Date().toISOString() };
+        return {
+          ...item,
+          status: result,
+          resolved_at: new Date().toISOString(),
+          outcome: { home: homeGoals, away: awayGoals },
+        };
       }
     } catch {
       return null;
     }
     return null;
   };
+
+  // BSD fixtures: settle straight from the provider's final score.
+  // Rows may store the id with ("bsd_123") or without ("123") the prefix.
+  const looksLikeBsdId = !!item.fixtureId && (/^bsd_\d+$/.test(item.fixtureId) || /^\d+$/.test(item.fixtureId));
+  if (looksLikeBsdId) {
+    try {
+      const preview = await getLiveMatchPreview(item.fixtureId!);
+      const state = preview?.fixture?.status?.state;
+      if (state !== "post") return item;
+      const homeGoals = Number(preview?.goals?.home ?? 0);
+      const awayGoals = Number(preview?.goals?.away ?? 0);
+      const result = evaluatePredictionMarket(item.predictionMarket, homeGoals, awayGoals);
+      if (result === "pending") return item;
+      return {
+        ...item,
+        status: result,
+        resolved_at: new Date().toISOString(),
+        outcome: { home: homeGoals, away: awayGoals },
+      };
+    } catch {
+      // Fall through to scoreboard matching below.
+    }
+  }
 
   try {
     if (item.fixtureId?.startsWith("espn_")) {
@@ -878,19 +999,52 @@ async function resolveHistoryItemResult(item: UserHistoryItem): Promise<UserHist
       const result = evaluatePredictionMarket(item.predictionMarket, homeGoals, awayGoals);
 
       if (result === "pending") return item;
-      return { ...item, status: result, resolved_at: new Date().toISOString() };
+      return {
+        ...item,
+        status: result,
+        resolved_at: new Date().toISOString(),
+        outcome: { home: homeGoals, away: awayGoals },
+      };
     }
   } catch {
     // Fallback to scoreboard resolution below.
   }
 
+  // BSD team-name lookup: covers rows with a missing/foreign fixture id.
+  if (withinBsdSearchWindow && !item.fixtureId?.startsWith("espn_")) {
+    try {
+      const { fetchBsdMatchStatsByName } = await import("./services/footballService.js");
+      const preview = await fetchBsdMatchStatsByName(item.home, item.away);
+      if (preview?.fixture?.status?.state === "post") {
+        const homeGoals = Number(preview?.goals?.home ?? 0);
+        const awayGoals = Number(preview?.goals?.away ?? 0);
+        const result = evaluatePredictionMarket(item.predictionMarket, homeGoals, awayGoals);
+        if (result !== "pending") {
+          return {
+            ...item,
+            status: result,
+            resolved_at: new Date().toISOString(),
+            outcome: { home: homeGoals, away: awayGoals },
+          };
+        }
+      }
+    } catch {
+      // Continue to scoreboard matching.
+    }
+  }
+
   const resolvedByTeams = await tryResolveFromAllScoreboard();
   if (resolvedByTeams) return resolvedByTeams;
 
-  // 24h guardrail: after a day, if the match should be over but we still can't resolve it,
-  // mark as lost — UNLESS the market is one we can never resolve from scoreline data.
-  if (isOlderThan24h && !isNonResolvableMarket(normalizeMarket(item.predictionMarket))) {
-    return { ...item, status: "lost", resolved_at: new Date().toISOString() };
+  // A previously forced "lost" must never be downgraded just because the score
+  // can no longer be found — only upgrade it when a result was actually found.
+  if (isRepairableLoss) return item;
+
+  // 48h guardrail: if the fixture still cannot be found after two days, the row
+  // can never be settled — mark it not_applicable instead of forcing a "lost",
+  // which would silently poison the user's win/loss record.
+  if (isOlderThan48h) {
+    return { ...item, status: "not_applicable", resolved_at: new Date().toISOString() };
   }
 
   return item;
@@ -3081,9 +3235,24 @@ function extractTelegramChannelFromTaskUrl(taskUrl: string): string | null {
 
       // Resolving hits external APIs. Bound both the number of items per
       // request and the outbound concurrency so one client cannot fan out
-      // hundreds of requests.
-      const pendingItems = history.filter((item) => item.status === "pending").slice(0, 10);
-      const resolvedPending = await mapWithConcurrency(pendingItems, 3, async (item) => {
+      // hundreds of requests. Oldest first so rows stuck the longest settle
+      // before newer ones. Rows previously forced to "lost" without a recorded
+      // score are re-checked once and repaired if the result is now known.
+      const nowMs = Date.now();
+      const resolvableItems = history
+        .filter((item) => {
+          if (item.status === "pending") return true;
+          if (item.status !== "lost" || item.outcome) return false;
+          const createdMs = new Date(item.created_at).getTime();
+          return Number.isFinite(createdMs) && nowMs - createdMs <= 7 * 24 * 60 * 60 * 1000;
+        })
+        .sort((a, b) => new Date(a.created_at).getTime() - new Date(b.created_at).getTime())
+        .slice(0, 20);
+      const resolveStartedAt = Date.now();
+      const resolvedPending = await mapWithConcurrency(resolvableItems, 3, async (item) => {
+        // Keep the page responsive: settle what fits in the time budget and
+        // leave the rest pending for the next visit.
+        if (Date.now() - resolveStartedAt > 15_000) return item;
         try {
           return await resolveHistoryItemResult(item);
         } catch (error: any) {
@@ -3097,7 +3266,8 @@ function extractTelegramChannelFromTaskUrl(taskUrl: string): string | null {
       const changedItems = resolved.filter(
         (item, index) =>
           item.status !== history[index]?.status ||
-          item.resolved_at !== history[index]?.resolved_at,
+          item.resolved_at !== history[index]?.resolved_at ||
+          JSON.stringify(item.outcome || null) !== JSON.stringify(history[index]?.outcome || null),
       );
       await Promise.all(
         changedItems.map((item) =>
@@ -3105,6 +3275,7 @@ function extractTelegramChannelFromTaskUrl(taskUrl: string): string | null {
             id: item.id,
             status: item.status,
             resolved_at: item.resolved_at,
+            outcome: item.outcome || null,
           }).catch((error) => console.error("Failed to update history item:", error?.message || error)),
         ),
       );

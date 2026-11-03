@@ -14,7 +14,7 @@ CREATE TABLE IF NOT EXISTS public.user_history (
   confidence NUMERIC(5,2) NOT NULL DEFAULT 0,
   reasoning TEXT,
   analysis_payload JSONB,
-  status TEXT NOT NULL DEFAULT 'pending' CHECK (status IN ('pending', 'won', 'lost')),
+  status TEXT NOT NULL DEFAULT 'pending' CHECK (status IN ('pending', 'won', 'lost', 'not_applicable')),
   created_at TIMESTAMPTZ NOT NULL DEFAULT now(),
   resolved_at TIMESTAMPTZ
 );
