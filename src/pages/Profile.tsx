@@ -31,7 +31,8 @@ import {
   X,
   CreditCard as StarsIcon,
   User,
-  UserPlus
+  UserPlus,
+  Smartphone
 } from 'lucide-react';
 import { useUserStore } from '../store/useUserStore';
 import { useTelegram } from '../hooks/useTelegram';
@@ -83,6 +84,9 @@ const PLANS = [
 
 const USD_TO_STARS_RATE = 50; // 1 USD ≈ 50 Telegram Stars
 const DEFAULT_USD_TO_TON_RATE = Number(import.meta.env.VITE_USD_TO_TON_RATE || 0.23);
+const CHAPA_PENDING_KEY = 'flashai_chapa_pending_ref';
+const CHAPA_PENDING_TS_KEY = 'flashai_chapa_pending_ts';
+const CHAPA_PENDING_MAX_AGE_MS = 30 * 60 * 1000;
 
 const getPriceInStars = (plan: any) => Number(plan?.starsPrice || Math.ceil(Number(plan?.usdPrice || 0) * USD_TO_STARS_RATE));
 const getPriceInTon = (plan: any, usdToTonRate: number) => {
@@ -110,7 +114,7 @@ type ProfileSection = "subscriptions" | "payment" | "referral" | "support";
 
 export const Profile: React.FC<{ initialSection?: ProfileSection }> = ({ initialSection }) => {
   const [isSignUpOpen, setIsSignUpOpen] = useState(false);
-  const { user, setUser } = useUserStore();
+  const { user, setUser, updatePlan, updateCredits } = useUserStore();
   const { tg, hapticFeedback, showAlert, showConfirm, initData } = useTelegram();
   const [isEditing, setIsEditing] = useState(false);
   const [isViewingSubscriptions, setIsViewingSubscriptions] = useState(false);
@@ -158,6 +162,7 @@ export const Profile: React.FC<{ initialSection?: ProfileSection }> = ({ initial
   const [isViewingPaymentMethods, setIsViewingPaymentMethods] = useState(false);
   const [selectedPlanForPayment, setSelectedPlanForPayment] = useState<any>(null);
   const [usdToTonRate, setUsdToTonRate] = useState(DEFAULT_USD_TO_TON_RATE);
+  const [chapaConfig, setChapaConfig] = useState<any>(null);
 
   // Support Chat State
   const [chatMessage, setChatMessage] = useState('');
@@ -203,6 +208,77 @@ export const Profile: React.FC<{ initialSection?: ProfileSection }> = ({ initial
         // Keep fallback rate.
       });
   }, []);
+
+  useEffect(() => {
+    if (!isViewingPaymentMethods) return;
+    const effectiveInitData = initData || (window as any)?.Telegram?.WebApp?.initData || '';
+    fetch('/api/payments/chapa/config', {
+      headers: effectiveInitData ? { 'X-TG-Init-Data': effectiveInitData } : {},
+    })
+      .then((res) => (res.ok ? res.json() : null))
+      .then((data) => setChapaConfig(data))
+      .catch(() => setChapaConfig(null));
+  }, [isViewingPaymentMethods, initData]);
+
+  // Chapa redirects back to the app; verify the stored reference on focus and
+  // while the app stays open so the plan updates even without a webhook.
+  useEffect(() => {
+    const pendingRef = sessionStorage.getItem(CHAPA_PENDING_KEY);
+    if (!pendingRef) return;
+
+    const startedAt = Number(sessionStorage.getItem(CHAPA_PENDING_TS_KEY) || 0);
+    if (startedAt && Date.now() - startedAt > CHAPA_PENDING_MAX_AGE_MS) {
+      sessionStorage.removeItem(CHAPA_PENDING_KEY);
+      sessionStorage.removeItem(CHAPA_PENDING_TS_KEY);
+      return;
+    }
+
+    let cancelled = false;
+    const checkPayment = async () => {
+      const effectiveInitData = initData || (window as any)?.Telegram?.WebApp?.initData || '';
+      if (!effectiveInitData || cancelled) return;
+      try {
+        const res = await fetch(`/api/payments/chapa/verify/${encodeURIComponent(pendingRef)}`, {
+          headers: { 'X-TG-Init-Data': effectiveInitData },
+        });
+        const data = await res.json().catch(() => ({}));
+        if (cancelled || !res.ok) return;
+
+        if (['failed', 'cancelled', 'incomplete', 'expired'].includes(String(data?.status || ''))) {
+          sessionStorage.removeItem(CHAPA_PENDING_KEY);
+          sessionStorage.removeItem(CHAPA_PENDING_TS_KEY);
+          cancelled = true;
+          showAlert('The Chapa payment was not completed.');
+          return;
+        }
+        if (data?.status !== 'success') return;
+
+        sessionStorage.removeItem(CHAPA_PENDING_KEY);
+        sessionStorage.removeItem(CHAPA_PENDING_TS_KEY);
+        cancelled = true;
+        if (typeof data.userPlan === 'string') updatePlan(data.userPlan as any);
+        if (Number.isFinite(Number(data.credits))) updateCredits(Number(data.credits));
+        showAlert('Payment received! Your plan is now active.');
+      } catch {
+        // Keep polling; transient network errors are expected in the mini app.
+      }
+    };
+
+    const onFocus = () => {
+      void checkPayment();
+    };
+    window.addEventListener('focus', onFocus);
+    const interval = window.setInterval(() => {
+      void checkPayment();
+    }, 15000);
+    void checkPayment();
+
+    return () => {
+      cancelled = true;
+      window.removeEventListener('focus', onFocus);
+      window.clearInterval(interval);
+    };
+  }, [initData, updateCredits, updatePlan]);
 
   useEffect(() => {
     if (!isViewingLegal) return;
@@ -671,6 +747,63 @@ export const Profile: React.FC<{ initialSection?: ProfileSection }> = ({ initial
       }
     } catch (e: any) {
       console.error('Card payment error:', e);
+      showAlert('Failed to initiate payment: ' + (e.message || 'Unknown error'));
+    } finally {
+      setPaymentProcessing({ isLoading: false, title: '', detail: '' });
+    }
+  };
+
+  const handleChapaPayment = async () => {
+    hapticFeedback('medium');
+    if (!selectedPlanForPayment || !user) return;
+
+    const effectiveInitData = initData || (window as any)?.Telegram?.WebApp?.initData || '';
+    try {
+      setPaymentProcessing({
+        isLoading: true,
+        title: 'Opening Chapa checkout',
+        detail: 'Redirecting to secure Ethiopian payment...',
+      });
+
+      const response = await fetch('/api/payments/chapa/initialize', {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          'X-TG-Init-Data': effectiveInitData,
+        },
+        body: JSON.stringify({
+          telegramId: user.telegram_id,
+          planId: selectedPlanForPayment.id,
+        }),
+      });
+      const data = await response.json().catch(() => ({}));
+
+      if (!response.ok) {
+        if (data?.code === 'CHAPA_PHONE_INELIGIBLE') {
+          showAlert('Chapa is available for Ethiopian phone numbers only.');
+          return;
+        }
+        if (data?.code === 'CHAPA_NOT_CONFIGURED') {
+          showAlert('Chapa checkout is coming soon.');
+          return;
+        }
+        throw new Error(data?.error || 'Failed to create Chapa checkout');
+      }
+
+      if (!data.checkoutUrl) throw new Error('No checkout URL returned');
+
+      if (data.reference) {
+        sessionStorage.setItem(CHAPA_PENDING_KEY, String(data.reference));
+        sessionStorage.setItem(CHAPA_PENDING_TS_KEY, String(Date.now()));
+      }
+      if (tg?.openLink) {
+        tg.openLink(data.checkoutUrl);
+      } else {
+        window.open(data.checkoutUrl, '_blank');
+      }
+      showAlert('Complete the payment in Chapa. Your plan will activate automatically.');
+    } catch (e: any) {
+      console.error('Chapa payment error:', e);
       showAlert('Failed to initiate payment: ' + (e.message || 'Unknown error'));
     } finally {
       setPaymentProcessing({ isLoading: false, title: '', detail: '' });
@@ -1269,6 +1402,7 @@ export const Profile: React.FC<{ initialSection?: ProfileSection }> = ({ initial
     const selectedPlanUsdPrice = Number(selectedPlanForPayment.usdPrice || 0);
     const selectedStarsPrice = getPriceInStars(selectedPlanForPayment);
     const selectedTonPrice = getPriceInTon(selectedPlanForPayment, usdToTonRate);
+    const selectedChapaPrice = chapaConfig?.plans?.[selectedPlanForPayment.id];
     return (
       <div className="fixed inset-0 z-[100] bg-black flex flex-col overflow-hidden">
           <div className="flex-1 overflow-y-auto no-scrollbar px-5 py-6 space-y-5">
@@ -1339,6 +1473,26 @@ export const Profile: React.FC<{ initialSection?: ProfileSection }> = ({ initial
                 </div>
                 <ChevronRight className="w-5 h-5 text-[#FFC233]" />
               </button>
+
+              {chapaConfig?.enabled && chapaConfig?.eligible && selectedChapaPrice && (
+                <button
+                  onClick={handleChapaPayment}
+                  className="w-full bg-emerald-500/10 border border-emerald-500/25 rounded-3xl p-5 flex items-center justify-between group active:scale-[0.98] transition-all"
+                >
+                  <div className="flex items-center gap-4">
+                    <div className="w-12 h-12 rounded-2xl bg-emerald-500 flex items-center justify-center">
+                      <Smartphone className="w-6 h-6 text-white" />
+                    </div>
+                    <div className="text-left">
+                      <p className="text-base font-black text-white">Chapa</p>
+                      <p className="text-xs font-semibold text-zinc-400">
+                        {Number(selectedChapaPrice.etb).toLocaleString()} ETB • Telebirr, CBE Birr & cards
+                      </p>
+                    </div>
+                  </div>
+                  <ChevronRight className="w-5 h-5 text-emerald-400" />
+                </button>
+              )}
             </div>
 
             <div className="rounded-2xl bg-zinc-900/70 border border-zinc-800 p-4 space-y-3">

@@ -284,6 +284,24 @@ CREATE UNIQUE INDEX IF NOT EXISTS payment_intents_tx_hash_uq
   ON public.payment_intents (tx_hash)
   WHERE tx_hash IS NOT NULL;
 
+-- Chapa (Ethiopian Birr) hosted checkout attempts.
+CREATE TABLE IF NOT EXISTS public.chapa_payments (
+  id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+  telegram_id BIGINT NOT NULL,
+  plan_id TEXT NOT NULL,
+  merchant_reference TEXT NOT NULL UNIQUE,
+  chapa_reference TEXT,
+  amount_etb NUMERIC(18, 2) NOT NULL,
+  amount_cents BIGINT NOT NULL,
+  currency TEXT NOT NULL DEFAULT 'ETB',
+  rate NUMERIC(18, 4) NOT NULL DEFAULT 0,
+  status TEXT NOT NULL DEFAULT 'pending'
+    CHECK (status IN ('pending', 'success', 'failed', 'cancelled', 'incomplete', 'expired')),
+  checkout_url TEXT,
+  created_at TIMESTAMPTZ NOT NULL DEFAULT now(),
+  paid_at TIMESTAMPTZ
+);
+
 CREATE TABLE IF NOT EXISTS public.user_wallets (
   id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
   telegram_id BIGINT NOT NULL,
@@ -345,6 +363,7 @@ CREATE INDEX IF NOT EXISTS idx_credit_transactions_created ON public.credit_tran
 CREATE INDEX IF NOT EXISTS idx_transactions_telegram ON public.transactions(telegram_id);
 CREATE INDEX IF NOT EXISTS idx_processed_transactions_telegram ON public.processed_transactions(telegram_id);
 CREATE INDEX IF NOT EXISTS idx_payment_intents_telegram_status ON public.payment_intents(telegram_id, status);
+CREATE INDEX IF NOT EXISTS idx_chapa_payments_telegram ON public.chapa_payments(telegram_id, created_at DESC);
 CREATE UNIQUE INDEX IF NOT EXISTS user_wallets_telegram_wallet_uq
   ON public.user_wallets (telegram_id, wallet_address);
 CREATE INDEX IF NOT EXISTS user_wallets_telegram_id_idx ON public.user_wallets (telegram_id);
@@ -487,6 +506,7 @@ ALTER TABLE public.credit_transactions ENABLE ROW LEVEL SECURITY;
 ALTER TABLE public.transactions ENABLE ROW LEVEL SECURITY;
 ALTER TABLE public.processed_transactions ENABLE ROW LEVEL SECURITY;
 ALTER TABLE public.payment_intents ENABLE ROW LEVEL SECURITY;
+ALTER TABLE public.chapa_payments ENABLE ROW LEVEL SECURITY;
 ALTER TABLE public.user_wallets ENABLE ROW LEVEL SECURITY;
 ALTER TABLE public.usage_logs ENABLE ROW LEVEL SECURITY;
 ALTER TABLE public.reports ENABLE ROW LEVEL SECURITY;
