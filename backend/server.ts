@@ -721,9 +721,10 @@ function getUtcDateString(offsetDays = 0): string {
 // by the 24h guardrail.
 const NON_RESOLVABLE_MARKETS = [
   "player to score", "first goalscorer", "anytime goalscorer", "last goalscorer",
+  "scorer", "assist",
   "corner", "corners", "cards", "yellow card", "red card", "booking",
   "shots", "offside", "asian handicap", "handicap",
-  "half time", "first half", "second half", "ht/ft",
+  "half", "ht/ft",
   "clean sheet", "to nil", "win to nil",
   "dnb", "draw no bet",
   "half with most goals", "winning margin",
@@ -2027,10 +2028,41 @@ function extractTelegramChannelFromTaskUrl(taskUrl: string): string | null {
         }, 402);
       }
 
-      // 2. Perform Analysis
+      // 2. Build grounded match context before the AI call.
+      let fixtureDetails: any = null;
+      if (matchId) {
+        const vsMatch = matchString.match(/^(.+?)\s+vs\.?\s+(.+)$/i);
+        try {
+          fixtureDetails = await getMatchDetails(matchId, {
+            home: vsMatch?.[1]?.trim() || "Home",
+            away: vsMatch?.[2]?.trim() || "Away",
+          });
+        } catch {
+          fixtureDetails = null;
+        }
+      }
+      const bsdContext = fixtureDetails?.deepContext || {};
+      const structuredContext = fixtureDetails
+        ? JSON.stringify({
+            home: fixtureDetails.home?.name,
+            away: fixtureDetails.away?.name,
+            league: bsdContext.league,
+            round: bsdContext.round,
+            score: bsdContext.score,
+            elapsed: bsdContext.elapsed,
+            odds: fixtureDetails.odds,
+            xG: bsdContext.xG,
+            liveStats: bsdContext.liveStats,
+            statsAvailable: bsdContext.statsAvailable,
+            oddsAvailable: bsdContext.oddsAvailable,
+            dataQualityWarning: bsdContext.dataQualityWarning,
+          }).slice(0, 8000)
+        : undefined;
+
+      // 3. Perform Analysis
       const { analyzeMatchWithSearch } = await import("./services/geminiService.js");
       const runTimedAnalysis = () => Promise.race([
-        analyzeMatchWithSearch(matchString),
+        analyzeMatchWithSearch(matchString, structuredContext),
         new Promise((_, reject) => setTimeout(() => reject(new Error("AI analysis timeout")), 45_000))
       ]) as Promise<any>;
 
@@ -2069,17 +2101,8 @@ function extractTelegramChannelFromTaskUrl(taskUrl: string): string | null {
       }
 
       const topPrediction = result?.predictions?.[0];
-      let home = "Home";
-      let away = "Away";
-      if (matchId) {
-        try {
-          const fixtureDetails = await getMatchDetails(matchId);
-          home = fixtureDetails?.home?.name || home;
-          away = fixtureDetails?.away?.name || away;
-        } catch {
-          // Fallback to generic names if fixture lookup fails.
-        }
-      }
+      let home = fixtureDetails?.home?.name || "Home";
+      let away = fixtureDetails?.away?.name || "Away";
       const newHistoryItem: UserHistoryItem = {
         id: crypto.randomUUID(),
         fixtureId: String(matchId || "").startsWith("espn_") ? String(matchId) : null,

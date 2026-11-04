@@ -29,6 +29,7 @@ import { BetSlipAnalysis, PredictionResult } from '../types/prediction';
 import { useTelegram } from '../hooks/useTelegram';
 import { SignUpSheet } from '../components/SignUpSheet';
 import { TeamLogo } from '../components/TeamLogo';
+import { MarketBoard, PickSummary } from '../components/MarketBoard';
 
 export const Analyze: React.FC<{ onTabChange?: (tab: string) => void }> = ({ onTabChange }) => {
   const [isSignUpOpen, setIsSignUpOpen] = useState(false);
@@ -589,6 +590,12 @@ export const Analyze: React.FC<{ onTabChange?: (tab: string) => void }> = ({ onT
                       animate={{ opacity: 1 }}
                       className="space-y-4"
                     >
+                      <PickSummary
+                        safePick={analysisResult.safePick}
+                        valuePick={analysisResult.valuePick}
+                        combo={analysisResult.combo}
+                      />
+
                       {analysisResult.predictions.map((pred: any, i: number) => (
                         <motion.div 
                           key={i}
@@ -615,7 +622,7 @@ export const Analyze: React.FC<{ onTabChange?: (tab: string) => void }> = ({ onT
                               <span className={`text-[10px] font-black tracking-widest ${
                                 i === 0 ? 'text-green-400' : 'text-[#ccff00]'
                               }`}>
-                                {i === 0 ? 'Top prediction' : 'Value pick'}
+                                {i === 0 ? 'Top confidence' : 'Alternative pick'}
                               </span>
                             </div>
                             <div className="flex items-center gap-2">
@@ -635,6 +642,8 @@ export const Analyze: React.FC<{ onTabChange?: (tab: string) => void }> = ({ onT
                           
                         </motion.div>
                       ))}
+
+                      <MarketBoard sections={analysisResult.marketBoard} />
 
                       {/* Overall Reasoning Collapsible */}
                       <details className="group bg-zinc-900/30 border border-zinc-800/50 rounded-[28px] overflow-hidden">
