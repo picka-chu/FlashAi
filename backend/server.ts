@@ -25,6 +25,8 @@ import { getGeminiKeyStatus } from "./services/apiCacheService.js";
 import {
   buildMerchantReference,
   getChapaPricing,
+  getChapaSecret,
+  getChapaWebhookSecret,
   initializeChapaCheckout,
   isChapaEnabled,
   isEthiopianPhone,
@@ -3750,16 +3752,87 @@ function extractTelegramChannelFromTaskUrl(taskUrl: string): string | null {
   });
 
   // Chapa v2 webhook: x-chapa-signature is a hex HMAC-SHA256 of the raw body.
+  type ChapaPaymentEvent = {
+    merchantReference: string;
+    chapaReference?: string;
+    eventName?: string;
+    outcome: "success" | "failed" | "cancelled" | "incomplete" | "pending";
+    amountCents: number | null;
+  };
+
+  type ChapaProcessResult = {
+    status: "fulfilled" | "duplicate" | "mismatch" | "ignored";
+    reason?: string;
+  };
+
+  const processChapaPaymentEvent = async (event: ChapaPaymentEvent): Promise<ChapaProcessResult> => {
+    const merchantReference = String(event.merchantReference || "").trim();
+    if (!merchantReference) return { status: "ignored", reason: "missing_reference" };
+
+    const { data: payment, error: paymentError } = await supabase
+      .from("chapa_payments")
+      .select("*")
+      .eq("merchant_reference", merchantReference)
+      .maybeSingle();
+    if (paymentError) throw paymentError;
+    if (!payment) {
+      console.error("Chapa webhook: unknown merchant_reference", merchantReference);
+      return { status: "ignored", reason: "unknown_reference" };
+    }
+
+    if (event.outcome !== "success") {
+      if (event.outcome !== "pending" && event.outcome !== payment.status) {
+        await supabase.from("chapa_payments").update({ status: event.outcome }).eq("id", payment.id);
+      }
+      return { status: "ignored", reason: event.eventName || "non_success" };
+    }
+
+    if (payment.status === "success") return { status: "duplicate" };
+
+    // Never fulfil from the payload alone: re-query Chapa.
+    const verified = await verifyChapaTransaction(String(event.chapaReference || merchantReference));
+    if (!verified.success) {
+      console.error("Chapa webhook: verification did not succeed", {
+        merchantReference,
+        status: verified.status,
+      });
+      return { status: "ignored", reason: "not_verified" };
+    }
+
+    const expectedCents = Number(payment.amount_cents);
+    const amountMatchesVerify = verified.amountCents === expectedCents;
+    const amountMatchesPayload = event.amountCents === null || event.amountCents === expectedCents;
+    const currencyMatches = !verified.currency || verified.currency === "ETB";
+    const referenceMatches =
+      !verified.merchantReference || verified.merchantReference === merchantReference;
+
+    if (!amountMatchesVerify || !amountMatchesPayload || !currencyMatches || !referenceMatches) {
+      console.error("Chapa webhook: payment did not match intent", {
+        expectedCents,
+        payloadAmountCents: event.amountCents,
+        verifiedAmountCents: verified.amountCents,
+        verifiedCurrency: verified.currency,
+        verifiedReference: verified.merchantReference,
+      });
+      return { status: "mismatch" };
+    }
+
+    await fulfillChapaPayment(payment, verified, bot);
+    return { status: "fulfilled" };
+  };
+
+  // Chapa webhooks: v2 payment.* payloads are top-level with amount in cents;
+  // legacy v1 charge.* payloads are flat with amount in major units.
   app.post("/api/payments/chapa-webhook", async (c) => {
-    const webhookSecret = process.env.CHAPA_WEBHOOK_SECRET;
-    if (!webhookSecret) {
+    const secrets = [getChapaWebhookSecret(), getChapaSecret()].filter(Boolean);
+    if (!secrets.length) {
       console.error("Chapa webhook rejected: CHAPA_WEBHOOK_SECRET is not configured.");
       return c.json({ error: "Webhook is not configured" }, 503);
     }
 
     const rawBody = await c.req.raw.text();
     const signature = c.req.header("x-chapa-signature") || c.req.header("chapa-signature");
-    if (!verifyChapaWebhookSignature(rawBody, signature, webhookSecret)) {
+    if (!verifyChapaWebhookSignature(rawBody, signature, secrets)) {
       return c.json({ error: "Invalid signature" }, 401);
     }
 
@@ -3771,81 +3844,95 @@ function extractTelegramChannelFromTaskUrl(taskUrl: string): string | null {
     }
 
     try {
-      if (String(body?.webhook_type || "") !== "payment") {
-        return c.json({ received: true, ignored: body?.webhook_type || "unknown" });
-      }
-
+      const isV2 = String(body?.webhook_type || "") === "payment";
       const eventName = String(body?.event || "");
-      const merchantReference = String(body?.merchant_reference || "").trim();
-      if (!merchantReference) {
-        return c.json({ received: true, ignored: "missing_reference" });
+      const status = String(body?.status || "").toLowerCase();
+      const rawAmount = body?.amount;
+      const numericAmount =
+        rawAmount === null || rawAmount === undefined || rawAmount === "" ? NaN : Number(rawAmount);
+
+      let outcome: ChapaPaymentEvent["outcome"] = "pending";
+      if (isV2) {
+        outcome =
+          eventName === "payment.success"
+            ? "success"
+            : eventName === "payment.cancelled"
+              ? "cancelled"
+              : eventName === "payment.incomplete"
+                ? "incomplete"
+                : eventName === "payment.failed" || eventName === "payment.blocked"
+                  ? "failed"
+                  : "pending";
+      } else {
+        outcome =
+          eventName === "charge.success" || status === "success"
+            ? "success"
+            : status === "cancelled"
+              ? "cancelled"
+              : status === "incomplete"
+                ? "incomplete"
+                : status === "failed" || status === "blocked"
+                  ? "failed"
+                  : "pending";
       }
 
-      const { data: payment, error: paymentError } = await supabase
-        .from("chapa_payments")
-        .select("*")
-        .eq("merchant_reference", merchantReference)
-        .maybeSingle();
-      if (paymentError) throw paymentError;
-      if (!payment) {
-        console.error("Chapa webhook: unknown merchant_reference", merchantReference);
-        return c.json({ received: true, ignored: "unknown_reference" });
-      }
+      const result = await processChapaPaymentEvent({
+        merchantReference: String(body?.merchant_reference || body?.tx_ref || "").trim(),
+        chapaReference: String(body?.chapa_reference || body?.reference || body?.ref_id || ""),
+        eventName,
+        outcome,
+        amountCents: Number.isFinite(numericAmount)
+          ? isV2
+            ? numericAmount
+            : Math.round(numericAmount * 100)
+          : null,
+      });
 
-      if (eventName !== "payment.success") {
-        const nextStatus =
-          eventName === "payment.cancelled"
-            ? "cancelled"
-            : eventName === "payment.incomplete"
-              ? "incomplete"
-              : eventName === "payment.failed" || eventName === "payment.blocked"
-                ? "failed"
-                : payment.status;
-        if (nextStatus !== payment.status) {
-          await supabase.from("chapa_payments").update({ status: nextStatus }).eq("id", payment.id);
-        }
-        return c.json({ received: true, ignored: eventName || "non_success" });
-      }
-
-      if (payment.status === "success") {
-        return c.json({ received: true, duplicate: true });
-      }
-
-      // Never fulfil from the webhook payload alone: re-query Chapa.
-      const verified = await verifyChapaTransaction(String(body?.chapa_reference || merchantReference));
-      if (!verified.success) {
-        console.error("Chapa webhook: verification did not succeed", {
-          merchantReference,
-          status: verified.status,
-        });
-        return c.json({ received: true, ignored: "not_verified" });
-      }
-
-      const expectedCents = Number(payment.amount_cents);
-      const webhookCents = Number(body?.amount);
-      const amountMatchesVerify = verified.amountCents === expectedCents;
-      const amountMatchesWebhook = Number.isFinite(webhookCents) && webhookCents === expectedCents;
-      const currencyMatches = !verified.currency || verified.currency === "ETB";
-      const referenceMatches =
-        !verified.merchantReference || verified.merchantReference === merchantReference;
-
-      if (!amountMatchesVerify || !amountMatchesWebhook || !currencyMatches || !referenceMatches) {
-        console.error("Chapa webhook: payment did not match intent", {
-          expectedCents,
-          webhookAmount: body?.amount,
-          verifiedAmount: verified.amountCents,
-          verifiedCurrency: verified.currency,
-          verifiedReference: verified.merchantReference,
-        });
+      if (result.status === "mismatch") {
         return c.json({ error: "Payment does not match intent" }, 400);
       }
-
-      await fulfillChapaPayment(payment, verified, bot);
+      if (result.status === "duplicate") {
+        return c.json({ received: true, duplicate: true });
+      }
+      if (result.status === "ignored") {
+        return c.json({ received: true, ignored: result.reason });
+      }
       return c.json({ received: true });
     } catch (e: any) {
       console.error("Chapa webhook error:", e?.message || e);
       return c.json({ error: "Webhook processing failed" }, 500);
     }
+  });
+
+  // Legacy Chapa v1 posts its callback as a GET (status, ref_id, tx_ref).
+  app.get("/api/payments/chapa-webhook", async (c) => {
+    const merchantReference = String(
+      c.req.query("trx_ref") || c.req.query("tx_ref") || c.req.query("merchant_reference") || "",
+    ).trim();
+    if (!merchantReference) return c.text("ok");
+
+    try {
+      const status = String(c.req.query("status") || "success").toLowerCase();
+      const outcome: ChapaPaymentEvent["outcome"] =
+        status === "success"
+          ? "success"
+          : status === "cancelled"
+            ? "cancelled"
+            : status === "incomplete"
+              ? "incomplete"
+              : status === "failed"
+                ? "failed"
+                : "pending";
+      await processChapaPaymentEvent({
+        merchantReference,
+        chapaReference: String(c.req.query("ref_id") || ""),
+        outcome,
+        amountCents: null,
+      });
+    } catch (e: any) {
+      console.error("Chapa callback error:", e?.message || e);
+    }
+    return c.text("ok");
   });
 
   // Lemon Squeezy Checkout Endpoint

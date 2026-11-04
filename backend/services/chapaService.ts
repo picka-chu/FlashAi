@@ -7,7 +7,23 @@ const RATE_CACHE_TTL_MS = 12 * 60 * 60 * 1000;
 const DEFAULT_USD_ETB_RATE = 155;
 const DEFAULT_RATE_BAND = 5;
 
-export const isChapaEnabled = () => Boolean(String(process.env.CHAPA_SECRET_KEY || "").trim());
+// Env values pasted from dashboards often carry stray whitespace or wrapping
+// quotes, which makes Chapa answer 401 "Invalid API key".
+export function getChapaSecret(): string {
+  return String(process.env.CHAPA_SECRET_KEY || "")
+    .trim()
+    .replace(/^["']+|["']+$/g, "")
+    .trim();
+}
+
+export function getChapaWebhookSecret(): string {
+  return String(process.env.CHAPA_WEBHOOK_SECRET || "")
+    .trim()
+    .replace(/^["']+|["']+$/g, "")
+    .trim();
+}
+
+export const isChapaEnabled = () => Boolean(getChapaSecret());
 
 /** Turn Chapa error payloads into a readable string (never "[object Object]"). */
 function formatChapaError(payload: any, fallback: string): string {
@@ -116,7 +132,7 @@ export type ChapaVerifyResult = {
 };
 
 export async function verifyChapaTransaction(reference: string): Promise<ChapaVerifyResult> {
-  const secret = process.env.CHAPA_SECRET_KEY;
+  const secret = getChapaSecret();
   if (!secret) {
     throw Object.assign(new Error("Chapa is not configured"), { code: "CHAPA_NOT_CONFIGURED" });
   }
@@ -161,7 +177,7 @@ export type ChapaCheckoutParams = {
 export async function initializeChapaCheckout(
   params: ChapaCheckoutParams,
 ): Promise<{ checkoutUrl: string }> {
-  const secret = process.env.CHAPA_SECRET_KEY;
+  const secret = getChapaSecret();
   if (!secret) {
     throw Object.assign(new Error("Chapa is not configured"), { code: "CHAPA_NOT_CONFIGURED" });
   }
@@ -215,6 +231,7 @@ export async function initializeChapaCheckout(
   if (!response.ok) {
     const message = formatChapaError(payload, `Chapa checkout failed (${response.status})`);
     console.error("Chapa initialize rejected:", response.status, message, {
+      keyPrefix: secret.slice(0, 7),
       amount: body.amount,
       phone: body.phone_number,
       tx_ref: body.tx_ref,
@@ -230,19 +247,28 @@ export async function initializeChapaCheckout(
 export function verifyChapaWebhookSignature(
   rawBody: string,
   signature: string | undefined | null,
-  secret: string,
+  secrets: string | string[],
 ): boolean {
-  if (!secret || !signature) return false;
+  if (!signature) return false;
 
-  const expected = crypto.createHmac("sha256", secret).update(rawBody).digest("hex");
+  const cleanSig = signature.includes(",") ? signature.split(",").pop()!.trim() : signature.trim();
+  const candidates = (Array.isArray(secrets) ? secrets : [secrets]).filter(Boolean);
 
-  try {
-    const cleanSig = signature.includes(",") ? signature.split(",").pop()!.trim() : signature.trim();
-    if (/^[a-f0-9]{64}$/i.test(cleanSig)) {
-      return crypto.timingSafeEqual(Buffer.from(cleanSig, "hex"), Buffer.from(expected, "hex"));
+  for (const secret of candidates) {
+    const expected = crypto.createHmac("sha256", secret).update(rawBody).digest("hex");
+    // Legacy v1 also documents chapa-signature as HMAC(secret, secret).
+    const legacySecretSignature = crypto.createHmac("sha256", secret).update(secret).digest("hex");
+    try {
+      if (
+        /^[a-f0-9]{64}$/i.test(cleanSig) &&
+        crypto.timingSafeEqual(Buffer.from(cleanSig, "hex"), Buffer.from(expected, "hex"))
+      ) {
+        return true;
+      }
+      if (cleanSig === expected || cleanSig === legacySecretSignature) return true;
+    } catch {
+      // Try the next candidate secret.
     }
-    return cleanSig === expected;
-  } catch {
-    return false;
   }
+  return false;
 }
