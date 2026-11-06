@@ -73,6 +73,8 @@ export interface TeamStructuredData {
 
 export type MarketDataQuality = 'STRONG' | 'MODERATE' | 'LIMITED';
 
+export type PredictionPickType = 'safe' | 'value';
+
 export interface MarketPick {
   market: string;
   confidence: number;
@@ -83,37 +85,20 @@ export interface MarketPick {
   reasoning: string;
 }
 
-export interface MarketBoardSection {
-  category: string;
-  summary?: string;
-  picks: MarketPick[];
-}
-
-export interface ComboLeg {
+export interface PredictionOutcome {
   market: string;
-  confidence: number;
-  odds?: number | null;
-}
-
-export interface SuggestedCombo {
-  market: string;
-  legs: ComboLeg[];
-  combinedOdds?: number | null;
   confidence: number;
   reasoning: string;
+  type?: PredictionPickType;
+  probability?: number | null;
+  odds?: number | null;
+  edge?: number | null;
+  dataQuality?: MarketDataQuality;
 }
 
 export interface PredictionResult {
   matchId: string;
-  predictions: {
-    market: string;
-    confidence: number;
-    reasoning: string;
-  }[];
-  safePick?: MarketPick;
-  valuePick?: MarketPick | null;
-  combo?: SuggestedCombo | null;
-  marketBoard?: MarketBoardSection[];
+  predictions: PredictionOutcome[];
   overallReasoning: string;
   teamData: {
     home: TeamStructuredData;

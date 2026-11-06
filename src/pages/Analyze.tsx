@@ -29,7 +29,6 @@ import { BetSlipAnalysis, PredictionResult } from '../types/prediction';
 import { useTelegram } from '../hooks/useTelegram';
 import { SignUpSheet } from '../components/SignUpSheet';
 import { TeamLogo } from '../components/TeamLogo';
-import { MarketBoard, PickSummary } from '../components/MarketBoard';
 
 export const Analyze: React.FC<{ onTabChange?: (tab: string) => void }> = ({ onTabChange }) => {
   const [isSignUpOpen, setIsSignUpOpen] = useState(false);
@@ -361,8 +360,10 @@ export const Analyze: React.FC<{ onTabChange?: (tab: string) => void }> = ({ onT
       ctx.fillText(String(prediction?.reasoning || '').slice(0, 95), 110, y + 240, 860);
     };
 
-    drawCard('Top prediction', analysisResult.predictions?.[0], 300);
-    drawCard('Value pick', analysisResult.predictions?.[1], 640);
+    const shareSafePick = analysisResult.predictions?.find((pick: any) => pick?.type === 'safe') || analysisResult.predictions?.[0];
+    const shareValuePick = analysisResult.predictions?.find((pick: any) => pick?.type === 'value') || analysisResult.predictions?.[1];
+    drawCard('Safe pick', shareSafePick, 300);
+    drawCard('Value pick', shareValuePick, 640);
 
     ctx.fillStyle = '#71717a';
     ctx.font = '26px sans-serif';
@@ -590,27 +591,26 @@ export const Analyze: React.FC<{ onTabChange?: (tab: string) => void }> = ({ onT
                       animate={{ opacity: 1 }}
                       className="space-y-4"
                     >
-                      <PickSummary
-                        safePick={analysisResult.safePick}
-                        valuePick={analysisResult.valuePick}
-                        combo={analysisResult.combo}
-                      />
-
-                      {analysisResult.predictions.map((pred: any, i: number) => (
+                      {analysisResult.predictions.map((pred: any, i: number) => {
+                        const isSafe = pred.type === 'safe';
+                        const probability = typeof pred.probability === 'number' ? Math.round(pred.probability) : null;
+                        const odds = typeof pred.odds === 'number' && pred.odds > 1 ? pred.odds.toFixed(2) : null;
+                        const edge = typeof pred.edge === 'number' ? pred.edge : null;
+                        return (
                         <motion.div 
                           key={i}
                           initial={{ opacity: 0, x: -20 }}
                           animate={{ opacity: 1, x: 0 }}
                           transition={{ delay: i * 0.1 }}
                           className={`p-5 rounded-[28px] border ${
-                            i === 0 
-                              ? 'bg-green-500/5 border-green-500/20' 
+                            isSafe
+                              ? 'bg-green-500/5 border-green-500/20'
                               : 'bg-[#ccff00]/5 border-[#ccff00]/20'
                           }`}
                         >
                           <div className="flex items-center justify-between mb-4">
                             <div className="flex items-center gap-2">
-                              {i === 0 ? (
+                              {isSafe ? (
                                 <div className="p-1.5 bg-green-500/20 rounded-lg">
                                   <ShieldCheck className="w-4 h-4 text-green-400" />
                                 </div>
@@ -620,9 +620,9 @@ export const Analyze: React.FC<{ onTabChange?: (tab: string) => void }> = ({ onT
                                 </div>
                               )}
                               <span className={`text-[10px] font-black tracking-widest ${
-                                i === 0 ? 'text-green-400' : 'text-[#ccff00]'
+                                isSafe ? 'text-green-400' : 'text-[#ccff00]'
                               }`}>
-                                {i === 0 ? 'Top confidence' : 'Alternative pick'}
+                                {pred.type === 'safe' ? 'Safe pick' : pred.type === 'value' ? 'Value pick' : 'AI pick'}
                               </span>
                             </div>
                             <div className="flex items-center gap-2">
@@ -638,12 +638,30 @@ export const Analyze: React.FC<{ onTabChange?: (tab: string) => void }> = ({ onT
                           <div className="bg-black/20 p-4 rounded-2xl border border-white/5 mb-3">
                             <p className="text-xl font-black text-white tracking-tight">{pred.market}</p>
                           </div>
+                          {(probability !== null || odds || edge !== null) && (
+                            <div className="flex flex-wrap items-center gap-1.5 mb-3">
+                              {probability !== null && (
+                                <span className="text-[9px] font-black px-2 py-1 rounded-full bg-zinc-800/80 border border-zinc-700/70 text-zinc-300">
+                                  Model {probability}%
+                                </span>
+                              )}
+                              {odds && (
+                                <span className="text-[9px] font-black px-2 py-1 rounded-full bg-white/5 border border-white/10 text-white">
+                                  @ {odds}
+                                </span>
+                              )}
+                              {edge !== null && (
+                                <span className="text-[9px] font-black px-2 py-1 rounded-full bg-[#ccff00]/10 border border-[#ccff00]/25 text-[#ccff00]">
+                                  Edge {edge > 0 ? '+' : ''}{edge}%
+                                </span>
+                              )}
+                            </div>
+                          )}
                           <p className="text-xs text-zinc-400 leading-relaxed font-medium">{pred.reasoning}</p>
                           
                         </motion.div>
-                      ))}
-
-                      <MarketBoard sections={analysisResult.marketBoard} />
+                        );
+                      })}
 
                       {/* Overall Reasoning Collapsible */}
                       <details className="group bg-zinc-900/30 border border-zinc-800/50 rounded-[28px] overflow-hidden">

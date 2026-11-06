@@ -149,7 +149,8 @@ export const ResultCard: React.FC<{ match: any; onClick: () => void }> = ({ matc
         {name}
       </span>
       <span
-        className={`tabular text-[16px] font-bold leading-none ${\n          won ? 'text-[var(--primary)]' : 'text-[var(--text-strong)]'
+        className={`tabular text-[16px] font-bold leading-none ${
+          won ? 'text-[var(--primary)]' : 'text-[var(--text-strong)]'
         }`}
       >
         {goals}

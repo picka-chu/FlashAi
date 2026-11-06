@@ -4,10 +4,8 @@ import {
   BetSlipAnalysis,
   MatchData,
   PredictionResult,
+  PredictionOutcome,
   MarketPick,
-  MarketBoardSection,
-  SuggestedCombo,
-  ComboLeg,
   MarketDataQuality,
 } from "../../src/types/prediction";
 import { multiAgentService } from "./multiAgentService";
@@ -150,74 +148,19 @@ function normalizeMarketPick(raw: any): MarketPick | null {
   };
 }
 
-function normalizeMarketBoard(raw: any): MarketBoardSection[] {
-  const rawSections = Array.isArray(raw)
-    ? raw
-    : raw && typeof raw === "object"
-      ? Object.entries(raw).map(([category, value]: [string, any]) => {
-          if (Array.isArray(value)) return { category, picks: value };
-          if (value && typeof value === "object") return { category, ...value };
-          return { category, picks: [] };
-        })
-      : [];
-  const sections: MarketBoardSection[] = [];
-
-  for (const rawSection of rawSections.slice(0, 12)) {
-    if (!rawSection || typeof rawSection !== "object") continue;
-    const category = cleanText(rawSection.category || rawSection.name, 60);
-    if (!category) continue;
-
-    const rawPicks = Array.isArray(rawSection.picks) ? rawSection.picks : [];
-    const picks = rawPicks
-      .map((pick: any) => normalizeMarketPick(pick))
-      .filter((pick): pick is MarketPick => Boolean(pick))
-      .slice(0, 4);
-
-    if (!picks.length) continue;
-    sections.push({
-      category,
-      summary: cleanText(rawSection.summary, 260) || undefined,
-      picks,
-    });
-  }
-
-  return sections;
-}
-
-function normalizeCombo(raw: any): SuggestedCombo | null {
-  if (!raw || typeof raw !== "object") return null;
-
-  const rawLegs = Array.isArray(raw.legs) ? raw.legs : [];
-  const legs: ComboLeg[] = rawLegs
-    .map((leg: any) => {
-      if (typeof leg === "string") {
-        const market = cleanText(leg, 120);
-        return market ? { market, confidence: 60, odds: null } : null;
-      }
-      if (!leg || typeof leg !== "object") return null;
-      const market = cleanText(leg.market || leg.selection || leg.pick, 120);
-      if (!market) return null;
-      return {
-        market,
-        confidence: clampPercent(leg.confidence, 60) ?? 60,
-        odds: normalizeOdds(leg.odds),
-      };
-    })
-    .filter((leg: ComboLeg | null): leg is ComboLeg => Boolean(leg))
-    .slice(0, 3);
-
-  if (legs.length < 2) return null;
-
+function toPredictionOutcome(
+  pick: MarketPick,
+  type: PredictionOutcome["type"],
+): PredictionOutcome {
   return {
-    market:
-      cleanText(raw.market || raw.selection, 180) ||
-      legs.map((leg) => leg.market).join(" + "),
-    legs,
-    combinedOdds: normalizeOdds(raw.combinedOdds ?? raw.odds),
-    confidence: clampPercent(raw.confidence, 60) ?? 60,
-    reasoning:
-      cleanText(raw.reasoning || raw.reason, 700) ||
-      "Combined value from correlated model edges.",
+    market: pick.market,
+    confidence: pick.confidence,
+    reasoning: pick.reasoning,
+    type,
+    probability: pick.probability,
+    odds: pick.odds,
+    edge: pick.edge,
+    dataQuality: pick.dataQuality,
   };
 }
 
@@ -225,7 +168,7 @@ function normalizeCombo(raw: any): SuggestedCombo | null {
  * BACKEND ONLY: Performs deep match analysis using Gemini with Search.
  */
 export async function analyzeMatchWithSearch(matchString: string, structuredContext?: string): Promise<PredictionResult> {
-  const cacheKey = predictionCache.generateKey('match_analysis_v2', { matchString, structuredContext: structuredContext || null });
+  const cacheKey = predictionCache.generateKey('match_analysis_v3', { matchString, structuredContext: structuredContext || null });
   
   return executeWithRetry(async (apiKey, keyIndex) => {
     for (const model of PREDICTION_MODELS) {
@@ -247,52 +190,41 @@ Search for ALL of the following:
 3. "${matchString} odds betting tips referee corners cards prediction"
 4. "${matchString} head to head h2h history player props lineups"
 
-PHASE 2 — FULL MARKET COVERAGE
-Using the gathered data + any provided statistical data, produce the complete market board below. Every category must appear even when the correct lean is to pass; in that case choose the least-bad available line and mark it LIMITED.
+PHASE 2 — ANALYSE EVERY MARKET, OUTPUT ONLY THE BEST 4 PICKS
+Review the FULL market list internally, but return ONLY the 4 strongest verified selections:
 - Match Result: 1X2 and Double Chance
-- Total Goals: Over/Under 1.5, 2.5, 3.5 and most likely correct score
+- Total Goals: Over/Under 1.5, 2.5, 3.5 and correct score
 - Both Teams to Score: Yes/No
-- Half-Time: 1st-half result, 1st-half over/under, 2nd-half over/under
+- Half-Time: 1st-half and 2nd-half markets
 - Cards: total cards line and which team receives more cards
 - Corners: total corners line and which team wins more corners
 - Player Props: anytime scorer, shots on target, assists, player cards (ONLY with verified lineups/player data)
 - Combos: 2-3 leg builds from the strongest non-correlated picks
+
+SELECTION RULES:
+- safePicks: exactly 2 highest-probability, lowest-variance picks from any market (1X2 favourite, Double Chance, DNB, Over 1.5). Prefer probability >= 65.
+- valuePicks: exactly 2 picks where estimated probability clearly exceeds the market-implied probability. Include the edge in percentage points.
+- The 2 safe picks and 2 value picks must cover different markets or clear angles; never repeat the same selection twice.
 
 ACCURACY RULES:
 - Use the PRIMARY DATA SOURCE first. If live data is present, respect the score/minute and never recommend markets that are already settled.
 - Never invent odds. If no real price is found, set "odds": null and "edge": null.
 - Never invent players, lineups, referees, or statistics. If a player prop cannot be verified, use a team-level alternative and set dataQuality "LIMITED".
 - dataQuality: STRONG = official stats + confirmed news/odds; MODERATE = good stats but one input missing; LIMITED = thin or unverified data.
-- safePick = highest-probability, lowest-variance pick (1X2 favourite, Double Chance, DNB, or Over 1.5). Target probability >= 65.
-- valuePick = only where estimated probability clearly exceeds market-implied probability. Edge is in percentage points; otherwise null.
-- combo = only 2-3 legs with confidence >= 70 each and no direct correlation; otherwise null.
-- Rank "predictions" by confidence descending. It must contain the 10 best single bets across all categories.
 
 CONFIDENCE:
 85-95 = statistical + qualitative + price alignment; 70-84 = strong signal; 55-69 = mixed/thin; below 55 = speculative.
 
 Return ONLY valid JSON (no markdown, no text outside the JSON):
 {
-  "safePick": {"market":"<exact bet label>","confidence":<50-95>,"probability":<0-100>,"odds":<decimal|null>,"edge":<percent|null>,"dataQuality":"STRONG|MODERATE|LIMITED","reasoning":"<1-2 sentences>"},
-  "valuePick": {"market":"<exact bet label>","confidence":<50-95>,"probability":<0-100>,"odds":<decimal|null>,"edge":<percent|null>,"dataQuality":"STRONG|MODERATE|LIMITED","reasoning":"<1-2 sentences>"} or null,
-  "combo": {"market":"<combo label>","legs":[{"market":"<exact bet label>","confidence":<50-95>,"odds":<decimal|null>}],"combinedOdds":<decimal|null>,"confidence":<50-95>,"reasoning":"<1-2 sentences>"} or null,
-  "marketBoard": [
-    {"category":"Match Result","summary":"<1 sentence>","picks":[<marketPick>, <marketPick>]},
-    {"category":"Total Goals","summary":"<1 sentence>","picks":[<marketPick>, <marketPick>]},
-    {"category":"Both Teams to Score","summary":"<1 sentence>","picks":[<marketPick>]},
-    {"category":"Half-Time","summary":"<1 sentence>","picks":[<marketPick>, <marketPick>]},
-    {"category":"Cards","summary":"<1 sentence>","picks":[<marketPick>, <marketPick>]},
-    {"category":"Corners","summary":"<1 sentence>","picks":[<marketPick>, <marketPick>]},
-    {"category":"Player Props","summary":"<1 sentence>","picks":[<marketPick>, <marketPick>]},
-    {"category":"Combos","summary":"<1 sentence>","picks":[<marketPick>]}
-  ],
-  "predictions":[{"market":"<exact bet label>","confidence":<50-95>,"reasoning":"<2-3 specific sentences>"}],
+  "safePicks": [marketPick, marketPick],
+  "valuePicks": [marketPick, marketPick],
   "overallReasoning":"<5-8 sentence professional preview: form, absences, H2H, tactics, and the sharpest insight>",
   "teamData":{"home":{"name":"<team>","form":"<last 5 e.g. WWDLW>","injuries":["<player and position>"],"keyStats":["<specific stat>"]},"away":{"name":"<team>","form":"<last 5>","injuries":["<player and position>"],"keyStats":["<specific stat>"]}}
 }
 
 marketPick = {"market":"<exact bet label>","confidence":<50-95>,"probability":<0-100>,"odds":<decimal|null>,"edge":<percent|null>,"dataQuality":"STRONG|MODERATE|LIMITED","reasoning":"<1-2 specific sentences>"}
-Use 1-3 picks per category and keep reasoning concise.
+Return exactly 2 objects in safePicks and exactly 2 in valuePicks. Keep reasoning concise.
         `;
 
         const result = await ai.models.generateContent({
@@ -313,28 +245,20 @@ Use 1-3 picks per category and keep reasoning concise.
           throw new Error(`Failed to parse JSON from Gemini response. Raw text: ${rawText.substring(0, 200)}`);
         }
         
-        const marketBoard = normalizeMarketBoard(parsed.marketBoard);
-        const rawPredictions = Array.isArray(parsed.predictions) ? parsed.predictions : [];
+        const toOutcomes = (rawList: any, type: PredictionOutcome["type"]): PredictionOutcome[] =>
+          (Array.isArray(rawList) ? rawList : [])
+            .map((raw: any) => normalizeMarketPick(raw))
+            .filter((pick): pick is MarketPick => Boolean(pick))
+            .map((pick) => toPredictionOutcome(pick, type));
 
-        let predictions: PredictionResult["predictions"] = rawPredictions
-          .map((raw: any) => {
-            const pick = normalizeMarketPick(raw);
-            return pick
-              ? { market: pick.market, confidence: pick.confidence, reasoning: pick.reasoning }
-              : null;
-          })
-          .filter(Boolean) as PredictionResult["predictions"];
+        let predictions: PredictionResult["predictions"] = [
+          ...toOutcomes(parsed.safePicks, "safe"),
+          ...toOutcomes(parsed.valuePicks, "value"),
+        ];
 
-        if (!predictions.length && marketBoard.length) {
-          predictions = marketBoard
-            .flatMap((section) => section.picks)
-            .sort((a, b) => b.confidence - a.confidence)
-            .slice(0, 10)
-            .map((pick) => ({
-              market: pick.market,
-              confidence: pick.confidence,
-              reasoning: pick.reasoning,
-            }));
+        // Backwards-compatible fallback if a model returns the legacy shape.
+        if (!predictions.length && Array.isArray(parsed.predictions)) {
+          predictions = toOutcomes(parsed.predictions, undefined);
         }
 
         const seenMarkets = new Set<string>();
@@ -346,23 +270,15 @@ Use 1-3 picks per category and keep reasoning concise.
             seenMarkets.add(key);
             return true;
           })
-          .slice(0, 10);
+          .slice(0, 4);
 
         if (!predictions.length) {
-          throw new Error(`Invalid prediction data structure. Missing 'predictions' and 'marketBoard'. Parsed keys: ${Object.keys(parsed).join(', ')}.`);
+          throw new Error(`Invalid prediction data structure. Missing 'safePicks' and 'valuePicks'. Parsed keys: ${Object.keys(parsed).join(', ')}.`);
         }
-
-        const safePick = normalizeMarketPick(parsed.safePick) || normalizeMarketPick(predictions[0]);
-        const valuePick = normalizeMarketPick(parsed.valuePick);
-        const combo = normalizeCombo(parsed.combo);
 
         return {
           matchId: matchString,
           predictions,
-          safePick: safePick || undefined,
-          valuePick,
-          combo,
-          marketBoard,
           overallReasoning: parsed.overallReasoning || "No reasoning provided.",
           teamData: parsed.teamData || {
             home: { name: 'Home', form: 'N/A', injuries: [], keyStats: [] },

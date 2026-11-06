@@ -158,7 +158,7 @@ export const Home: React.FC<HomeProps> = ({ onTabChange }) => {
             </div>
           )}
           <div className="min-w-0">
-            <p className="truncate text-[15px] font-semibold text-[var(--text-strong)]">{user?.first_name || user?.username || 'Flash AI'}</p>
+            <p className="truncate text-[15px] font-semibold text-[var(--text-strong)]">{user?.name || user?.username || 'Flash AI'}</p>
             <p className="text-[12px] text-[var(--text-muted)]">Match intelligence</p>
           </div>
         </div>
