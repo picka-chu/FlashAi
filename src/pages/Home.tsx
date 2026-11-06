@@ -147,8 +147,8 @@ export const Home: React.FC<HomeProps> = ({ onTabChange }) => {
   const finishedMatches = useMemo(() => upcomingMatches.filter((m) => m?.fixture?.status?.state === 'post' || m.status === 'FT' || m.status === 'Finished').slice(0, 8), [upcomingMatches]);
 
   return (
-    <div className="min-h-full space-y-6 pb-8 pt-3">
-      <div className="flex items-center justify-between gap-3 px-1">
+    <div className="h-full min-h-0 overflow-y-auto overscroll-y-contain touch-pan-y space-y-6 px-5 pb-28 pt-4">
+      <div className="flex items-center justify-between gap-3">
         <div className="flex items-center gap-3 min-w-0">
           {user?.photo_url ? (
             <img src={user.photo_url} alt="" className="h-10 w-10 rounded-full object-cover ring-1 ring-[var(--border)]" />
@@ -221,7 +221,7 @@ export const Home: React.FC<HomeProps> = ({ onTabChange }) => {
           {finishedMatches.length > 0 && (
             <section className="space-y-3">
               <SectionHeader title="Latest results" icon={<Trophy className="h-4 w-4 text-[var(--primary)]" />} />
-              <div className="flex gap-3 overflow-x-auto pb-1 -mx-1 px-1">{finishedMatches.map((match, i) => (<ResultCard key={match.id || i} match={match} onClick={() => handleAnalyze(match)} />))}</div>
+              <div className="no-scrollbar flex gap-3 overflow-x-auto pb-1 -mx-5 px-5">{finishedMatches.map((match, i) => (<ResultCard key={match.id || i} match={match} onClick={() => handleAnalyze(match)} />))}</div>
             </section>
           )}
 

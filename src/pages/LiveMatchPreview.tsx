@@ -161,9 +161,7 @@ export const LiveMatchPreview: React.FC<{ onBack: () => void; onGoAnalyze: () =>
         <div className="rounded-3xl border border-zinc-800 bg-zinc-900/80 p-5">
           <div className="grid grid-cols-[1fr_auto_1fr] items-center gap-3">
             <div className="text-center">
-              <div className="w-16 h-16 mx-auto rounded-2xl bg-zinc-800 border border-zinc-700 p-2 overflow-hidden">
-                <TeamLogo name={livePreviewMatch.home} logo={livePreviewMatch.homeLogo} textClassName="text-base" />
-              </div>
+              <TeamLogo name={livePreviewMatch.home} logo={livePreviewMatch.homeLogo} className="w-16 h-16 mx-auto" textClassName="text-base" />
               <p className="mt-2 text-sm font-bold line-clamp-1">{livePreviewMatch.home}</p>
             </div>
             <div className="text-center">
@@ -171,9 +169,7 @@ export const LiveMatchPreview: React.FC<{ onBack: () => void; onGoAnalyze: () =>
               <div className="text-xs text-red-400 font-black uppercase mt-1">{liveMinute}</div>
             </div>
             <div className="text-center">
-              <div className="w-16 h-16 mx-auto rounded-2xl bg-zinc-800 border border-zinc-700 p-2 overflow-hidden">
-                <TeamLogo name={livePreviewMatch.away} logo={livePreviewMatch.awayLogo} textClassName="text-base" />
-              </div>
+              <TeamLogo name={livePreviewMatch.away} logo={livePreviewMatch.awayLogo} className="w-16 h-16 mx-auto" textClassName="text-base" />
               <p className="mt-2 text-sm font-bold line-clamp-1">{livePreviewMatch.away}</p>
             </div>
           </div>

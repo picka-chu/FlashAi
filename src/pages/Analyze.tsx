@@ -481,9 +481,7 @@ export const Analyze: React.FC<{ onTabChange?: (tab: string) => void }> = ({ onT
                 </div>
                 <div className="grid grid-cols-[1fr_auto_1fr] items-center gap-3">
                   <div className="min-w-0 flex flex-col items-center justify-center">
-                    <div className="w-12 h-12 rounded-xl bg-gradient-to-br from-zinc-800 to-zinc-900 border border-zinc-700/30 flex items-center justify-center shadow-lg mb-2 overflow-hidden shrink-0 p-1.5">
-                      <TeamLogo name={selectedMatch.home} logo={selectedMatch.homeLogo} textClassName="text-xs" />
-                    </div>
+                    <TeamLogo name={selectedMatch.home} logo={selectedMatch.homeLogo} className="w-12 h-12 mb-2 shrink-0" textClassName="text-sm" />
                     <p className="min-h-10 line-clamp-2 text-center text-[13px] font-semibold leading-tight text-[var(--text-strong)]">{selectedMatch.home}</p>
                   </div>
                   <div className="flex flex-col items-center shrink-0 px-1">
@@ -495,9 +493,7 @@ export const Analyze: React.FC<{ onTabChange?: (tab: string) => void }> = ({ onT
                     <span className="text-[8px] font-black text-zinc-500 mt-1">{selectedMatch.minute || selectedMatch.time}</span>
                   </div>
                   <div className="min-w-0 flex flex-col items-center justify-center">
-                    <div className="w-12 h-12 rounded-xl bg-gradient-to-br from-zinc-800 to-zinc-900 border border-zinc-700/30 flex items-center justify-center shadow-lg mb-2 overflow-hidden shrink-0 p-1.5">
-                      <TeamLogo name={selectedMatch.away} logo={selectedMatch.awayLogo} textClassName="text-xs" />
-                    </div>
+                    <TeamLogo name={selectedMatch.away} logo={selectedMatch.awayLogo} className="w-12 h-12 mb-2 shrink-0" textClassName="text-sm" />
                     <p className="text-sm font-black text-white leading-tight text-center line-clamp-2 min-h-10">{selectedMatch.away}</p>
                   </div>
                 </div>

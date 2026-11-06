@@ -56,13 +56,13 @@ export const ModernMatchCard: React.FC<ModernMatchCardProps> = ({ match, variant
         {/* Match Composition */}
         <div className="grid grid-cols-[1fr_auto_1fr] items-center gap-2">
           {/* Home Team */}
-          <div className="flex flex-col items-center gap-2 min-w-0">
-            <div className="relative">
-              <div className="absolute inset-0 bg-white/5 blur-xl rounded-full opacity-0 group-hover:opacity-100 transition-opacity" />
-<div className={`${compact ? "h-12 w-12" : "h-16 w-16"} rounded-full bg-zinc-800/40 border border-zinc-700/30 p-1.5 flex items-center justify-center relative z-10 backdrop-blur-md shadow-inner overflow-hidden`}>
-                <TeamLogo name={match.home} logo={match.homeLogo} textClassName="text-xs" />
-              </div>
-            </div>
+          <div className="flex flex-col items-center gap-2.5 min-w-0">
+            <TeamLogo
+              name={match.home}
+              logo={match.homeLogo}
+              className={`${compact ? 'h-11 w-11' : 'h-14 w-14'} relative z-10 shrink-0`}
+              textClassName="text-sm"
+            />
             <span className="text-[11px] font-semibold text-zinc-100 text-center line-clamp-2 min-h-[28px] w-full tracking-tight leading-tight">
               {match.home}
             </span>
@@ -100,12 +100,12 @@ export const ModernMatchCard: React.FC<ModernMatchCardProps> = ({ match, variant
 
           {/* Away Team */}
           <div className="flex flex-col items-center gap-2.5 min-w-0">
-            <div className="relative">
-              <div className="absolute inset-0 bg-white/5 blur-xl rounded-full opacity-0 group-hover:opacity-100 transition-opacity" />
-<div className={`${compact ? "h-12 w-12" : "h-16 w-16"} rounded-full bg-zinc-800/40 border border-zinc-700/30 p-1.5 flex items-center justify-center relative z-10 backdrop-blur-md shadow-inner overflow-hidden`}>
-                <TeamLogo name={match.away} logo={match.awayLogo} textClassName="text-xs" />
-              </div>
-            </div>
+            <TeamLogo
+              name={match.away}
+              logo={match.awayLogo}
+              className={`${compact ? 'h-11 w-11' : 'h-14 w-14'} relative z-10 shrink-0`}
+              textClassName="text-sm"
+            />
             <span className="text-[11px] font-semibold text-zinc-100 text-center line-clamp-2 min-h-[28px] w-full tracking-tight leading-tight">
               {match.away}
             </span>

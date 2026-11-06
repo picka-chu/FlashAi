@@ -68,14 +68,14 @@ export const TeamLogo: React.FC<TeamLogoProps> = ({
   return (
     <div
       ref={holderRef}
-      className={`relative flex items-center justify-center overflow-hidden rounded-full bg-zinc-900/80 ${className}`}
+      className={`relative flex items-center justify-center overflow-hidden ${showImage ? '' : 'rounded-full'} ${className}`}
       style={{
-        background: showImage && ready
-          ? 'rgba(24,24,27,0.9)'
+        background: showImage
+          ? 'transparent'
           : `linear-gradient(145deg, ${fallbackColor}55 0%, rgba(24,24,27,0.95) 75%)`,
       }}
     >
-      {/* Initials fallback — always under the image */}
+      {/* Initials fallback — shown only when no crest is available */}
       <span
         className={`relative z-10 select-none font-black tracking-[-0.06em] text-white/90 ${textClassName} ${
           showImage && ready ? 'opacity-0' : 'opacity-100'
@@ -88,7 +88,7 @@ export const TeamLogo: React.FC<TeamLogoProps> = ({
         <img
           src={src || ''}
           alt=""
-          className={`absolute inset-[14%] z-20 h-[72%] w-[72%] object-contain transition-opacity duration-200 ${
+          className={`absolute inset-0 z-20 h-full w-full object-contain transition-opacity duration-200 ${
             ready ? 'opacity-100' : 'opacity-0'
           }`}
           referrerPolicy="no-referrer"

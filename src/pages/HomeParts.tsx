@@ -84,7 +84,7 @@ export const FeaturedMatch: React.FC<{
 
       <div className="relative mt-6 grid grid-cols-[1fr_auto_1fr] items-center gap-3">
         <div className="flex flex-col items-center gap-2 text-center">
-          <TeamLogo name={match.home} logo={match.homeLogo} className="h-[60px] w-[60px] rounded-full border border-black/10 bg-white/80 p-1 shadow-sm" textClassName="text-base" />
+          <TeamLogo name={match.home} logo={match.homeLogo} className="h-[64px] w-[64px]" textClassName="text-lg" />
           <span className="line-clamp-2 min-h-[34px] text-[13px] font-bold leading-tight">{match.home}</span>
         </div>
         <div className="flex flex-col items-center">
@@ -98,7 +98,7 @@ export const FeaturedMatch: React.FC<{
           )}
         </div>
         <div className="flex flex-col items-center gap-2 text-center">
-          <TeamLogo name={match.away} logo={match.awayLogo} className="h-[60px] w-[60px] rounded-full border border-black/10 bg-white/80 p-1 shadow-sm" textClassName="text-base" />
+          <TeamLogo name={match.away} logo={match.awayLogo} className="h-[64px] w-[64px]" textClassName="text-lg" />
           <span className="line-clamp-2 min-h-[34px] text-[13px] font-bold leading-tight">{match.away}</span>
         </div>
       </div>
@@ -138,9 +138,7 @@ export const ResultCard: React.FC<{ match: any; onClick: () => void }> = ({ matc
     won: boolean;
   }) => (
     <div className="flex items-center gap-3">
-      <div className="h-10 w-10 shrink-0 rounded-full border border-zinc-700/40 bg-zinc-800/50 p-1 shadow-inner overflow-hidden">
-        <TeamLogo name={name} logo={logo} className="h-full w-full" textClassName="text-[10px]" />
-      </div>
+      <TeamLogo name={name} logo={logo} className="h-9 w-9 shrink-0" textClassName="text-[11px]" />
       <span
         className={`min-w-0 flex-1 truncate text-[13px] leading-tight ${
           won ? 'font-semibold text-[var(--text-strong)]' : 'text-[var(--text-muted)]'
