@@ -13,7 +13,7 @@ export const MainLayout: React.FC<MainLayoutProps> = ({ children, activeTab, onT
       className="h-[100dvh] flex flex-col bg-[var(--background)] text-[var(--foreground)] font-sans antialiased selection:bg-[var(--primary)]/25 overflow-hidden relative"
       style={{
         // Clear Telegram native chrome (close X) + device notches
-        paddingTop: 'var(--tg-safe-top, env(safe-area-inset-top, 0px))',
+        paddingTop: 'calc(var(--tg-safe-top, env(safe-area-inset-top, 0px)) + 8px)',
         paddingLeft: 'var(--tg-safe-left, env(safe-area-inset-left, 0px))',
         paddingRight: 'var(--tg-safe-right, env(safe-area-inset-right, 0px))',
       }}

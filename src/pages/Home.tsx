@@ -25,6 +25,37 @@ import { useTabActive } from '../hooks/useTabActive';
 import { ModernMatchCard } from '../components/ModernMatchCard';
 import { SectionHeader, FeaturedMatch, ResultCard } from './HomeParts';
 
+const LEAGUE_PRIORITY: Array<{ pattern: RegExp; weight: number }> = [
+  { pattern: /\b(caf champions league|afc champions league)\b/i, weight: 72 },
+  { pattern: /\b(uefa champions league|champions league)\b/i, weight: 100 },
+  { pattern: /\b(uefa europa league|europa league)\b/i, weight: 92 },
+  { pattern: /\b(premier league|english premier league)\b/i, weight: 90 },
+  { pattern: /\b(la ?liga|primera division)\b/i, weight: 88 },
+  { pattern: /\b(serie a)\b/i, weight: 86 },
+  { pattern: /\b(bundesliga)\b/i, weight: 84 },
+  { pattern: /\b(ligue 1)\b/i, weight: 82 },
+  { pattern: /\b(copa libertadores)\b/i, weight: 78 },
+  { pattern: /\b(afcon|africa cup of nations)\b/i, weight: 76 },
+  { pattern: /\b(eredivisie)\b/i, weight: 74 },
+  { pattern: /\b(primeira liga)\b/i, weight: 72 },
+  { pattern: /\b(fifa world cup|uefa euro|world cup)\b/i, weight: 95 },
+  { pattern: /\b(saudi pro league)\b/i, weight: 64 },
+  { pattern: /\b(mls|major league soccer)\b/i, weight: 62 },
+  { pattern: /\b(super lig|süper lig)\b/i, weight: 60 },
+  { pattern: /\b(championship)\b/i, weight: 58 },
+];
+
+const getLeaguePriority = (league: unknown): number => {
+  const name = String(league || '');
+  return LEAGUE_PRIORITY.find((entry) => entry.pattern.test(name))?.weight ?? 0;
+};
+
+const getKickoffTimestamp = (match: any): number => {
+  const raw = match?.fixtureDate || match?.fixture?.date || '';
+  const timestamp = Date.parse(raw);
+  return Number.isFinite(timestamp) ? timestamp : Number.MAX_SAFE_INTEGER;
+};
+
 interface HomeProps {
   onTabChange: (tab: any) => void;
 }
@@ -142,8 +173,28 @@ export const Home: React.FC<HomeProps> = ({ onTabChange }) => {
     try { await recordMatchClick(match.id || match.fixture?.id, match); } catch {}
   };
 
-  const featuredMatch = useMemo(() => liveMatches[0] || upcomingMatches[0] || null, [liveMatches, upcomingMatches]);
-  const featuredIsNext = !liveMatches.length && !!upcomingMatches.length;
+  const featuredMatch = useMemo(() => {
+    const candidates = [
+      ...liveMatches.map((match) => ({ match, live: true })),
+      ...upcomingMatches
+        .filter((match) => match && match?.fixture?.status?.state !== 'post' && match?.status !== 'FT' && match?.status !== 'Finished')
+        .map((match) => ({ match, live: false })),
+    ];
+    if (!candidates.length) return null;
+
+    const major = candidates.filter(({ match }) => getLeaguePriority(match?.league) > 0);
+    const pool = major.length ? major : candidates;
+
+    pool.sort((a, b) => {
+      if (a.live !== b.live) return a.live ? -1 : 1;
+      const weight = getLeaguePriority(b.match?.league) - getLeaguePriority(a.match?.league);
+      if (weight !== 0) return weight;
+      return getKickoffTimestamp(a.match) - getKickoffTimestamp(b.match);
+    });
+
+    return pool[0].match;
+  }, [liveMatches, upcomingMatches]);
+  const featuredIsNext = Boolean(featuredMatch) && !(featuredMatch?.fixture?.status?.state === 'in' || featuredMatch?.status === 'Live');
   const finishedMatches = useMemo(() => upcomingMatches.filter((m) => m?.fixture?.status?.state === 'post' || m.status === 'FT' || m.status === 'Finished').slice(0, 8), [upcomingMatches]);
 
   return (
@@ -196,7 +247,13 @@ export const Home: React.FC<HomeProps> = ({ onTabChange }) => {
           {isPaid && liveMatches.length > 0 && (
             <section className="space-y-3">
               <SectionHeader title="Live now" icon={<Radio className="h-4 w-4 text-[var(--primary)]" />} action="All" onAction={() => onTabChange('matches')} />
-              <div className="space-y-2">{liveMatches.slice(0, 4).map((match, i) => (<ModernMatchCard key={match.id || i} match={match} onClick={() => handleAnalyze(match)} />))}</div>
+              <div className="no-scrollbar -mx-5 flex gap-3 overflow-x-auto px-5 pb-1">
+                {liveMatches.slice(0, 6).map((match, i) => (
+                  <div key={match.id || i} className="w-[280px] shrink-0">
+                    <ModernMatchCard match={match} variant="live" onClick={() => handleAnalyze(match)} />
+                  </div>
+                ))}
+              </div>
             </section>
           )}
 
@@ -214,7 +271,13 @@ export const Home: React.FC<HomeProps> = ({ onTabChange }) => {
           {upcomingMatches.filter((m) => m?.fixture?.status?.state !== 'post').length > 0 && (
             <section className="space-y-3">
               <SectionHeader title="Upcoming" icon={<Clock className="h-4 w-4 text-[var(--primary)]" />} action="All" onAction={() => onTabChange('matches')} />
-              <div className="space-y-2">{upcomingMatches.filter((m) => m?.fixture?.status?.state !== 'post').slice(0, 6).map((match, i) => (<ModernMatchCard key={match.id || i} match={match} onClick={() => handleAnalyze(match)} />))}</div>
+              <div className="no-scrollbar -mx-5 flex gap-3 overflow-x-auto px-5 pb-1">
+                {upcomingMatches.filter((m) => m?.fixture?.status?.state !== 'post').slice(0, 8).map((match, i) => (
+                  <div key={match.id || i} className="w-[280px] shrink-0">
+                    <ModernMatchCard match={match} variant="prematch" onClick={() => handleAnalyze(match)} />
+                  </div>
+                ))}
+              </div>
             </section>
           )}
 
