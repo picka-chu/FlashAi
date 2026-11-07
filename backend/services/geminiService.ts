@@ -213,6 +213,13 @@ SELECTION RULES:
 - valuePicks: exactly 2 picks where estimated probability clearly exceeds the market-implied probability. Include the edge in percentage points.
 - The 2 safe picks and 2 value picks must cover different markets or clear angles; never repeat the same selection twice.
 
+CANONICAL MARKET LABELS (use exactly these styles; never put team names in the market field):
+- "1X2 - Home", "1X2 - Draw", "1X2 - Away"
+- "Double Chance - 1X", "Double Chance - X2", "Double Chance - 12"
+- "Over 1.5 Goals", "Over 2.5 Goals", "Over 3.5 Goals", "Under 2.5 Goals"
+- "BTTS - Yes", "BTTS - No"
+- "Draw No Bet - Home", "Draw No Bet - Away"
+
 ACCURACY RULES:
 - Use the PRIMARY DATA SOURCE first. If live data is present, respect the score/minute and never recommend markets that are already settled.
 - Never invent odds. If no real price is found, set "odds": null and "edge": null.

@@ -726,7 +726,6 @@ const NON_RESOLVABLE_MARKETS = [
   "shots", "offside", "asian handicap", "handicap",
   "half", "ht/ft",
   "clean sheet", "to nil", "win to nil",
-  "dnb", "draw no bet",
   "half with most goals", "winning margin",
   "score first", "first team to score", "last team to score",
 ];
@@ -808,6 +807,14 @@ function evaluatePredictionMarket(market: string, homeGoals: number, awayGoals: 
     if (results.includes("won")) return "won";
     if (results.every((result) => result === "lost")) return "lost";
     return "pending";
+  }
+
+  // Draw No Bet: a draw refunds the stake, so it is neither a win nor a loss.
+  if (mk.includes("draw no bet") || /\bdnb\b/.test(mk)) {
+    if (homeGoals === awayGoals) return "not_applicable";
+    const awaySide = /\baway\b/.test(mk) || /\b2\b/.test(mk);
+    if (awaySide) return awayGoals > homeGoals ? "won" : "lost";
+    return homeGoals > awayGoals ? "won" : "lost";
   }
 
   // 1. Full Match Results (1X2)
@@ -923,12 +930,9 @@ async function getRecentScoreboardEvents(): Promise<any[]> {
   recentScoreboardInFlight = (async () => {
     // Cover yesterday through tomorrow so fixtures that kicked off late (or in
     // another timezone) are still found when a history row is settled.
-    const dates = [
-      getUtcDateString(-2),
-      getUtcDateString(-1),
-      getUtcDateString(0),
-      getUtcDateString(1),
-    ];
+    // Cover a full week back so older rows can still be settled, plus tomorrow
+    // for fixtures that kicked off late in another timezone.
+    const dates = Array.from({ length: 9 }, (_, index) => getUtcDateString(index - 7));
     const responses = await Promise.all(
       dates.map((date) =>
         axios.get(
@@ -2115,9 +2119,17 @@ function isPrivateTelegramInvite(taskUrl: string): boolean {
       const topPrediction = result?.predictions?.[0];
       let home = fixtureDetails?.home?.name || "Home";
       let away = fixtureDetails?.away?.name || "Away";
+      // Persist any provider fixture id we can settle from later. This is the
+      // reliable path: ESPN ids resolve via the summary endpoint and BSD ids
+      // (bsd_123 or 123) resolve straight from the provider's final score.
+      const rawFixtureId = String(matchId || "").trim();
+      const historyFixtureId =
+        /^bsd_\d+$/.test(rawFixtureId) || /^\d+$/.test(rawFixtureId) || rawFixtureId.startsWith("espn_")
+          ? rawFixtureId
+          : null;
       const newHistoryItem: UserHistoryItem = {
         id: crypto.randomUUID(),
-        fixtureId: String(matchId || "").startsWith("espn_") ? String(matchId) : null,
+        fixtureId: historyFixtureId,
         match: matchString,
         home,
         away,

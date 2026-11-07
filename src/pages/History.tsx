@@ -37,6 +37,7 @@ type HistoryItem = {
   confidence: number;
   reasoning?: string;
   status: HistoryStatus;
+  outcome?: { home: number; away: number } | null;
   created_at: string;
   resolved_at?: string | null;
   analysisPayload?: AnalysisPayload | null;
@@ -106,6 +107,9 @@ export const History: React.FC = () => {
           confidence: Number(item.confidence || 0),
           reasoning: item.reasoning || '',
           status: (['won', 'lost', 'pending', 'not_applicable'].includes(item.status) ? item.status : 'pending') as HistoryStatus,
+          outcome: item.outcome && Number.isFinite(Number(item.outcome.home)) && Number.isFinite(Number(item.outcome.away))
+            ? { home: Number(item.outcome.home), away: Number(item.outcome.away) }
+            : null,
           created_at: item.created_at,
           resolved_at: item.resolved_at || null,
           analysisPayload: item.analysisPayload || null,
@@ -197,6 +201,11 @@ export const History: React.FC = () => {
 
                       <p className="text-sm font-black text-white line-clamp-1">{item.match}</p>
                       <p className="text-[11px] font-bold text-zinc-400 line-clamp-1">{item.predictionMarket}</p>
+                      {item.outcome && (
+                        <span className="inline-flex items-center gap-1 rounded-full border border-white/10 bg-white/5 px-2 py-0.5 text-[10px] font-black text-white/90">
+                          FT {item.outcome.home}-{item.outcome.away}
+                        </span>
+                      )}
                     </div>
 
                     <ChevronRight className="w-4 h-4 text-zinc-600 shrink-0" />
@@ -277,6 +286,13 @@ export const History: React.FC = () => {
                     <p className="text-sm font-black text-[#ccff00]">{activeItem.confidence}%</p>
                   </div>
                 </div>
+
+                {activeItem.outcome && (
+                  <div className="flex items-center justify-between rounded-2xl border border-zinc-800 bg-zinc-900/40 p-3">
+                    <p className="text-[10px] font-black text-zinc-500">Final score</p>
+                    <p className="text-sm font-black text-white">{activeItem.outcome.home} - {activeItem.outcome.away}</p>
+                  </div>
+                )}
 
                 {activeItem.analysisPayload?.predictions?.length ? (
                   <div className="space-y-3">
