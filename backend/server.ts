@@ -1253,6 +1253,11 @@ function extractTelegramChannelFromTaskUrl(taskUrl: string): string | null {
 
   return null;
 }
+
+function isPrivateTelegramInvite(taskUrl: string): boolean {
+  const raw = String(taskUrl || "").trim();
+  return /(?:t(?:elegram)?\.me\/(?:\+|joinchat\/)|tg:\/\/join\?invite=)/i.test(raw);
+}
   const ADMIN_ADS_KEY = "admin_ads_v1";
   registerLeaderboardRoutes(app, supabase);
   const RATES_TTL_MS = 15 * 60 * 1000;
@@ -2605,7 +2610,7 @@ function extractTelegramChannelFromTaskUrl(taskUrl: string): string | null {
     }
   });
 
-  const botUsername = process.env.TELEGRAM_BOT_USERNAME || "Deepflashaibot";
+  const botUsername = (process.env.TELEGRAM_BOT_USERNAME || "Deepflashaibot").replace(/^@/, "");
   // Render injects RENDER_EXTERNAL_URL automatically. Prefer it over falling
   // back to localhost, which Telegram rejects for Web App buttons.
   const appUrl = (
@@ -2946,7 +2951,7 @@ function extractTelegramChannelFromTaskUrl(taskUrl: string): string | null {
 
         // Define signup credits for new users (default: 3, configurable via SIGNUP_CREDITS)
         const signupCreditsToApply = isNewRegistration
-          ? (hasValidReferrer ? referralRewardCredits : signupCredits)
+          ? signupCredits
           : (existingUser?.credits || 0);
 
         // 2. Perform registration/update. For an existing user we must NOT
@@ -4098,7 +4103,14 @@ function extractTelegramChannelFromTaskUrl(taskUrl: string): string | null {
         return c.json({ error: "Task not found or inactive" }, 404);
       }
       const taskReward = Math.max(0, Math.floor(Number(taskData.reward || 0)));
-      
+
+      if (isPrivateTelegramInvite(taskData.url || '')) {
+        return c.json({
+          error: "This task uses a private channel invite that cannot be verified. Ask the admin to use a public channel username.",
+          code: "CHANNEL_VERIFICATION_UNAVAILABLE",
+        }, 400);
+      }
+
       if (taskData && bot) {
         const channelUsername = extractTelegramChannelFromTaskUrl(taskData.url || '');
 
@@ -5371,7 +5383,37 @@ ${ad.subtitle}`;
       .select("id,title,description,reward,url,button_label,image_url,active,created_at")
       .eq("active", true);
     if (error) return c.json([]);
-    return c.json(data || []);
+
+    const tasks = data || [];
+    if (!tasks.length) return c.json(tasks);
+
+    const initData = c.req.header("X-TG-Init-Data");
+    const tgUser = initData && hasValidTelegramAuth(initData)
+      ? getTelegramUserFromInitData(initData)
+      : null;
+    if (!tgUser?.id) {
+      return c.json(tasks.map((task) => ({ ...task, completed: false })));
+    }
+
+    const { data: claims, error: claimsError } = await supabase
+      .from("user_tasks")
+      .select("task_id,completed_at")
+      .eq("telegram_id", tgUser.id)
+      .in("task_id", tasks.map((task) => task.id));
+
+    if (claimsError) {
+      console.error("Task completion lookup error:", claimsError.message);
+      return c.json(tasks.map((task) => ({ ...task, completed: false })));
+    }
+
+    const completed = new Map(
+      (claims || []).map((claim: any) => [String(claim.task_id), claim.completed_at]),
+    );
+    return c.json(tasks.map((task) => ({
+      ...task,
+      completed: completed.has(String(task.id)),
+      completed_at: completed.get(String(task.id)) || null,
+    })));
   });
 
   app.get("/api/common/ads", async (c) => {
