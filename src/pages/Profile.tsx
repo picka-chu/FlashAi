@@ -128,10 +128,11 @@ export const Profile: React.FC<{ initialSection?: ProfileSection }> = ({ initial
   const [editPhotoUrl, setEditPhotoUrl] = useState(user?.photo_url || '');
   const [tonConnectUI] = useTonConnectUI();
   const [dynamicTasks, setDynamicTasks] = useState<any[]>([]);
-  const [referralStats, setReferralStats] = useState<{ totalReferred: number; earnedCredits: number; referralLink: string }>({
+  const [referralStats, setReferralStats] = useState<{ totalReferred: number; earnedCredits: number; referralLink: string; rewardPerReferral: number }>({
     totalReferred: 0,
     earnedCredits: 0,
     referralLink: '',
+    rewardPerReferral: 2,
   });
 
   useEffect(() => {
@@ -153,6 +154,7 @@ export const Profile: React.FC<{ initialSection?: ProfileSection }> = ({ initial
           totalReferred: Number(data.totalReferred || 0),
           earnedCredits: Number(data.earnedCredits || 0),
           referralLink: data.referralLink || '',
+          rewardPerReferral: Number(data.rewardPerReferral || 2),
         });
       })
       .catch((err) => console.error("Failed to fetch referral stats:", err));
@@ -811,7 +813,6 @@ export const Profile: React.FC<{ initialSection?: ProfileSection }> = ({ initial
   };
 
   const copyReferralLink = async () => {
-    const fallbackRefId = user?.telegram_id || user?.id;
     let link = referralStats.referralLink || '';
     if (!link && initData) {
       try {
@@ -822,9 +823,6 @@ export const Profile: React.FC<{ initialSection?: ProfileSection }> = ({ initial
           setReferralStats(prev => ({ ...prev, referralLink: data.referralLink }));
         }
       } catch {}
-    }
-    if (!link && fallbackRefId) {
-      link = `https://t.me/Deepflashaibot?start=${fallbackRefId}`;
     }
     if (!link) {
       showAlert('Referral link is not ready yet.');
@@ -880,8 +878,11 @@ export const Profile: React.FC<{ initialSection?: ProfileSection }> = ({ initial
   };
 
   const shareReferralLink = () => {
-    const fallbackRefId = user?.telegram_id || user?.id;
-    const link = referralStats.referralLink || `https://t.me/Deepflashaibot?start=${fallbackRefId}`;
+    const link = referralStats.referralLink;
+    if (!link) {
+      showAlert('Referral link is not available yet. Please try again.');
+      return;
+    }
     const text = `Join Flash AI and get high-confidence football predictions! 🚀⚽️`;
     
     hapticFeedback('medium');
@@ -1211,11 +1212,11 @@ export const Profile: React.FC<{ initialSection?: ProfileSection }> = ({ initial
                 <div className="space-y-4">
                   <div className="text-center space-y-1">
                     <h3 className="text-lg font-black text-white">Your referral link</h3>
-                    <p className="text-xs font-bold text-zinc-500">Every friend gives you 2 credits</p>
+                    <p className="text-xs font-bold text-zinc-500">Every friend gives you {referralStats.rewardPerReferral} credits</p>
                   </div>
                   <div className="bg-zinc-900 border border-zinc-800 rounded-[32px] p-4 flex items-center justify-between">
                     <code className="text-[10px] sm:text-xs font-mono text-zinc-400 truncate flex-1 block px-2">
-                      {referralStats.referralLink || `https://t.me/Deepflashaibot?start=${user?.telegram_id || ''}`}
+                      {referralStats.referralLink || 'Loading referral link...'}
                     </code>
                     <div className="flex gap-2">
                       <button 
@@ -1250,7 +1251,7 @@ export const Profile: React.FC<{ initialSection?: ProfileSection }> = ({ initial
                     </div>
                     <div className="flex items-center gap-4">
                       <div className="w-8 h-8 rounded-xl bg-[#ccff00]/20 flex items-center justify-center text-[#ccff00] text-xs font-black">3</div>
-                      <p className="text-xs font-bold text-zinc-400">You instantly receive 2 bonus credits</p>
+                      <p className="text-xs font-bold text-zinc-400">You instantly receive {referralStats.rewardPerReferral} bonus credits</p>
                     </div>
                   </div>
                 </div>

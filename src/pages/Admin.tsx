@@ -11,6 +11,8 @@ import {
   CreditCard,
   Plus,
   Trash2,
+  Pencil,
+  Power,
   CheckCircle2,
   XCircle,
   ArrowRight,
@@ -41,6 +43,17 @@ import { useTelegram } from '../hooks/useTelegram';
 import { useUserStore } from '../store/useUserStore';
 
 type AdminTab = 'dashboard' | 'analytics' | 'tasks' | 'ads' | 'users' | 'notifications' | 'reports';
+
+const EMPTY_TASK = {
+  title: '',
+  description: '',
+  reward: 10,
+  url: '',
+  channel_username: '',
+  buttonLabel: 'Start Task',
+  image_url: '',
+  active: true,
+};
 
 const DEFAULT_AD = {
   title: '',
@@ -81,9 +94,10 @@ export const Admin: React.FC = () => {
 
   // Form states for adding items
   const [isAddingTask, setIsAddingTask] = useState(false);
+  const [editingTaskId, setEditingTaskId] = useState<string | null>(null);
   const [isAddingAd, setIsAddingAd] = useState(false);
   const [editingAdId, setEditingAdId] = useState<string | null>(null);
-  const [newTask, setNewTask] = useState({ title: '', description: '', reward: 10, url: '', channel_username: '', buttonLabel: 'Start Task', image_url: '', active: true });
+  const [newTask, setNewTask] = useState({ ...EMPTY_TASK });
   const [newAd, setNewAd] = useState({ ...DEFAULT_AD });
   // Separate string state for the 6 number fields so the user can type freely
   // without React clamping/replacing the value on every keystroke.
@@ -317,9 +331,10 @@ export const Admin: React.FC = () => {
       showAlert('Task title and description are required.');
       return;
     }
+    const isEditing = Boolean(editingTaskId);
     try {
-      const res = await fetch('/api/admin/tasks', {
-        method: 'POST',
+      const res = await fetch(isEditing ? `/api/admin/tasks/${editingTaskId}` : '/api/admin/tasks', {
+        method: isEditing ? 'PATCH' : 'POST',
         headers: { 'Content-Type': 'application/json', 'X-TG-Init-Data': initData },
         body: JSON.stringify(newTask)
       });
@@ -327,14 +342,54 @@ export const Admin: React.FC = () => {
       if (res.ok) {
         fetchTasks();
         setIsAddingTask(false);
-        setNewTask({ title: '', description: '', reward: 10, url: '', channel_username: '', buttonLabel: 'Start Task', image_url: '', active: true });
-        showAlert('Task added successfully!');
+        setEditingTaskId(null);
+        setNewTask({ ...EMPTY_TASK });
+        showAlert(isEditing ? 'Task updated successfully!' : 'Task added successfully!');
       } else {
-        showAlert(data.error || 'Failed to add task');
+        showAlert(data.error || (isEditing ? 'Failed to update task' : 'Failed to add task'));
       }
     } catch (e) {
-      showAlert('Failed to add task');
+      showAlert(isEditing ? 'Failed to update task' : 'Failed to add task');
     }
+  };
+
+  const editTask = (task: any) => {
+    setEditingTaskId(String(task.id));
+    setNewTask({
+      title: task.title || '',
+      description: task.description || '',
+      reward: Number(task.reward || 0),
+      url: task.url || '',
+      channel_username: '',
+      buttonLabel: task.button_label || 'Start Task',
+      image_url: task.image_url || '',
+      active: task.active !== false,
+    });
+    setIsAddingTask(true);
+  };
+
+  const toggleTaskActive = async (task: any) => {
+    try {
+      const res = await fetch(`/api/admin/tasks/${task.id}`, {
+        method: 'PATCH',
+        headers: { 'Content-Type': 'application/json', 'X-TG-Init-Data': initData },
+        body: JSON.stringify({ active: task.active === false }),
+      });
+      const data = await res.json().catch(() => ({}));
+      if (!res.ok) {
+        showAlert(data.error || 'Failed to update task');
+        return;
+      }
+      fetchTasks();
+    } catch {
+      showAlert('Failed to update task');
+    }
+  };
+
+  const closeTaskModal = () => {
+    setIsAddingTask(false);
+    setEditingTaskId(null);
+    setNewTask({ ...EMPTY_TASK });
   };
 
   const handleAddAd = async () => {
@@ -931,7 +986,11 @@ export const Admin: React.FC = () => {
               className="space-y-6"
             >
               <button 
-                onClick={() => setIsAddingTask(true)}
+                onClick={() => {
+                  setEditingTaskId(null);
+                  setNewTask({ ...EMPTY_TASK });
+                  setIsAddingTask(true);
+                }}
                 className="w-full bg-zinc-900 border border-zinc-800 border-dashed py-6 rounded-3xl flex flex-col items-center gap-2 hover:bg-zinc-800 transition-colors"
               >
                 <div className="w-10 h-10 rounded-full bg-[#ccff00]/10 flex items-center justify-center">
@@ -942,22 +1001,39 @@ export const Admin: React.FC = () => {
 
               <div className="space-y-4">
                 {tasks.map(task => (
-                  <div key={task.id} className="bg-zinc-900/50 border border-zinc-800 rounded-3xl p-5 flex items-center justify-between">
-                    <div className="flex items-center gap-4">
-                      <div className="w-12 h-12 rounded-2xl bg-zinc-800 flex items-center justify-center">
+                  <div key={task.id} className={`bg-zinc-900/50 border border-zinc-800 rounded-3xl p-5 flex items-center justify-between gap-3 ${task.active === false ? 'opacity-60' : ''}`}>
+                    <div className="flex items-center gap-4 min-w-0">
+                      <div className="w-12 h-12 rounded-2xl bg-zinc-800 flex items-center justify-center shrink-0">
                         <ListTodo className="w-6 h-6 text-[#ccff00]" />
                       </div>
-                      <div>
-                        <p className="text-sm font-black text-white">{task.title}</p>
-                        <p className="text-[10px] font-bold text-zinc-500 uppercase tracking-widest">+{task.reward} CREDITS</p>
+                      <div className="min-w-0">
+                        <p className="text-sm font-black text-white truncate">{task.title}</p>
+                        <p className="text-[10px] font-bold text-zinc-500 uppercase tracking-widest">+{task.reward} CREDITS · {task.active === false ? 'INACTIVE' : 'ACTIVE'}</p>
                       </div>
                     </div>
-                    <button 
-                      onClick={() => deleteTask(task.id)}
-                      className="w-10 h-10 rounded-xl bg-red-500/10 flex items-center justify-center text-red-500 hover:bg-red-500 hover:text-white transition-all"
-                    >
-                      <Trash2 className="w-4 h-4" />
-                    </button>
+                    <div className="flex items-center gap-2 shrink-0">
+                      <button
+                        onClick={() => toggleTaskActive(task)}
+                        title={task.active === false ? 'Activate task' : 'Deactivate task'}
+                        className={`w-10 h-10 rounded-xl flex items-center justify-center transition-all ${task.active === false ? 'bg-green-500/10 text-green-400 hover:bg-green-500 hover:text-white' : 'bg-zinc-800 text-zinc-400 hover:bg-zinc-700 hover:text-white'}`}
+                      >
+                        <Power className="w-4 h-4" />
+                      </button>
+                      <button
+                        onClick={() => editTask(task)}
+                        title="Edit task"
+                        className="w-10 h-10 rounded-xl bg-[#ccff00]/10 flex items-center justify-center text-[#ccff00] hover:bg-[#ccff00] hover:text-black transition-all"
+                      >
+                        <Pencil className="w-4 h-4" />
+                      </button>
+                      <button 
+                        onClick={() => deleteTask(task.id)}
+                        title="Delete task"
+                        className="w-10 h-10 rounded-xl bg-red-500/10 flex items-center justify-center text-red-500 hover:bg-red-500 hover:text-white transition-all"
+                      >
+                        <Trash2 className="w-4 h-4" />
+                      </button>
+                    </div>
                   </div>
                 ))}
               </div>
@@ -969,15 +1045,15 @@ export const Admin: React.FC = () => {
                     <motion.div 
                       initial={{ opacity: 0 }} animate={{ opacity: 1 }} exit={{ opacity: 0 }}
                       className="fixed inset-0 bg-black/80 backdrop-blur-sm z-50"
-                      onClick={() => setIsAddingTask(false)}
+                      onClick={closeTaskModal}
                     />
                     <motion.div 
                       initial={{ y: '100%' }} animate={{ y: 0 }} exit={{ y: '100%' }}
                       className="fixed bottom-0 left-0 right-0 bg-zinc-900 rounded-t-[40px] z-50 p-8 space-y-6 pt-12"
                     >
                       <div className="flex items-center justify-between">
-                        <h3 className="text-xl font-black text-white">Create Daily Task</h3>
-                        <button onClick={() => setIsAddingTask(false)} className="w-8 h-8 rounded-full bg-zinc-800 border border-zinc-700 flex items-center justify-center">
+                        <h3 className="text-xl font-black text-white">{editingTaskId ? 'Edit Task' : 'Create Daily Task'}</h3>
+                        <button onClick={closeTaskModal} className="w-8 h-8 rounded-full bg-zinc-800 border border-zinc-700 flex items-center justify-center">
                           <XCircle className="w-4 h-4 text-zinc-400" />
                         </button>
                       </div>
@@ -1000,7 +1076,7 @@ export const Admin: React.FC = () => {
                             if (file) handleUploadAsDataUrl(file, (dataUrl) => setNewTask({ ...newTask, image_url: dataUrl }));
                           }} />
                         </label>
-                        <button onClick={handleAddTask} className="w-full py-5 bg-[#ccff00] text-black font-black uppercase tracking-widest text-xs rounded-2xl shadow-[0_0_30px_rgba(204,255,0,0.3)]">Publish Task</button>
+                        <button onClick={handleAddTask} className="w-full py-5 bg-[#ccff00] text-black font-black uppercase tracking-widest text-xs rounded-2xl shadow-[0_0_30px_rgba(204,255,0,0.3)]">{editingTaskId ? 'Save Changes' : 'Publish Task'}</button>
                       </div>
                     </motion.div>
                   </>

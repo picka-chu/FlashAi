@@ -3410,9 +3410,12 @@ function isPrivateTelegramInvite(taskUrl: string): boolean {
       const tgUser = initData ? getTelegramUserFromInitData(initData) : null;
       if (!tgUser?.id) return c.json({ error: "User not identified" }, 401);
 
-      const [{ count: referredCount }, { data: referrers }, { data: rewardedReferrals }] = await Promise.all([
-        supabase.from("users").select("*", { count: "exact", head: true }).eq("referrer_id", tgUser.id),
-        supabase.from("users").select("telegram_id").eq("referrer_id", tgUser.id),
+      const [{ count: referredCount }, { data: rewardedReferrals }] = await Promise.all([
+        supabase
+          .from("users")
+          .select("*", { count: "exact", head: true })
+          .eq("referrer_id", tgUser.id)
+          .not("phone", "is", null),
         supabase
           .from("referrals")
           .select("reward_amount")
@@ -3431,11 +3434,11 @@ function isPrivateTelegramInvite(taskUrl: string): boolean {
         totalReferred,
         earnedCredits,
         referralLink,
-        referredUsers: referrers || [],
+        rewardPerReferral: referralRewardCredits,
       });
     } catch (e: any) {
       console.error("Referral API error:", e?.message || e);
-      return c.json({ totalReferred: 0, earnedCredits: 0, referralLink: `https://t.me/${botUsername}` }, 500);
+      return c.json({ totalReferred: 0, earnedCredits: 0, referralLink: `https://t.me/${botUsername}`, rewardPerReferral: referralRewardCredits }, 500);
     }
   });
 
@@ -4139,43 +4142,65 @@ function isPrivateTelegramInvite(taskUrl: string): boolean {
         }
       }
 
-      // 3. Atomically claim the task. The UNIQUE(telegram_id, task_id)
-      // constraint guarantees a task can only ever be rewarded once, even if
-      // two requests race past the verification step.
-      const { error: logError } = await supabase.from('user_tasks').insert({
-        telegram_id: normalizedTelegramId,
-        task_id: normalizedTaskId,
-        completed_at: new Date().toISOString()
+      // 3. Claim + credit atomically. The RPC inserts user_tasks and updates
+      // credits in one transaction; UNIQUE(telegram_id, task_id) guarantees a
+      // task can only ever be rewarded once, even under concurrent requests.
+      let newCredits: number | null = null;
+      const { data: rpcCredits, error: claimError } = await supabase.rpc('claim_task_reward', {
+        p_telegram_id: normalizedTelegramId,
+        p_task_id: normalizedTaskId,
+        p_reward: taskReward,
       });
 
-      if (logError) {
-        if (logError.code === '23505') {
+      if (!claimError) {
+        newCredits = Number(rpcCredits ?? 0);
+      } else {
+        const claimMessage = String(claimError.message || '');
+        const rpcMissing = claimError.code === 'PGRST202'
+          || /could not find the function|function .* does not exist/i.test(claimMessage);
+
+        if (claimError.code === '23505') {
           return c.json({ error: "Task already completed" }, 409);
         }
-        throw logError;
-      }
+        if (!rpcMissing) throw claimError;
 
-      const { error: creditError } = await supabase.rpc('add_credits_to_user', {
-        user_telegram_id: normalizedTelegramId,
-        credits_amount: taskReward,
-      });
-      if (creditError) {
-        // Release the claim so the user can retry without losing the reward.
-        await supabase
-          .from('user_tasks')
-          .delete()
+        // Legacy fallback for deployments that have not run the migration yet.
+        const { error: logError } = await supabase.from('user_tasks').insert({
+          telegram_id: normalizedTelegramId,
+          task_id: normalizedTaskId,
+          completed_at: new Date().toISOString()
+        });
+
+        if (logError) {
+          if (logError.code === '23505') {
+            return c.json({ error: "Task already completed" }, 409);
+          }
+          throw logError;
+        }
+
+        const { error: creditError } = await supabase.rpc('add_credits_to_user', {
+          user_telegram_id: normalizedTelegramId,
+          credits_amount: taskReward,
+        });
+        if (creditError) {
+          // Release the claim so the user can retry without losing the reward.
+          await supabase
+            .from('user_tasks')
+            .delete()
+            .eq('telegram_id', normalizedTelegramId)
+            .eq('task_id', normalizedTaskId);
+          throw creditError;
+        }
+
+        const { data: user } = await supabase
+          .from('users')
+          .select('credits')
           .eq('telegram_id', normalizedTelegramId)
-          .eq('task_id', normalizedTaskId);
-        throw creditError;
+          .single();
+        newCredits = user?.credits ?? null;
       }
 
-      const { data: user } = await supabase
-        .from('users')
-        .select('credits')
-        .eq('telegram_id', normalizedTelegramId)
-        .single();
-
-      return c.json({ success: true, newCredits: user?.credits ?? null, rewardedCredits: taskReward });
+      return c.json({ success: true, newCredits, rewardedCredits: taskReward });
     } catch (e: any) {
       console.error("Task claim error:", e.message);
       return c.json({ error: "Failed to claim task reward" }, 500);
@@ -4735,6 +4760,62 @@ function isPrivateTelegramInvite(taskUrl: string): boolean {
       console.error("Task creation error:", error?.message || error);
       return c.json({ error: "Failed to create task" }, 500);
     }
+  });
+
+  app.patch("/api/admin/tasks/:id", adminOnly, async (c) => {
+    const id = c.req.param("id");
+    const body = await c.req.json().catch(() => ({} as any));
+    const updates: Record<string, any> = {};
+
+    if (body.title !== undefined) {
+      const title = String(body.title || "").trim();
+      if (!title) return c.json({ error: "Title cannot be empty" }, 400);
+      updates.title = title.slice(0, 200);
+    }
+    if (body.description !== undefined) {
+      const description = String(body.description || "").trim();
+      if (!description) return c.json({ error: "Description cannot be empty" }, 400);
+      updates.description = description.slice(0, 2000);
+    }
+    if (body.reward !== undefined) {
+      const reward = Number(body.reward);
+      if (!Number.isFinite(reward) || reward < 0 || reward > 100000) {
+        return c.json({ error: "Reward must be between 0 and 100000" }, 400);
+      }
+      updates.reward = Math.floor(reward);
+    }
+    if (body.url !== undefined) updates.url = String(body.url || "").trim() || null;
+    if (body.buttonLabel !== undefined) {
+      updates.button_label = String(body.buttonLabel || "Start Task").trim() || "Start Task";
+    }
+    if (body.image_url !== undefined) updates.image_url = String(body.image_url || "").trim() || null;
+    if (body.active !== undefined) updates.active = body.active !== false;
+    if (body.channel_username !== undefined) {
+      const username = String(body.channel_username || "").trim();
+      if (username && !/^@?[a-zA-Z0-9_]{5,}$/.test(username)) {
+        return c.json({ error: "Invalid Telegram channel username format" }, 400);
+      }
+      if (username) {
+        const normalized = username.startsWith("@") ? username.slice(1) : username;
+        updates.url = `https://t.me/${normalized}`;
+      }
+    }
+
+    if (!Object.keys(updates).length) return c.json({ error: "No fields to update" }, 400);
+
+    const { data, error } = await supabase
+      .from("tasks")
+      .update(updates)
+      .eq("id", id)
+      .select()
+      .maybeSingle();
+
+    if (error) {
+      console.error("Task update failed:", error);
+      return c.json({ error: "Failed to update task" }, 500);
+    }
+    if (!data) return c.json({ error: "Task not found" }, 404);
+    return c.json(data);
   });
 
   app.delete("/api/admin/tasks/:id", adminOnly, async (c) => {
