@@ -53,6 +53,7 @@ const EMPTY_TASK = {
   buttonLabel: 'Start Task',
   image_url: '',
   active: true,
+  allow_self_report: false,
 };
 
 const DEFAULT_AD = {
@@ -364,6 +365,7 @@ export const Admin: React.FC = () => {
       buttonLabel: task.button_label || 'Start Task',
       image_url: task.image_url || '',
       active: task.active !== false,
+      allow_self_report: task.allow_self_report === true,
     });
     setIsAddingTask(true);
   };
@@ -1069,6 +1071,20 @@ export const Admin: React.FC = () => {
                           <input value={newTask.buttonLabel} onChange={e => setNewTask({...newTask, buttonLabel: e.target.value})} placeholder="Button text (e.g. Join now)" className="flex-1 bg-zinc-800 border-none rounded-2xl p-4 text-white text-sm font-bold placeholder:text-zinc-600 focus:ring-2 ring-[#ccff00]/50" />
                           <input value={newTask.image_url} onChange={e => setNewTask({...newTask, image_url: e.target.value})} placeholder="Task image URL (optional)" className="flex-[2] bg-zinc-800 border-none rounded-2xl p-4 text-white text-sm font-bold placeholder:text-zinc-600 focus:ring-2 ring-[#ccff00]/50" />
                         </div>
+                        <label className="flex items-start gap-3 rounded-2xl bg-zinc-800/60 p-4 cursor-pointer">
+                          <input
+                            type="checkbox"
+                            checked={newTask.allow_self_report}
+                            onChange={e => setNewTask({ ...newTask, allow_self_report: e.target.checked })}
+                            className="mt-0.5 h-4 w-4 shrink-0 accent-[#ccff00]"
+                          />
+                          <span className="text-[11px] font-bold text-zinc-300">
+                            Allow self-reported completion
+                            <span className="mt-0.5 block text-[10px] font-medium leading-relaxed text-zinc-500">
+                              Required for non-Telegram links. Users confirm they completed the task; there is no automatic verification.
+                            </span>
+                          </span>
+                        </label>
                         <label className="text-[10px] font-bold text-zinc-500 uppercase tracking-widest cursor-pointer block">
                           Upload task image
                           <input type="file" accept="image/*" className="hidden" onChange={(e) => {

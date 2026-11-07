@@ -3417,15 +3417,16 @@ function isPrivateTelegramInvite(taskUrl: string): boolean {
           .eq("referrer_id", tgUser.id)
           .not("phone", "is", null),
         supabase
-          .from("referrals")
-          .select("reward_amount")
-          .eq("referrer_telegram_id", tgUser.id)
-          .eq("reward_given", true),
+          .from("transactions")
+          .select("amount")
+          .eq("telegram_id", tgUser.id)
+          .eq("type", "referral_reward")
+          .eq("status", "completed"),
       ]);
 
       const totalReferred = referredCount || 0;
-      const earnedCredits = (rewardedReferrals || []).reduce((total: number, referral: any) => {
-        const rewardAmount = Number(referral?.reward_amount || 0);
+      const earnedCredits = (rewardedReferrals || []).reduce((total: number, transaction: any) => {
+        const rewardAmount = Number(transaction?.amount || 0);
         return total + (Number.isFinite(rewardAmount) ? rewardAmount : 0);
       }, 0);
       const referralLink = `https://t.me/${botUsername}?start=${tgUser.id}`;
@@ -4095,11 +4096,14 @@ function isPrivateTelegramInvite(taskUrl: string): boolean {
       if (tgUser.id !== normalizedTelegramId) {
         return c.json({ error: "Telegram identity mismatch" }, 403);
       }
+      if (isRateLimited(`tasks:claim:${tgUser.id}`)) {
+        return c.json({ error: "Too many task claims. Please wait a moment and retry." }, 429);
+      }
 
       // 1. Perform verification for specific tasks
       const { data: taskData } = await supabase
         .from('tasks')
-        .select('id,reward,url,active,title')
+        .select('id,reward,url,active,title,allow_self_report')
         .eq('id', normalizedTaskId)
         .maybeSingle();
       if (!taskData || taskData.active === false) {
@@ -4114,8 +4118,16 @@ function isPrivateTelegramInvite(taskUrl: string): boolean {
         }, 400);
       }
 
+      const channelForTask = extractTelegramChannelFromTaskUrl(taskData.url || '');
+      if (!channelForTask && taskData.allow_self_report !== true) {
+        return c.json({
+          error: "This task cannot be verified automatically. Ask the admin to enable self-reported completion or use a public Telegram channel.",
+          code: "VERIFICATION_UNAVAILABLE",
+        }, 400);
+      }
+
       if (taskData && bot) {
-        const channelUsername = extractTelegramChannelFromTaskUrl(taskData.url || '');
+        const channelUsername = channelForTask;
 
         if (channelUsername) {
           try {
@@ -4712,26 +4724,37 @@ function isPrivateTelegramInvite(taskUrl: string): boolean {
   app.post("/api/admin/tasks", adminOnly, async (c) => {
     const body = await c.req.json();
 
+    const rawReward = Number(body.reward ?? 10);
     const task = {
       id: crypto.randomUUID(),
       title: String(body.title || "").trim(),
       description: String(body.description || "").trim(),
-      reward: Number(body.reward || 10),
+      reward: Number.isFinite(rawReward) ? Math.floor(rawReward) : NaN,
       channel_username: String(body.channel_username || "").trim(),
       url: String(body.url || "").trim(),
       buttonLabel: String(body.buttonLabel || "Claim").trim(),
       image_url: String(body.image_url || "").trim(),
       active: body.active !== false,
+      allow_self_report: body.allow_self_report === true,
       created_at: new Date().toISOString(),
     };
 
     if (!task.title || !task.description) return c.json({ error: "Title and description are required" }, 400);
+    if (!Number.isFinite(task.reward) || task.reward < 0 || task.reward > 100000) {
+      return c.json({ error: "Reward must be between 0 and 100000" }, 400);
+    }
     if (task.channel_username && !/^@?[a-zA-Z0-9_]{5,}$/.test(task.channel_username)) {
       return c.json({ error: "Invalid Telegram channel username format" }, 400);
     }
     if (task.channel_username) {
       const normalized = task.channel_username.startsWith('@') ? task.channel_username.slice(1) : task.channel_username;
       task.url = `https://t.me/${normalized}`;
+    }
+    if (isPrivateTelegramInvite(task.url)) {
+      return c.json({ error: "Private invite links cannot be verified. Use a public channel username." }, 400);
+    }
+    if (!extractTelegramChannelFromTaskUrl(task.url) && !task.allow_self_report) {
+      return c.json({ error: "Enable self-reported completion for non-Telegram tasks." }, 400);
     }
 
     try {
@@ -4746,6 +4769,7 @@ function isPrivateTelegramInvite(taskUrl: string): boolean {
           button_label: task.buttonLabel,
           image_url: task.image_url || null,
           active: task.active,
+          allow_self_report: task.allow_self_report,
         })
         .select()
         .single();
@@ -4784,7 +4808,14 @@ function isPrivateTelegramInvite(taskUrl: string): boolean {
       }
       updates.reward = Math.floor(reward);
     }
-    if (body.url !== undefined) updates.url = String(body.url || "").trim() || null;
+    if (body.url !== undefined) {
+      const url = String(body.url || "").trim();
+      if (isPrivateTelegramInvite(url)) {
+        return c.json({ error: "Private invite links cannot be verified. Use a public channel username." }, 400);
+      }
+      updates.url = url || null;
+    }
+    if (body.allow_self_report !== undefined) updates.allow_self_report = body.allow_self_report === true;
     if (body.buttonLabel !== undefined) {
       updates.button_label = String(body.buttonLabel || "Start Task").trim() || "Start Task";
     }

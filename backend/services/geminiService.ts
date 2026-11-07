@@ -62,32 +62,39 @@ function parseJsonFromText(text: string) {
     return null;
   };
 
+  const tryParse = (candidate: string | null | undefined) => {
+    if (!candidate) return null;
+    try {
+      return JSON.parse(candidate);
+    } catch {}
+    try {
+      // Models occasionally add trailing commas before a closing brace/bracket.
+      return JSON.parse(candidate.replace(/,\s*([}\]])/g, '$1'));
+    } catch {}
+    return null;
+  };
+
   try {
     if (typeof text === 'object' && text !== null) return text;
     const normalized = String(text || '')
       .replace(/\u00a0/g, ' ')
       .replace(/\uFEFF/g, '')
+      .replace(/\r\n?/g, '\n')
       .trim();
     if (!normalized) return null;
 
-    // 1) Direct parse
-    try {
-      return JSON.parse(normalized);
-    } catch {}
+    const direct = tryParse(normalized);
+    if (direct) return direct;
 
-    // 2) Parse fenced markdown JSON
+    // Parse fenced markdown JSON
     const fenced = normalized.match(/```(?:json)?\s*([\s\S]*?)\s*```/i)?.[1]?.trim();
-    if (fenced) {
-      try {
-        return JSON.parse(fenced);
-      } catch {}
-    }
+    const fencedParsed = tryParse(fenced);
+    if (fencedParsed) return fencedParsed;
 
-    // 3) Parse first balanced JSON fragment in the text
+    // Parse first balanced JSON fragment in the text
     const balanced = extractBalancedJson(normalized);
-    if (balanced) {
-      return JSON.parse(balanced);
-    }
+    const balancedParsed = tryParse(balanced);
+    if (balancedParsed) return balancedParsed;
 
     return null;
   } catch (e) {
@@ -215,16 +222,28 @@ ACCURACY RULES:
 CONFIDENCE:
 85-95 = statistical + qualitative + price alignment; 70-84 = strong signal; 55-69 = mixed/thin; below 55 = speculative.
 
-Return ONLY valid JSON (no markdown, no text outside the JSON):
+Return ONLY valid JSON (no markdown, no prose, no comments). Use exactly this shape:
 {
-  "safePicks": [marketPick, marketPick],
-  "valuePicks": [marketPick, marketPick],
-  "overallReasoning":"<5-8 sentence professional preview: form, absences, H2H, tactics, and the sharpest insight>",
-  "teamData":{"home":{"name":"<team>","form":"<last 5 e.g. WWDLW>","injuries":["<player and position>"],"keyStats":["<specific stat>"]},"away":{"name":"<team>","form":"<last 5>","injuries":["<player and position>"],"keyStats":["<specific stat>"]}}
+  "safePicks": [
+    {"market":"<exact bet label>","confidence":80,"probability":70,"odds":null,"edge":null,"dataQuality":"MODERATE","reasoning":"<1-2 specific sentences>"},
+    {"market":"<exact bet label>","confidence":78,"probability":68,"odds":null,"edge":null,"dataQuality":"MODERATE","reasoning":"<1-2 specific sentences>"}
+  ],
+  "valuePicks": [
+    {"market":"<exact bet label>","confidence":75,"probability":55,"odds":null,"edge":null,"dataQuality":"MODERATE","reasoning":"<1-2 specific sentences>"},
+    {"market":"<exact bet label>","confidence":72,"probability":52,"odds":null,"edge":null,"dataQuality":"MODERATE","reasoning":"<1-2 specific sentences>"}
+  ],
+  "overallReasoning":"<5-8 sentence preview: form, absences, H2H, tactics, sharpest insight>",
+  "teamData":{
+    "home":{"name":"<team>","form":"<last 5 e.g. WWDLW>","injuries":["<player and position>"],"keyStats":["<specific stat>"]},
+    "away":{"name":"<team>","form":"<last 5>","injuries":["<player and position>"],"keyStats":["<specific stat>"]}
+  }
 }
 
-marketPick = {"market":"<exact bet label>","confidence":<50-95>,"probability":<0-100>,"odds":<decimal|null>,"edge":<percent|null>,"dataQuality":"STRONG|MODERATE|LIMITED","reasoning":"<1-2 specific sentences>"}
-Return exactly 2 objects in safePicks and exactly 2 in valuePicks. Keep reasoning concise.
+Hard JSON rules:
+- Write exactly 2 objects in safePicks and exactly 2 in valuePicks.
+- Numbers are plain JSON numbers: 80, not "80" and not "80%".
+- odds is a decimal number or null; edge is a number or null; dataQuality is one of STRONG, MODERATE, LIMITED.
+- No trailing commas. No duplicate keys. Escape quotes inside reasoning.
         `;
 
         const result = await ai.models.generateContent({
@@ -245,11 +264,17 @@ Return exactly 2 objects in safePicks and exactly 2 in valuePicks. Keep reasonin
           throw new Error(`Failed to parse JSON from Gemini response. Raw text: ${rawText.substring(0, 200)}`);
         }
         
-        const toOutcomes = (rawList: any, type: PredictionOutcome["type"]): PredictionOutcome[] =>
-          (Array.isArray(rawList) ? rawList : [])
+        const toOutcomes = (rawList: any, type: PredictionOutcome["type"]): PredictionOutcome[] => {
+          const list = Array.isArray(rawList)
+            ? rawList
+            : rawList && typeof rawList === "object"
+              ? [rawList]
+              : [];
+          return list
             .map((raw: any) => normalizeMarketPick(raw))
             .filter((pick): pick is MarketPick => Boolean(pick))
             .map((pick) => toPredictionOutcome(pick, type));
+        };
 
         let predictions: PredictionResult["predictions"] = [
           ...toOutcomes(parsed.safePicks, "safe"),

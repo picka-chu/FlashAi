@@ -95,12 +95,14 @@ CREATE TABLE IF NOT EXISTS public.tasks (
   button_label TEXT DEFAULT 'Start Task',
   image_url TEXT,
   active BOOLEAN NOT NULL DEFAULT TRUE,
+  allow_self_report BOOLEAN NOT NULL DEFAULT FALSE,
   created_at TIMESTAMPTZ NOT NULL DEFAULT now()
 );
 
 ALTER TABLE public.tasks
   ADD COLUMN IF NOT EXISTS button_label TEXT DEFAULT 'Start Task',
-  ADD COLUMN IF NOT EXISTS image_url TEXT;
+  ADD COLUMN IF NOT EXISTS image_url TEXT,
+  ADD COLUMN IF NOT EXISTS allow_self_report BOOLEAN NOT NULL DEFAULT FALSE;
 
 CREATE TABLE IF NOT EXISTS public.ads (
   id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
