@@ -5783,22 +5783,44 @@ ${ad.subtitle}`;
   });
   console.log("✅ Credit Reset Scheduler initialized and running");
 
-  // Start Telegram polling asynchronously; HTTP stays available during Telegram startup.
+  // Start Telegram polling independently from the HTTP server. Telegram can
+  // occasionally be unreachable from the host; retry with backoff instead of
+  // exiting the process and causing Render to restart the entire service.
   if (bot) {
-    void bot.launch().then(() => {
-      console.log("✅ Telegram bot polling started.");
+    let telegramRetryDelayMs = 15_000;
+    const maxTelegramRetryDelayMs = 5 * 60_000;
+    let telegramSchedulersStarted = false;
 
-      engagementScheduler = new EngagementScheduler({ supabase, bot: bot!, appUrl });
-      if (String(process.env.NOTIFICATIONS_ENABLED || "true").toLowerCase() !== "false") {
-        engagementScheduler.start();
+    const startTelegramBot = async (): Promise<void> => {
+      try {
+        await bot!.launch();
+        console.log("✅ Telegram bot polling started.");
+
+        if (!telegramSchedulersStarted) {
+          telegramSchedulersStarted = true;
+          engagementScheduler = new EngagementScheduler({ supabase, bot: bot!, appUrl });
+          if (String(process.env.NOTIFICATIONS_ENABLED || "true").toLowerCase() !== "false") {
+            engagementScheduler.start();
+          }
+
+          channelAgent = new ChannelAgentScheduler({ supabase, bot: bot!, appUrl });
+          channelAgent.start();
+        }
+      } catch (error) {
+        console.error(
+          `❌ Telegram bot startup failed. Retrying in ${Math.round(telegramRetryDelayMs / 1000)}s:`,
+          error,
+        );
+        const retryIn = telegramRetryDelayMs;
+        telegramRetryDelayMs = Math.min(telegramRetryDelayMs * 2, maxTelegramRetryDelayMs);
+        const retryTimer = setTimeout(() => {
+          void startTelegramBot();
+        }, retryIn);
+        retryTimer.unref?.();
       }
+    };
 
-      channelAgent = new ChannelAgentScheduler({ supabase, bot: bot!, appUrl });
-      channelAgent.start();
-    }).catch((error) => {
-      console.error("❌ Telegram bot startup failed after HTTP server became available:", error);
-      process.exit(1);
-    });
+    void startTelegramBot();
   }
 }
 
