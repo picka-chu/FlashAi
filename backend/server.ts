@@ -386,7 +386,7 @@ const signupCreditsRaw = Number(process.env.SIGNUP_CREDITS ?? 3);
 const signupCredits = Number.isFinite(signupCreditsRaw) && signupCreditsRaw >= 0 ? Math.floor(signupCreditsRaw) : 3;
 const referralRewardRaw = Number(process.env.REFERRAL_REWARD_CREDITS ?? 2);
 const referralRewardCredits = Number.isFinite(referralRewardRaw) && referralRewardRaw >= 0 ? Math.floor(referralRewardRaw) : 2;
-const DEFAULT_APP_URL = process.env.DEFAULT_APP_URL || "https://flashai-siuj.onrender.com";
+const DEFAULT_APP_URL = process.env.DEFAULT_APP_URL || "http://localhost:3000";
 
 const CREDIT_TIMEZONE = process.env.TIMEZONE || "UTC";
 
