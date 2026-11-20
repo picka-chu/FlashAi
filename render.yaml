@@ -1,0 +1,51 @@
+# Render Blueprint — shares the repository Dockerfile with Northflank.
+services:
+  - type: web
+    name: flash-ai
+    runtime: docker
+    plan: free
+    branch: main
+    autoDeployTrigger: commit
+    dockerfilePath: ./Dockerfile
+    dockerContext: .
+    healthCheckPath: /api/health
+    numInstances: 1
+    maxShutdownDelaySeconds: 30
+    envVars:
+      - key: NODE_ENV
+        value: production
+      # Render provides PORT to web services; keep it explicit for this Blueprint.
+      - key: PORT
+        value: "10000"
+      - key: TRUST_PROXY
+        value: "true"
+      - key: TIMEZONE
+        value: Africa/Addis_Ababa
+      # Required backend secrets. Enter values in Render during Blueprint setup.
+      - key: SUPABASE_URL
+        sync: false
+      - key: SUPABASE_SERVICE_ROLE_KEY
+        sync: false
+      - key: TELEGRAM_BOT_TOKEN
+        sync: false
+      # Public Vite values are embedded in the frontend during the Docker build.
+      # These are public client settings, not private credentials.
+      - key: VITE_SUPABASE_URL
+        sync: false
+      - key: VITE_SUPABASE_ANON_KEY
+        sync: false
+      - key: VITE_TELEGRAM_BOT_USERNAME
+        sync: false
+      - key: VITE_USD_TO_TON_RATE
+        value: "0.23"
+      # Optional features — add their values in Render if you use them.
+      - key: TELEGRAM_BOT_USERNAME
+        sync: false
+      - key: ADMIN_TELEGRAM_ID
+        sync: false
+      - key: GEMINI_API_KEY
+        sync: false
+      - key: BSD_API_KEY
+        sync: false
+      - key: NOTIFICATIONS_ENABLED
+        value: "true"
