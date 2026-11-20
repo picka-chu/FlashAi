@@ -3,7 +3,6 @@ import { Hono } from "hono";
 import { bodyLimit } from "hono/body-limit";
 import { serve } from "@hono/node-server";
 import { serveStatic } from "@hono/node-server/serve-static";
-import { createServer as createViteServer } from "vite";
 import { Telegraf, Markup } from "telegraf";
 import { createClient } from "@supabase/supabase-js";
 import axios from "axios";
@@ -1134,7 +1133,11 @@ async function resolveHistoryItemResult(item: UserHistoryItem): Promise<UserHist
 
 async function startServer() {
   const app = new Hono();
-  const PORT = Number(process.env.PORT || 3000);
+  const configuredPort = process.env.PORT?.trim();
+  const PORT = configuredPort ? Number(configuredPort) : 3000;
+  if (!Number.isInteger(PORT) || PORT < 1 || PORT > 65535) {
+    throw new Error(`Invalid PORT value "${process.env.PORT}". PORT must be an integer between 1 and 65535.`);
+  }
   const botToken = process.env.TELEGRAM_BOT_TOKEN?.trim();
   if (!botToken || botToken === "YOUR_TELEGRAM_BOT_TOKEN") {
     throw new Error("CRITICAL: TELEGRAM_BOT_TOKEN is not set. Server startup aborted.");
@@ -2623,8 +2626,8 @@ function isPrivateTelegramInvite(taskUrl: string): boolean {
   });
 
   const botUsername = (process.env.TELEGRAM_BOT_USERNAME || "Deepflashaibot").replace(/^@/, "");
-  // Render injects RENDER_EXTERNAL_URL automatically. Prefer it over falling
-  // back to localhost, which Telegram rejects for Web App buttons.
+  // Set APP_URL to the public HTTPS domain assigned by the hosting platform.
+  // RENDER_EXTERNAL_URL remains as a backwards-compatible fallback for Render deployments.
   const appUrl = (
     process.env.APP_URL ||
     process.env.RENDER_EXTERNAL_URL ||
@@ -3193,7 +3196,10 @@ function isPrivateTelegramInvite(taskUrl: string): boolean {
       ])
       .catch(() => undefined);
 
-    bot.launch().catch(err => console.error("❌ Bot launch failed:", err));
+    // Wait for Telegram polling to start before declaring the service healthy.
+    // A bad token or a second active polling instance should fail the deployment visibly.
+    await bot.launch();
+    console.log("✅ Telegram bot polling started.");
 
     engagementScheduler = new EngagementScheduler({ supabase, bot, appUrl });
     if (String(process.env.NOTIFICATIONS_ENABLED || "true").toLowerCase() !== "false") {
@@ -5707,6 +5713,8 @@ ${ad.subtitle}`;
 
   // Vite / Static Assets
   if (process.env.NODE_ENV !== "production") {
+    // Vite is only needed for local development. Keep it out of the production runtime image.
+    const { createServer: createViteServer } = await import("vite");
     const vite = await createViteServer({
       server: { middlewareMode: true },
       appType: "spa",
@@ -5770,21 +5778,29 @@ ${ad.subtitle}`;
   });
   console.log("✅ Credit Reset Scheduler initialized and running");
 
-  console.log(`Server running on http://localhost:${PORT}`);
-  serve({
-    fetch: app.fetch,
-    port: PORT,
-  });
+  serve(
+    {
+      fetch: app.fetch,
+      port: PORT,
+      hostname: "0.0.0.0",
+    },
+    (info) => {
+      console.log(`🚀 Flash AI listening on http://${info.address}:${info.port}`);
+    },
+  );
 }
 
 process.on("unhandledRejection", (reason) => {
-  console.error("⚠️ Unhandled promise rejection:", reason);
+  console.error("❌ Unhandled promise rejection; exiting so the platform can restart the service:", reason);
+  process.exit(1);
 });
 
 process.on("uncaughtException", (error) => {
-  console.error("⚠️ Uncaught exception:", error);
+  console.error("❌ Uncaught exception; exiting so the platform can restart the service:", error);
+  process.exit(1);
 });
 
 startServer().catch((error) => {
   console.error("❌ Server bootstrap failed:", error);
+  process.exit(1);
 });
