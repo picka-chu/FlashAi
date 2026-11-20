@@ -1,6 +1,6 @@
 # Deploy Flash AI on Northflank
 
-Flash AI runs as **one combined Node.js service**: the Hono API, Telegram bot and built Vite frontend are served by the same process. Supabase remains the external database.
+Flash AI runs as **one combined Node.js service**: the Hono API, Telegram bot and built Vite frontend are served by the same process. Supabase remains the external database. Northflank and Render both build the same root `Dockerfile` from the `main` branch; do not maintain separate hosting branches.
 
 ## Service configuration
 
@@ -55,3 +55,16 @@ Add payment-provider secrets and IDs only if those payment methods are enabled. 
 - The `/api/health` endpoint is a liveness check; it confirms the HTTP process is responding, not that Supabase, Gemini or the football provider is healthy.
 - If you change any `VITE_*` build argument, trigger a new image build; changing only runtime variables will not update values already compiled into the frontend.
 - Northflank's free Developer Sandbox has resource and usage limits and is intended for hobby projects. Check the current plan allowance before relying on it for a production workload.
+
+
+## Render deployment
+
+The repository also includes a root-level `render.yaml` Blueprint.
+
+1. In Render, choose **New → Blueprint** and connect `picka-chu/FlashAi`.
+2. Select the `main` branch and apply the Blueprint.
+3. Enter the prompted required Supabase and Telegram values. Add the optional Gemini, football-data and frontend values if you use those features.
+4. Render builds the same root `Dockerfile` used by Northflank. The Blueprint sets `PORT=10000`, `TRUST_PROXY=true`, the health check, and one instance.
+5. After deployment, use the Render `onrender.com` URL. The backend can use Render's `RENDER_EXTERNAL_URL` automatically when `APP_URL` is not set.
+
+Do not run the same Telegram bot token on both providers at once. Stop one deployment before starting the other; Telegram long polling and the in-process schedulers are designed for one active instance.
