@@ -3196,18 +3196,8 @@ function isPrivateTelegramInvite(taskUrl: string): boolean {
       ])
       .catch(() => undefined);
 
-    // Wait for Telegram polling to start before declaring the service healthy.
-    // A bad token or a second active polling instance should fail the deployment visibly.
-    await bot.launch();
-    console.log("✅ Telegram bot polling started.");
-
-    engagementScheduler = new EngagementScheduler({ supabase, bot, appUrl });
-    if (String(process.env.NOTIFICATIONS_ENABLED || "true").toLowerCase() !== "false") {
-      engagementScheduler.start();
-    }
-
-    channelAgent = new ChannelAgentScheduler({ supabase, bot, appUrl });
-    channelAgent.start();
+    // Telegram polling is started after the HTTP listener is bound below.
+    // Do not block Render/Northflank port detection on Telegram's network startup.
   }
 
   // Auth/Signup Request Endpoint
@@ -5762,9 +5752,24 @@ ${ad.subtitle}`;
     }
   };
 
-  // Run once on startup, then on interval
-  await ensureBootstrapAdminRole();
-  refreshLiveCache();
+  // Bind the HTTP port before starting network-dependent background services.
+  // Render must be able to detect the web service even if Telegram/Supabase is slow.
+  serve(
+    {
+      fetch: app.fetch,
+      port: PORT,
+      hostname: "0.0.0.0",
+    },
+    (info) => {
+      console.log(`🚀 Flash AI listening on http://${info.address}:${info.port}`);
+    },
+  );
+
+  // Run startup tasks in the background after the HTTP listener is available.
+  void ensureBootstrapAdminRole().catch((error) => {
+    console.error("Bootstrap admin initialization failed:", error);
+  });
+  void refreshLiveCache();
   setInterval(refreshLiveCache, CACHE_INTERVAL).unref?.();
 
   // Initialize Credit Reset Scheduler
@@ -5778,16 +5783,23 @@ ${ad.subtitle}`;
   });
   console.log("✅ Credit Reset Scheduler initialized and running");
 
-  serve(
-    {
-      fetch: app.fetch,
-      port: PORT,
-      hostname: "0.0.0.0",
-    },
-    (info) => {
-      console.log(`🚀 Flash AI listening on http://${info.address}:${info.port}`);
-    },
-  );
+  // Start Telegram polling asynchronously; HTTP stays available during Telegram startup.
+  if (bot) {
+    void bot.launch().then(() => {
+      console.log("✅ Telegram bot polling started.");
+
+      engagementScheduler = new EngagementScheduler({ supabase, bot: bot!, appUrl });
+      if (String(process.env.NOTIFICATIONS_ENABLED || "true").toLowerCase() !== "false") {
+        engagementScheduler.start();
+      }
+
+      channelAgent = new ChannelAgentScheduler({ supabase, bot: bot!, appUrl });
+      channelAgent.start();
+    }).catch((error) => {
+      console.error("❌ Telegram bot startup failed after HTTP server became available:", error);
+      process.exit(1);
+    });
+  }
 }
 
 process.on("unhandledRejection", (reason) => {
