@@ -3948,12 +3948,12 @@ function isPrivateTelegramInvite(taskUrl: string): boolean {
         });
       }
 
-      const verified = await verifyChapaTransaction(String(payment.chapa_reference || reference));
+      // Verify by our merchant reference, never by a client-supplied Chapa ref.
+      const verified = await verifyChapaTransaction(reference);
       if (verified.success) {
         const expectedCents = Number(payment.amount_cents);
-        const currencyMatches = !verified.currency || verified.currency === "ETB";
-        const referenceMatches =
-          !verified.merchantReference || verified.merchantReference === payment.merchant_reference;
+        const currencyMatches = verified.currency === "ETB";
+        const referenceMatches = verified.merchantReference === payment.merchant_reference;
         if (verified.amountCents === expectedCents && currencyMatches && referenceMatches) {
           await fulfillChapaPayment(payment, verified, bot);
           const { data: userRow, error: userError } = await supabase
@@ -4018,7 +4018,9 @@ function isPrivateTelegramInvite(taskUrl: string): boolean {
     if (payment.status === "success") return { status: "duplicate" };
 
     // Never fulfil from the payload alone: re-query Chapa.
-    const verified = await verifyChapaTransaction(String(event.chapaReference || merchantReference));
+    // Chapa's v1 verify endpoint is keyed by the merchant tx_ref.
+    // The callback's ref_id is only a provider identifier, not our order key.
+    const verified = await verifyChapaTransaction(merchantReference);
     if (!verified.success) {
       console.error("Chapa webhook: verification did not succeed", {
         merchantReference,
@@ -4030,9 +4032,8 @@ function isPrivateTelegramInvite(taskUrl: string): boolean {
     const expectedCents = Number(payment.amount_cents);
     const amountMatchesVerify = verified.amountCents === expectedCents;
     const amountMatchesPayload = event.amountCents === null || event.amountCents === expectedCents;
-    const currencyMatches = !verified.currency || verified.currency === "ETB";
-    const referenceMatches =
-      !verified.merchantReference || verified.merchantReference === merchantReference;
+    const currencyMatches = verified.currency === "ETB";
+    const referenceMatches = verified.merchantReference === merchantReference;
 
     if (!amountMatchesVerify || !amountMatchesPayload || !currencyMatches || !referenceMatches) {
       console.error("Chapa webhook: payment did not match intent", {
