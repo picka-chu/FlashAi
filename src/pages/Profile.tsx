@@ -484,6 +484,8 @@ export const Profile: React.FC<{ initialSection?: ProfileSection }> = ({ initial
     if (!chapaInlineConfig) return;
     let disposed = false;
     let activeScript: HTMLScriptElement | null = null;
+    let loadHandler: EventListener | null = null;
+    let errorHandler: EventListener | null = null;
     const initializeInlineCheckout = () => {
       if (disposed) return;
       const ChapaCheckout = (window as any).ChapaCheckout;
@@ -530,12 +532,12 @@ export const Profile: React.FC<{ initialSection?: ProfileSection }> = ({ initial
     } else {
       const existingScript = document.querySelector('script[data-flashai-chapa-inline]') as HTMLScriptElement | null;
       activeScript = existingScript || document.createElement('script');
-      const onLoad = () => initializeInlineCheckout();
-      const onError = () => {
+      loadHandler = () => initializeInlineCheckout();
+      errorHandler = () => {
         if (!disposed) showAlert('Chapa payment tools could not load. Check your connection and try again.');
       };
-      activeScript.addEventListener('load', onLoad);
-      activeScript.addEventListener('error', onError);
+      activeScript.addEventListener('load', loadHandler);
+      activeScript.addEventListener('error', errorHandler);
       if (!existingScript) {
         activeScript.src = 'https://js.chapa.co/v1/inline.js';
         activeScript.async = true;
@@ -546,10 +548,8 @@ export const Profile: React.FC<{ initialSection?: ProfileSection }> = ({ initial
 
     return () => {
       disposed = true;
-      if (activeScript) {
-        activeScript.removeEventListener('load', initializeInlineCheckout);
-        activeScript.removeEventListener('error', () => undefined);
-      }
+      if (activeScript && loadHandler) activeScript.removeEventListener('load', loadHandler);
+      if (activeScript && errorHandler) activeScript.removeEventListener('error', errorHandler);
       const container = document.getElementById('flashai-chapa-inline-form');
       if (container) container.innerHTML = '';
     };
@@ -1105,7 +1105,6 @@ export const Profile: React.FC<{ initialSection?: ProfileSection }> = ({ initial
           amountEtb: Number(data.amountEtb),
           currency: String(data.currency || 'ETB'),
         });
-        showAlert('Complete your payment here in Flash AI. Your plan activates only after our server verifies the transaction with Chapa.');
         return;
       }
 
