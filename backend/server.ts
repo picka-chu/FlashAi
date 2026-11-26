@@ -2718,6 +2718,9 @@ function isPrivateTelegramInvite(taskUrl: string): boolean {
     `https://t.me/${botUsername.replace('@', '')}${telegramId ? `?start=signup_${telegramId}` : ''}`;
 
   let bot: Telegraf | null = null;
+  const telegramWebhookSecret = botToken
+    ? crypto.createHash("sha256").update(botToken).digest("base64url")
+    : "";
   let engagementScheduler: EngagementScheduler | null = null;
   let channelAgent: ChannelAgentScheduler | null = null;
 
@@ -2727,11 +2730,6 @@ function isPrivateTelegramInvite(taskUrl: string): boolean {
     // Production uses Telegram webhooks rather than long polling. During a
     // zero-downtime Render deploy, old and new instances can overlap briefly;
     // polling from both instances causes Telegram 409 getUpdates conflicts.
-    const telegramWebhookSecret = crypto
-      .createHash("sha256")
-      .update(botToken)
-      .digest("base64url");
-
     app.post("/api/telegram/webhook", async (c) => {
       const suppliedSecret = c.req.header("X-Telegram-Bot-Api-Secret-Token") || "";
       const expected = Buffer.from(telegramWebhookSecret);
