@@ -47,13 +47,14 @@ ALTER TABLE public.users
   ADD COLUMN IF NOT EXISTS plan_expires_at TIMESTAMPTZ,
   ADD COLUMN IF NOT EXISTS last_active TIMESTAMPTZ,
   ADD COLUMN IF NOT EXISTS is_suspended BOOLEAN NOT NULL DEFAULT FALSE,
+  ADD COLUMN IF NOT EXISTS country_code TEXT,
   ADD COLUMN IF NOT EXISTS updated_at TIMESTAMPTZ NOT NULL DEFAULT now();
 
 -- Normalize the plan check constraint across older databases.
 ALTER TABLE public.users DROP CONSTRAINT IF EXISTS users_plan_check;
 ALTER TABLE public.users
   ADD CONSTRAINT users_plan_check
-  CHECK (plan IN ('free', 'weekly', 'monthly', 'monthly_basic', 'monthly_pro', 'admin'));
+  CHECK (plan IN ('free', 'day_pass', 'weekly', 'monthly', 'monthly_basic', 'monthly_pro', 'admin'));
 
 -- 2) Content
 CREATE TABLE IF NOT EXISTS public.faqs (

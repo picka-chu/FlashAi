@@ -15,12 +15,12 @@ export const INITIAL_FAQS: FAQ[] = [
   },
   {
     question: 'How do I get more credits?',
-    answer: "You can get more credits by upgrading to Monthly Basic or Monthly Pro, or by completing tasks in the 'Referral and Earn' section. You also get a daily bonus if you claim it!",
+    answer: "You can get more credits by upgrading to a paid pass (Day Pass, 7-Day Pass, 30-Day Basic, or 30-Day Pro), or by completing tasks in the 'Referral and Earn' section. Passes are not auto-renewing subscriptions - nothing is charged automatically.",
     category: 'general',
   },
   {
     question: 'What are the differences between the plans?',
-    answer: 'Free gives 3 daily credits and 1 analysis. Monthly Basic ($8.99) gives 10 daily credits and 2 analyses per day. Monthly Pro ($14.99) gives 16 daily credits, 6 analyses per day, and full AI chat access.',
+    answer: 'Free gives 1 analysis per day forever. Day Pass gives 2 analyses for one match day. 7-Day Pass gives 2 analyses per day for 7 days. 30-Day Basic gives 2 analyses per day for 30 days with Flash AI Lite. 30-Day Pro gives 4 analyses per day for 30 days with Flash AI Pro, bundles, and top-pick accumulators. All paid passes are fixed-price in your local currency and expire at the end of the period.',
     category: 'subscription',
   },
   {

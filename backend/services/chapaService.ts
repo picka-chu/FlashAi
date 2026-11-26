@@ -1,4 +1,5 @@
 import crypto from "crypto";
+import { getOffers, MARKETS } from "../config/marketPricing.js";
 
 // Classic Chapa (Ethiopia) API
 const CHAPA_API_BASE = (process.env.CHAPA_API_BASE || "https://api.chapa.co").replace(/\/+$/, "");
@@ -101,22 +102,30 @@ export async function getUsdEtbRate(): Promise<number> {
   return effectiveRate;
 }
 
-const roundEtbPrice = (amount: number) => Math.max(10, Math.ceil(amount / 10) * 10);
 
-export async function getChapaPricing(usdPrices: Record<string, number>): Promise<ChapaPricing> {
+
+/**
+ * Chapa prices are FIXED in ETB (see backend/config/marketPricing.ts). The live
+ * USD/ETB rate is fetched for reporting only - never to compute a checkout
+ * amount, because FX drift must not silently reprice a customer.
+ */
+export async function getChapaPricing(_usdPrices?: Record<string, number>): Promise<ChapaPricing> {
   const rate = await getUsdEtbRate();
   const plans: Record<string, ChapaPlanPrice> = {};
-  for (const [planId, usd] of Object.entries(usdPrices)) {
-    const normalizedUsd = Number(usd);
-    if (!Number.isFinite(normalizedUsd) || normalizedUsd <= 0) continue;
-    const etb = roundEtbPrice(normalizedUsd * rate);
-    plans[planId] = { usd: normalizedUsd, etb, amountCents: Math.round(etb * 100) };
+  for (const offer of getOffers("ET")) {
+    if (offer.priceMinor <= 0) continue;
+    const etb = offer.priceMinor / 100;
+    plans[offer.id] = {
+      usd: Number((etb / (MARKETS.ET.usdRate || rate)).toFixed(2)),
+      etb,
+      amountCents: offer.priceMinor,
+    };
   }
   return { currency: "ETB", rate, plans };
 }
 
 export function buildMerchantReference(telegramId: number, planId: string): string {
-  const planCode = planId === "monthly_pro" ? "p" : planId === "monthly_basic" ? "b" : "x";
+  const planCode = { day_pass: "d", weekly: "w", monthly_basic: "b", monthly_pro: "p" }[planId] || "x";
   const idPart = Math.abs(Math.trunc(Number(telegramId) || 0)).toString(36);
   const random = crypto.randomBytes(4).toString("hex");
   return `fa${idPart}${planCode}${random}`.slice(0, 50);
@@ -185,7 +194,6 @@ export async function initializeChapaCheckout(
   const appUrl = (
     process.env.CHAPA_APP_URL ||
     process.env.APP_URL ||
-    process.env.LEMONSQUEEZY_REDIRECT_URL ||
     "https://flash-6tuz.onrender.com"
   ).replace(/\/+$/, "");
   const callbackUrl = `${appUrl}/api/payments/chapa-webhook`;
@@ -207,7 +215,7 @@ export async function initializeChapaCheckout(
     return_url: returnUrl,
     customization: {
       title: `${CHAPA_MERCHANT_NAME} — ${params.planName}`.slice(0, 16),
-      description: `${params.planName} subscription (1 month)`.slice(0, 100),
+      description: `${params.planName} pass`.slice(0, 100),
     },
     meta: {
       telegram_id: String(params.telegramId),

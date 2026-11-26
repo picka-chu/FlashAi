@@ -19,6 +19,7 @@ import { ChannelAgentScheduler } from "./services/channelAgentService.js";
 import { NotificationService, escapeHtml, normalizeTimezone } from "./services/notificationService";
 import { InMemoryRateLimiter } from "./middleware/rateLimit";
 import { registerLeaderboardRoutes } from "./routes/leaderboard";
+import { registerPricingRoutes } from "./routes/pricing.js";
 import { getTelegramUserFromInitData, validateTelegramInitData, getVerifiedTelegramUser } from "./middleware/auth";
 import { getGeminiKeyStatus } from "./services/apiCacheService.js";
 import {
@@ -34,6 +35,23 @@ import {
   verifyChapaWebhookSignature,
   type ChapaVerifyResult,
 } from "./services/chapaService";
+import {
+  getMarket,
+  getOffer,
+  getOffers,
+  getPaymentMethods,
+  normalizeCountry,
+  parseCountry,
+  PLAN_STARS,
+  type CountryCode,
+} from "./config/marketPricing.js";
+import {
+  countryFromHeaders,
+  resolveCountry,
+  ResolvedCountry,
+  summariseCountry,
+  SELECTABLE_COUNTRIES,
+} from "./services/locationService.js";
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
@@ -70,19 +88,40 @@ const supabase = createClient(supabaseUrl, supabaseKey);
 console.log("✅ Supabase service role key initialized for backend operations.");
 
 const PLAN_CREDITS: Record<string, number> = {
-  free: 3,
-  monthly_basic: 10,
-  monthly_pro: 16,
+  free: 1,
+  day_pass: 2,
+  weekly: 2,
+  monthly_basic: 2,
+  monthly_pro: 4,
   admin: 0,
 };
 
+/**
+ * Global USD fallback, used only for TON conversion and as a last resort when a
+ * market has no local rail. Real prices live in backend/config/marketPricing.ts.
+ */
 const PLAN_PRICE_USD: Record<string, number> = {
-  monthly_basic: 8.99,
-  monthly_pro: 14.99,
+  day_pass: 0.99,
+  weekly: 2.99,
+  monthly_basic: 6.99,
+  monthly_pro: 12.99,
 };
 const USD_TO_STARS_RATE = 50;
-const PAID_PLANS = new Set(["monthly_basic", "monthly_pro"]);
-const ALLOWED_PLANS = new Set(["free", "monthly_basic", "monthly_pro", "admin"]);
+const PAID_PLANS = new Set(["day_pass", "weekly", "monthly_basic", "monthly_pro"]);
+const ALLOWED_PLANS = new Set(["free", "day_pass", "weekly", "monthly_basic", "monthly_pro", "admin"]);
+
+/**
+ * Star prices are a single global ladder: Stars are currency-agnostic, and
+ * Telegram keeps ~35%, so these are set to net roughly the local USD price.
+ */
+const PLAN_PRICE_STARS: Record<string, number> = PLAN_STARS;
+
+const PLAN_DURATION_DAYS: Record<string, number> = {
+  day_pass: 1,
+  weekly: 7,
+  monthly_basic: 30,
+  monthly_pro: 30,
+};
 const MAX_MATCH_STRING_LENGTH = 200;
 
 const isGeminiConfigError = (message: string) =>
@@ -91,10 +130,6 @@ const isGeminiConfigError = (message: string) =>
   );
 const MAX_SUPPORT_HISTORY = 10;
 const MAX_SUPPORT_MESSAGE_LENGTH = 2_000;
-const PLAN_PRICE_STARS: Record<string, number> = {
-  monthly_basic: 500,
-  monthly_pro: 800,
-};
 // Fallback TON-per-USD rate used only when the live price feed is unavailable.
 const DEFAULT_TON_PER_USD = 0.23;
 
@@ -107,6 +142,8 @@ const firstEnv = (...names: string[]) => {
 };
 const WHOP_API_BASE = (firstEnv("WHOP_API_BASE", "WHOP_API_BASE_URL") || "https://api.whop.com/api/v1").replace(/\/+$/, "");
 const WHOP_PLAN_IDS: Record<string, string> = {
+  day_pass: firstEnv("WHOP_PLAN_DAY_PASS", "WHOP_DAY_PASS_PLAN_ID", "WHOP_PLAN_ID_DAY"),
+  weekly: firstEnv("WHOP_PLAN_WEEKLY", "WHOP_WEEKLY_PLAN_ID", "WHOP_PLAN_ID_WEEKLY"),
   monthly_basic: firstEnv(
     "WHOP_PLAN_MONTHLY_BASIC",
     "WHOP_MONTHLY_BASIC_PLAN_ID",
@@ -121,8 +158,7 @@ const WHOP_PLAN_IDS: Record<string, string> = {
   ),
 };
 const WHOP_ENABLED = Boolean(
-  process.env.WHOP_API_KEY &&
-  (WHOP_PLAN_IDS.monthly_basic || WHOP_PLAN_IDS.monthly_pro),
+  process.env.WHOP_API_KEY && Object.values(WHOP_PLAN_IDS).some(Boolean),
 );
 const WHOP_ACCOUNT_ID = firstEnv("WHOP_ACCOUNT_ID", "WHOP_COMPANY_ID", "WHOP_ACCOUNT");
 const whopResolvedPlans = new Map<string, { id: string; expiresAt: number }>();
@@ -409,8 +445,7 @@ function getPlanCreditAllocation(planId: string) {
 }
 
 function getPlanDurationDays(planId: string): number {
-  if (planId === "monthly_basic" || planId === "monthly_pro") return 30;
-  return 0;
+  return PLAN_DURATION_DAYS[String(planId || "").trim()] ?? 0;
 }
 
 async function applyPlanCredits(telegramId: number, planId: string) {
@@ -440,8 +475,10 @@ async function applyPlanCredits(telegramId: number, planId: string) {
 }
 
 const CHAPA_PLAN_NAMES: Record<string, string> = {
-  monthly_basic: "Monthly Basic",
-  monthly_pro: "Monthly Pro",
+  day_pass: "Match Day Pass",
+  weekly: "7-Day Pass",
+  monthly_basic: "30-Day Basic",
+  monthly_pro: "30-Day Pro",
 };
 
 // Idempotent plan activation for Chapa. The transactions UNIQUE index on
@@ -1233,7 +1270,6 @@ async function startServer() {
     const rateKey = tgUser?.id ? `api:user:${tgUser.id}` : `api:ip:${getRequestIp(c)}`;
     // Signed payment webhooks must not be dropped by generic rate limiting.
     const isWebhook =
-      c.req.path === "/api/payments/lemonsqueezy-webhook" ||
       c.req.path === "/api/payments/whop-webhook" ||
       c.req.path === "/api/payments/chapa-webhook";
     if (!isWebhook && isRateLimited(rateKey)) {
@@ -1267,6 +1303,70 @@ function isPrivateTelegramInvite(taskUrl: string): boolean {
 }
   const ADMIN_ADS_KEY = "admin_ads_v1";
   registerLeaderboardRoutes(app, supabase);
+
+  /**
+   * Country resolution for pricing and payment rails.
+   * Signal order: explicit user choice > phone number from the Telegram contact
+   * card > CDN geo header > Telegram language code > GLOBAL.
+   */
+  async function resolveRequestCountry(c: any): Promise<ResolvedCountry> {
+    const tgUser = getAuthedTelegramUser(c);
+    let override: string | null = null;
+    let phone: string | null = null;
+
+    if (tgUser?.id) {
+      const { data, error } = await supabase
+        .from("users")
+        .select("country_code, phone")
+        .eq("telegram_id", tgUser.id)
+        .maybeSingle();
+      if (error) console.error("Country lookup error:", error.message);
+      override = data?.country_code ?? null;
+      phone = data?.phone ?? null;
+    }
+
+    return resolveCountry({
+      override,
+      phone,
+      ipCountry: countryFromHeaders({ get: (name: string) => c.req.header(name) }),
+      languageCode: (tgUser as any)?.language_code ?? null,
+    });
+  }
+
+  registerPricingRoutes(app, {
+    resolveCountry: async (c) => (await resolveRequestCountry(c)).country,
+  });
+
+  // Country discovery + explicit override. The Mini App calls GET on launch and
+  // shows a "change country" control when the detected market looks wrong.
+  app.get("/api/location", async (c) => {
+    const resolved = await resolveRequestCountry(c);
+    return c.json({
+      ...summariseCountry(resolved),
+      phoneIso: resolved.phoneIso ?? null,
+      selectable: SELECTABLE_COUNTRIES,
+    });
+  });
+
+  app.post("/api/location", async (c) => {
+    const tgUser = getAuthedTelegramUser(c);
+    if (!tgUser?.id) return c.json({ error: "Invalid Telegram authentication" }, 401);
+
+    const body = await c.req.json().catch(() => ({} as any));
+    const country = parseCountry(body?.country);
+    if (!country) return c.json({ error: "Unsupported country" }, 400);
+
+    const { error } = await supabase
+      .from("users")
+      .update({ country_code: country })
+      .eq("telegram_id", tgUser.id);
+    if (error) {
+      console.error("Country save error:", error.message);
+      return c.json({ error: "Could not save country" }, 500);
+    }
+
+    return c.json({ country, currency: getMarket(country).currency });
+  });
   const RATES_TTL_MS = 15 * 60 * 1000;
   let cachedRates: { tonUsd: number; updatedAt: number } | null = null;
 
@@ -1461,119 +1561,6 @@ function isPrivateTelegramInvite(taskUrl: string): boolean {
       return c.text(content);
     } catch (error: any) {
       return c.text("Terms are temporarily unavailable.", 500);
-    }
-  });
-
-  // Lemon Squeezy Webhook Endpoint
-  // Fail closed: without a configured secret, forged webhooks are impossible to
-  // distinguish from real ones, so the endpoint refuses to run at all.
-  app.post("/api/payments/lemonsqueezy-webhook", async (c) => {
-    const webhookSecret = process.env.LEMONSQUEEZY_WEBHOOK_SECRET;
-    if (!webhookSecret) {
-      console.error("Lemon Squeezy webhook rejected: LEMONSQUEEZY_WEBHOOK_SECRET is not configured.");
-      return c.json({ error: "Webhook is not configured" }, 503);
-    }
-
-    const rawBody = await c.req.raw.text();
-    const signature = c.req.header("X-Signature");
-    if (!signature) {
-      return c.json({ error: "Missing signature" }, 401);
-    }
-
-    const expectedSignature = crypto
-      .createHmac("sha256", webhookSecret)
-      .update(rawBody)
-      .digest("hex");
-    const signatureValid =
-      signature.length === expectedSignature.length &&
-      crypto.timingSafeEqual(Buffer.from(signature), Buffer.from(expectedSignature));
-    if (!signatureValid) {
-      return c.json({ error: "Invalid signature" }, 401);
-    }
-
-    let body: any;
-    try {
-      body = JSON.parse(rawBody);
-    } catch {
-      return c.json({ error: "Invalid JSON payload" }, 400);
-    }
-
-    const eventName = String(body?.meta?.event_name || "");
-    if (!eventName) {
-      return c.json({ error: "Invalid webhook payload" }, 400);
-    }
-
-    try {
-      if (["order_created", "order_paid", "subscription_payment_success"].includes(eventName)) {
-        const orderData = body.data?.attributes;
-        // Lemon Squeezy returns checkout custom data under meta.custom_data;
-        // older payloads may also include it on the order attributes.
-        const customData = body.meta?.custom_data || orderData?.custom || {};
-        const telegramId = Number(customData?.telegram_id);
-        const planId = String(customData?.plan_id || "").trim();
-        const paymentRef = String(
-          orderData?.identifier || orderData?.order_number || body.data?.id || "",
-        ).slice(0, 200);
-
-        if (!Number.isFinite(telegramId) || telegramId <= 0 || !PAID_PLANS.has(planId)) {
-          console.error("Lemon Squeezy webhook: invalid telegram_id or plan_id", {
-            telegramId,
-            planId,
-          });
-          return c.json({ error: "Invalid order metadata" }, 400);
-        }
-        if (!paymentRef) {
-          console.error("Lemon Squeezy webhook: Missing payment reference");
-          return c.json({ error: "Missing payment reference" }, 400);
-        }
-
-        // Idempotency is enforced by a UNIQUE index on
-        // (provider_payment_charge_id, type). Insert first so two concurrent
-        // deliveries cannot both grant credits.
-        const { data: insertedTx, error: insertTxError } = await supabase
-          .from("transactions")
-          .insert({
-            telegram_id: telegramId,
-            // Lemon Squeezy reports totals in the currency's smallest unit.
-            amount: Number(orderData?.total || 0) / 100,
-            currency: "USD",
-            status: "completed",
-            provider_payment_charge_id: paymentRef,
-            type: "lemonsqueezy",
-          })
-          .select("id")
-          .single();
-
-        if (insertTxError) {
-          if (insertTxError.code === "23505") {
-            return c.json({ received: true, duplicate: true });
-          }
-          throw insertTxError;
-        }
-
-        try {
-          await applyPlanCredits(telegramId, planId);
-        } catch (grantError) {
-          // Release the idempotency key so Lemon Squeezy can retry.
-          if (insertedTx?.id) {
-            await supabase.from("transactions").delete().eq("id", insertedTx.id);
-          }
-          throw grantError;
-        }
-
-        if (bot) {
-          bot.telegram
-            .sendMessage(telegramId, `✅ Payment received! Your account has been upgraded to ${planId.toUpperCase()} plan.`)
-            .catch(() => undefined);
-        }
-
-        console.log(`Lemon Squeezy payment processed for user ${telegramId}, plan ${planId}`);
-      }
-
-      return c.json({ received: true });
-    } catch (e: any) {
-      console.error("Lemon Squeezy webhook error:", e.message);
-      return c.json({ error: "Webhook processing failed" }, 500);
     }
   });
 
@@ -1895,9 +1882,11 @@ function isPrivateTelegramInvite(taskUrl: string): boolean {
   // --- PLAN LIMITS CONFIG ---
   // Updated to match frontend UI promises and professional tier structure
   const PLAN_CONFIG: Record<string, { dailyCredits: number; name: string }> = {
-    free: { dailyCredits: 3, name: "Free" },
-    monthly_basic: { dailyCredits: 10, name: "Monthly Basic" },
-    monthly_pro: { dailyCredits: 16, name: "Monthly Pro" },
+    free: { dailyCredits: 1, name: "Free" },
+    day_pass: { dailyCredits: 2, name: "Match Day Pass" },
+    weekly: { dailyCredits: 2, name: "7-Day Pass" },
+    monthly_basic: { dailyCredits: 2, name: "30-Day Basic" },
+    monthly_pro: { dailyCredits: 4, name: "30-Day Pro" },
     admin: { dailyCredits: 999, name: "Administrator" }
   };
 
@@ -3570,8 +3559,8 @@ function isPrivateTelegramInvite(taskUrl: string): boolean {
     }
   });
 
-  // Whop card checkout. The client falls back to Lemon Squeezy when Whop is
-  // not configured, so deployments can switch card providers with env vars.
+  // Whop card checkout - the card rail for markets outside our local-gateway
+  // footprint (GLOBAL). African markets use their local wallet rail or Stars.
   app.post("/api/payments/create-whop-checkout", async (c) => {
     const tgUser = getAuthedTelegramUser(c);
     if (!tgUser?.id) {
@@ -3587,6 +3576,20 @@ function isPrivateTelegramInvite(taskUrl: string): boolean {
       }
       if (!PAID_PLANS.has(planId)) {
         return c.json({ error: "Unsupported plan" }, 400);
+      }
+
+      // Whop is the card rail for the rest of the world. Users in a local
+      // market get their wallet rail (or Stars) instead.
+      const resolved = await resolveRequestCountry(c);
+      if (resolved.country !== "GLOBAL") {
+        return c.json(
+          {
+            error: "Card checkout is not available for your country. Use your local payment method.",
+            code: "WHOP_COUNTRY_NOT_SUPPORTED",
+            country: resolved.country,
+          },
+          400,
+        );
       }
 
       const { checkoutUrl } = await createWhopCheckout(tgUser.id, planId);
@@ -3606,12 +3609,39 @@ function isPrivateTelegramInvite(taskUrl: string): boolean {
     }
   });
 
-  app.get("/api/payments/methods", (c) => {
+  /**
+   * Which rails the client should render for this user's country.
+   * Only rails that are actually implemented AND configured are returned - the
+   * catalog in marketPricing.ts describes the roadmap, this endpoint describes
+   * what will work if the user taps it.
+   */
+  app.get("/api/payments/methods", async (c) => {
+    const resolved = await resolveRequestCountry(c);
+    const country = resolved.country;
+    const market = getMarket(country);
+
+    const implemented = new Set(["chapa", "whop", "telegram_stars", "ton"]);
+    const configured: Record<string, boolean> = {
+      chapa: isChapaEnabled(),
+      whop: WHOP_ENABLED,
+      telegram_stars: true,
+      ton: true,
+    };
+
+    const methods = getPaymentMethods(country)
+      .filter((method) => implemented.has(method.id) && configured[method.id])
+      .map((method) => ({ ...method, available: true }));
+
     return c.json({
-      card: WHOP_ENABLED ? "whop" : "lemonsqueezy",
+      country,
+      currency: market.currency,
+      source: resolved.source,
+      methods,
+      default: methods[0]?.id ?? "telegram_stars",
+      card: WHOP_ENABLED ? "whop" : null,
       stars: true,
       ton: true,
-      chapa: isChapaEnabled(),
+      chapa: isChapaEnabled() && country === "ET",
     });
   });
 
@@ -3624,20 +3654,25 @@ function isPrivateTelegramInvite(taskUrl: string): boolean {
 
     try {
       const tgUser = getAuthedTelegramUser(c);
+      const resolved = await resolveRequestCountry(c);
       let eligible = false;
+      let hasPhone = false;
       if (tgUser?.id) {
         const { data } = await supabase
           .from("users")
           .select("phone")
           .eq("telegram_id", tgUser.id)
           .maybeSingle();
-        eligible = isEthiopianPhone(data?.phone);
+        hasPhone = Boolean(data?.phone);
+        eligible = resolved.country === "ET" && isEthiopianPhone(data?.phone);
       }
 
-      const pricing = await getChapaPricing(PLAN_PRICE_USD);
+      const pricing = await getChapaPricing();
       return c.json({
         enabled: true,
         eligible,
+        hasPhone,
+        country: resolved.country,
         currency: pricing.currency,
         rate: pricing.rate,
         plans: pricing.plans,
@@ -3675,15 +3710,30 @@ function isPrivateTelegramInvite(taskUrl: string): boolean {
         .maybeSingle();
       if (userError) throw userError;
 
-      const phone = normalizeEthiopianPhone(userRow?.phone);
-      if (!phone) {
+      const resolved = await resolveRequestCountry(c);
+      if (resolved.country !== "ET") {
         return c.json(
-          { error: "Chapa is available for Ethiopian phone numbers only.", code: "CHAPA_PHONE_INELIGIBLE" },
+          {
+            error: "Chapa is only available in Ethiopia.",
+            code: "CHAPA_COUNTRY_INELIGIBLE",
+            country: resolved.country,
+          },
           403,
         );
       }
 
-      const pricing = await getChapaPricing(PLAN_PRICE_USD);
+      const phone = normalizeEthiopianPhone(userRow?.phone);
+      if (!phone) {
+        return c.json(
+          {
+            error: "Add an Ethiopian phone number to pay with Telebirr or CBE Birr.",
+            code: "CHAPA_PHONE_INELIGIBLE",
+          },
+          403,
+        );
+      }
+
+      const pricing = await getChapaPricing();
       const planPrice = pricing.plans[planId];
       if (!planPrice) {
         return c.json({ error: "This plan is not available for Chapa." }, 503);
@@ -3980,109 +4030,6 @@ function isPrivateTelegramInvite(taskUrl: string): boolean {
       console.error("Chapa callback error:", e?.message || e);
     }
     return c.text("ok");
-  });
-
-  // Lemon Squeezy Checkout Endpoint
-  app.post("/api/payments/create-lemonsqueezy-checkout", async (c) => {
-    const tgUser = getAuthedTelegramUser(c);
-    if (!tgUser?.id) {
-      return c.json({ error: "Invalid Telegram authentication" }, 401);
-    }
-
-    try {
-      const body = await c.req.json().catch(() => ({} as any));
-      const planId = String(body?.planId || "").trim();
-      const planName = String(body?.planName || "").trim().slice(0, 100);
-      const bodyTelegramId = Number(body?.telegramId || 0);
-
-      if (bodyTelegramId && bodyTelegramId !== tgUser.id) {
-        return c.json({ error: "Telegram identity mismatch" }, 403);
-      }
-      if (!PAID_PLANS.has(planId)) {
-        return c.json({ error: "Unsupported plan" }, 400);
-      }
-
-      // Map plan IDs to Lemon Squeezy variant IDs
-      const LEMONSQUEEZY_STORE_ID = process.env.LEMONSQUEEZY_STORE_ID;
-      const LEMONSQUEEZY_API_KEY = process.env.LEMONSQUEEZY_API_KEY;
-
-      if (!LEMONSQUEEZY_STORE_ID || !LEMONSQUEEZY_API_KEY) {
-        return c.json({
-          error: "Lemon Squeezy checkout is coming soon.",
-          code: "LEMONSQUEEZY_COMING_SOON",
-        }, 503);
-      }
-
-      const VARIANT_MAP: Record<string, string> = {
-        monthly_basic: process.env.LEMONSQUEEZY_VARIANT_MONTHLY_BASIC || "",
-        monthly_pro: process.env.LEMONSQUEEZY_VARIANT_MONTHLY_PRO || "",
-      };
-
-      const variantId = VARIANT_MAP[planId];
-      if (!variantId) {
-        console.error(`Lemon Squeezy variant is not configured for plan ${planId}`);
-        return c.json({ error: "This plan is not available for card checkout." }, 503);
-      }
-
-      // Create Lemon Squeezy checkout
-      const response = await fetch(`https://api.lemonsqueezy.com/v1/checkouts`, {
-        method: 'POST',
-        headers: {
-          'Authorization': `Bearer ${LEMONSQUEEZY_API_KEY}`,
-          'Content-Type': 'application/json',
-          'Accept': 'application/vnd.api+json',
-        },
-        body: JSON.stringify({
-          data: {
-            type: 'checkouts',
-            attributes: {
-              product_options: {
-                redirect_url: process.env.LEMONSQUEEZY_REDIRECT_URL || process.env.APP_URL || DEFAULT_APP_URL,
-                receipt_button_text: 'Back to Flash AI',
-                receipt_link_url: process.env.APP_URL || DEFAULT_APP_URL,
-              },
-              checkout_data: {
-                name: planName ? `Flash AI — ${planName}` : undefined,
-                custom: {
-                  telegram_id: String(tgUser.id),
-                  plan_id: planId,
-                },
-              },
-            },
-            relationships: {
-              store: {
-                data: {
-                  type: 'stores',
-                  id: LEMONSQUEEZY_STORE_ID,
-                },
-              },
-              variant: {
-                data: {
-                  type: 'variants',
-                  id: variantId,
-                },
-              },
-            },
-          },
-        }),
-      });
-
-      if (!response.ok) {
-        throw new Error('Failed to create Lemon Squeezy checkout');
-      }
-
-      const result = await response.json();
-      const checkoutUrl = result.data?.attributes?.url;
-
-      if (!checkoutUrl) {
-        throw new Error('No checkout URL returned from Lemon Squeezy');
-      }
-
-      return c.json({ checkoutUrl });
-    } catch (e: any) {
-      console.error("Lemon Squeezy checkout error:", e.message);
-      return c.json({ error: "Failed to create checkout session" }, 500);
-    }
   });
 
   // Task Claim Endpoint

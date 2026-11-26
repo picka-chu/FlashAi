@@ -38,62 +38,129 @@ import { useUserStore } from '../store/useUserStore';
 import { useTelegram } from '../hooks/useTelegram';
 import { supportService, FAQ } from '../services/supportService';
 import { SignUpSheet } from '../components/SignUpSheet';
+import {
+  fetchPaymentMethods,
+  fetchPricing,
+  formatMoney,
+  periodLabel,
+  type PaymentMethodsPayload,
+  type PlanOfferDto,
+  type PricingPayload,
+} from '../lib/pricing';
 
+/**
+ * Offline / first-paint fallback only. The live catalog always comes from
+ * GET /api/pricing, which is fixed per country in local currency.
+ */
 const PLANS = [
   {
     id: 'free',
     name: 'Free',
     usdPrice: 0,
-    price: '$0',
+    price: 'Free',
     period: 'forever',
+    interval: 'free' as const,
+    durationDays: 0,
     icon: Zap,
     color: 'text-zinc-400',
     bgColor: 'bg-zinc-900',
-    features: ['3 Daily credits', '1 Bet slip analysis', 'No AI chat after analysis']
+    features: ['1 analysis/day', '1 free pick', 'History and live scores'],
+    starsPrice: 0,
+  },
+  {
+    id: 'day_pass',
+    name: 'Match Day Pass',
+    usdPrice: 0.99,
+    price: '$0.99',
+    period: '1 day',
+    interval: 'day' as const,
+    durationDays: 1,
+    icon: Zap,
+    color: 'text-emerald-400',
+    bgColor: 'bg-emerald-400/10',
+    features: ['2 analyses today', 'Full pick board for one match day', 'AI chat after analysis'],
+    starsPrice: 30,
+  },
+  {
+    id: 'weekly',
+    name: '7-Day Pass',
+    usdPrice: 2.99,
+    price: '$2.99',
+    period: '7 days',
+    interval: 'week' as const,
+    durationDays: 7,
+    icon: Star,
+    color: 'text-sky-400',
+    bgColor: 'bg-sky-400/10',
+    features: ['2 analyses/day for 7 days', 'Safe + value picks', 'AI chat after analysis'],
+    starsPrice: 95,
   },
   {
     id: 'monthly_basic',
-    name: 'Monthly Basic',
-    usdPrice: 8.99,
-    tonPrice: 2.07,
-    starsPrice: 500,
-    price: '$8.99',
-    period: 'per month',
+    name: '30-Day Basic',
+    usdPrice: 6.99,
+    price: '$6.99',
+    period: '30 days',
+    interval: 'month' as const,
+    durationDays: 30,
     icon: ShieldCheck,
     color: 'text-[#ccff00]',
     bgColor: 'bg-[#ccff00]/10',
-    features: ['10 Daily credits', '2 Bet slip analysis/day', 'Flash AI Lite (Gemini Flash)', '1 Bundle (1 Safe + 1 Value Bet)', 'AI chat after analysis'],
+    features: ['2 analyses/day for 30 days', 'Flash AI Lite (Gemini Flash)', '1 bundle (1 safe + 1 value bet)', 'AI chat after analysis'],
+    starsPrice: 240,
     popular: true,
-    aiModel: 'gemini-flash'
   },
   {
     id: 'monthly_pro',
-    name: 'Monthly Pro',
-    usdPrice: 14.99,
-    tonPrice: 3.45,
-    starsPrice: 800,
-    price: '$14.99',
-    period: 'per month',
+    name: '30-Day Pro',
+    usdPrice: 12.99,
+    price: '$12.99',
+    period: '30 days',
+    interval: 'month' as const,
+    durationDays: 30,
     icon: Crown,
     color: 'text-amber-400',
     bgColor: 'bg-amber-400/10',
-    features: ['16 Daily credits', '6 Bet slip analysis/day', 'Flash AI Pro (advanced reasoning tier)', '1 Bundle (2 Safe + 2 Value Bets)', '1-2 Top Pick Accumulator/day', 'Unlimited AI chat'],
-    aiModel: 'gemini-pro'
+    features: ['4 analyses/day for 30 days', 'Flash AI Pro (advanced reasoning tier)', '2 bundles (2 safe + 2 value bets)', 'Top-pick accumulators', 'Unlimited AI chat'],
+    starsPrice: 480,
   }
 ];
 
-const USD_TO_STARS_RATE = 50; // 1 USD ≈ 50 Telegram Stars
+const PLAN_VISUALS: Record<string, { icon: any; color: string; bgColor: string }> = {
+  free: { icon: Zap, color: 'text-zinc-400', bgColor: 'bg-zinc-900' },
+  day_pass: { icon: Zap, color: 'text-emerald-400', bgColor: 'bg-emerald-400/10' },
+  weekly: { icon: Star, color: 'text-sky-400', bgColor: 'bg-sky-400/10' },
+  monthly_basic: { icon: ShieldCheck, color: 'text-[#ccff00]', bgColor: 'bg-[#ccff00]/10' },
+  monthly_pro: { icon: Crown, color: 'text-amber-400', bgColor: 'bg-amber-400/10' },
+};
+
+/** Turn a server offer into the shape the existing cards already render. */
+const toDisplayPlan = (offer: PlanOfferDto) => {
+  const visuals = PLAN_VISUALS[offer.id] || PLAN_VISUALS.monthly_basic;
+  return {
+    ...offer,
+    ...visuals,
+    price: offer.priceMinor > 0 ? formatMoney(offer.priceMinor, offer.currency) : 'Free',
+    period: periodLabel(offer),
+    usdPrice: offer.usd,
+    starsPrice: offer.stars,
+    currency: offer.currency,
+    popular: offer.badge === 'popular',
+  };
+};
+
 const DEFAULT_USD_TO_TON_RATE = Number(import.meta.env.VITE_USD_TO_TON_RATE || 0.23);
 const CHAPA_PENDING_KEY = 'flashai_chapa_pending_ref';
 const CHAPA_PENDING_TS_KEY = 'flashai_chapa_pending_ts';
 const CHAPA_PENDING_MAX_AGE_MS = 30 * 60 * 1000;
 
-const getPriceInStars = (plan: any) => Number(plan?.starsPrice || Math.ceil(Number(plan?.usdPrice || 0) * USD_TO_STARS_RATE));
+/** Stars come from the server ladder; the fallback keeps old cached plans working. */
+const getPriceInStars = (plan: any) => Number(plan?.starsPrice || Math.ceil(Number(plan?.usdPrice || 0) * 50));
 const getPriceInTon = (plan: any, usdToTonRate: number) => {
   // Accept both TON-per-USD (0.23) and legacy USD-per-TON (6.86) values.
   const rate = usdToTonRate > 1 ? 1 / usdToTonRate : usdToTonRate;
   const usd = Number(plan?.usdPrice || 0);
-  return Number((usd * rate).toFixed(2)) || Number(plan?.tonPrice || 0);
+  return Number((usd * rate).toFixed(2)) || 0;
 };
 const toNanoTonString = (tonAmount: number): string => {
   if (!Number.isFinite(tonAmount) || tonAmount <= 0) {
@@ -165,6 +232,8 @@ export const Profile: React.FC<{ initialSection?: ProfileSection }> = ({ initial
   const [selectedPlanForPayment, setSelectedPlanForPayment] = useState<any>(null);
   const [usdToTonRate, setUsdToTonRate] = useState(DEFAULT_USD_TO_TON_RATE);
   const [chapaConfig, setChapaConfig] = useState<any>(null);
+  const [pricing, setPricing] = useState<PricingPayload | null>(null);
+  const [paymentMethods, setPaymentMethods] = useState<PaymentMethodsPayload | null>(null);
 
   // Support Chat State
   const [chatMessage, setChatMessage] = useState('');
@@ -221,6 +290,26 @@ export const Profile: React.FC<{ initialSection?: ProfileSection }> = ({ initial
       .then((data) => setChapaConfig(data))
       .catch(() => setChapaConfig(null));
   }, [isViewingPaymentMethods, initData]);
+
+  // Country-aware catalog: prices are fixed in the user's local currency and
+  // the checkout sheet only renders the rails their country can actually use.
+  useEffect(() => {
+    const effectiveInitData = initData || (window as any)?.Telegram?.WebApp?.initData || '';
+    if (!effectiveInitData) return;
+    let cancelled = false;
+    Promise.all([fetchPricing(effectiveInitData), fetchPaymentMethods(effectiveInitData)])
+      .then(([pricingData, methodsData]) => {
+        if (cancelled) return;
+        if (pricingData) setPricing(pricingData);
+        if (methodsData) setPaymentMethods(methodsData);
+      })
+      .catch(() => {
+        // Keep the local fallback catalog.
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, [initData]);
 
   // Chapa redirects back to the app; verify the stored reference on focus and
   // while the app stays open so the plan updates even without a webhook.
@@ -505,6 +594,19 @@ export const Profile: React.FC<{ initialSection?: ProfileSection }> = ({ initial
     setIsViewingPaymentMethods(true);
   };
 
+  /**
+   * Live catalog when the API answered, legacy cards otherwise. The API is
+   * authoritative because it is the only place that knows the user's country.
+   */
+  const displayPlans = pricing?.enabled && pricing.offers?.length
+    ? pricing.offers.map(toDisplayPlan)
+    : PLANS;
+
+  // Whop is the card rail for GLOBAL only; local markets use their wallet rail
+  // or Stars. Default to showing it when the methods call has not answered yet.
+  const showCardRail = paymentMethods ? paymentMethods.card === 'whop' : true;
+  const showChapaRail = Boolean(chapaConfig?.enabled && chapaConfig?.eligible);
+
   const handleTonPayment = async () => {
     hapticFeedback('medium');
     if (!selectedPlanForPayment || !user) return;
@@ -655,8 +757,8 @@ export const Profile: React.FC<{ initialSection?: ProfileSection }> = ({ initial
         body: JSON.stringify({
           telegramId: user.telegram_id,
           planId: selectedPlanForPayment.id,
-          title: `Flash AI - ${selectedPlanForPayment.name} Plan`,
-          description: `Unlock premium football predictions with ${selectedPlanForPayment.id === 'monthly_basic' ? 'Flash AI Lite' : 'Flash AI Pro'} for 1 month.`
+          title: `Flash AI - ${selectedPlanForPayment.name}`,
+          description: `Unlock premium football predictions with ${selectedPlanForPayment.name} for ${periodLabel(selectedPlanForPayment)}.`
         }),
       });
 
@@ -708,9 +810,9 @@ export const Profile: React.FC<{ initialSection?: ProfileSection }> = ({ initial
         price: selectedPlanForPayment.price,
       };
 
-      // Whop is the primary card provider. If it is not configured on this
-      // deployment, fall back to the existing Lemon Squeezy checkout.
-      let response = await fetch('/api/payments/create-whop-checkout', {
+      // Whop is the only card rail. It is offered to GLOBAL-country users;
+      // local markets pay with their wallet rail or Telegram Stars.
+      const response = await fetch('/api/payments/create-whop-checkout', {
         method: 'POST',
         headers: {
           'Content-Type': 'application/json',
@@ -718,22 +820,14 @@ export const Profile: React.FC<{ initialSection?: ProfileSection }> = ({ initial
         },
         body: JSON.stringify(checkoutPayload),
       });
-      let data = await response.json().catch(() => ({}));
+      const data = await response.json().catch(() => ({}));
 
-      if (!response.ok && (data?.code === 'WHOP_NOT_CONFIGURED' || data?.code === 'WHOP_PLAN_NOT_CONFIGURED')) {
-        response = await fetch('/api/payments/create-lemonsqueezy-checkout', {
-          method: 'POST',
-          headers: {
-            'Content-Type': 'application/json',
-            'X-TG-Init-Data': initData || ''
-          },
-          body: JSON.stringify(checkoutPayload),
-        });
-        data = await response.json().catch(() => ({}));
+      if (!response.ok && data?.code === 'WHOP_COUNTRY_NOT_SUPPORTED') {
+        showAlert('Card checkout is not available in your country. Please use Telegram Stars or your local payment method.');
+        return;
       }
-
-      if (!response.ok && data?.code === 'LEMONSQUEEZY_COMING_SOON') {
-        showAlert('Card checkout is coming soon.');
+      if (!response.ok && data?.code === 'WHOP_NOT_CONFIGURED') {
+        showAlert('Card checkout is coming soon. Please use Telegram Stars for now.');
         return;
       }
 
@@ -920,10 +1014,7 @@ export const Profile: React.FC<{ initialSection?: ProfileSection }> = ({ initial
     if (!user) return;
     
     // Create an immersive verification experience
-    const loadingToast = showAlert(`Verifying completion: ${task.title}...`, { 
-      // Some UI libraries allow non-blocking or persistent alerts, 
-      // but here we use the existing showAlert and rely on backend speed.
-    });
+    const loadingToast = showAlert(`Verifying completion: ${task.title}...`);
     
     hapticFeedback('light');
 
@@ -1333,7 +1424,7 @@ export const Profile: React.FC<{ initialSection?: ProfileSection }> = ({ initial
           </div>
 
           <div className="space-y-6 pb-12">
-            {PLANS.map((plan) => {
+            {displayPlans.map((plan) => {
               const isCurrent = user?.plan === plan.id;
               const Icon = plan.icon;
               const planStarsPrice = getPriceInStars(plan);
@@ -1365,7 +1456,7 @@ export const Profile: React.FC<{ initialSection?: ProfileSection }> = ({ initial
                         <p className="text-2xl font-black text-white">{plan.price}</p>
                       ) : (
                         <div className="flex flex-col items-end">
-                          <p className="text-2xl font-black text-white">${Number(plan.usdPrice).toFixed(2)}</p>
+                          <p className="text-2xl font-black text-white">{plan.price}</p>
                           <p className="text-[10px] font-bold text-zinc-500 mt-1">{planStarsPrice} Stars • {planTonPrice} TON</p>
                         </div>
                       )}
@@ -1413,7 +1504,6 @@ export const Profile: React.FC<{ initialSection?: ProfileSection }> = ({ initial
   }
 
   if (isViewingPaymentMethods && selectedPlanForPayment) {
-    const selectedPlanUsdPrice = Number(selectedPlanForPayment.usdPrice || 0);
     const selectedStarsPrice = getPriceInStars(selectedPlanForPayment);
     const selectedTonPrice = getPriceInTon(selectedPlanForPayment, usdToTonRate);
     const selectedChapaPrice = chapaConfig?.plans?.[selectedPlanForPayment.id];
@@ -1433,7 +1523,7 @@ export const Profile: React.FC<{ initialSection?: ProfileSection }> = ({ initial
                   <p className="text-xs font-semibold text-zinc-500">{selectedPlanForPayment.period}</p>
                 </div>
                 <div className="text-right">
-                  <p className="text-base font-black text-white">${selectedPlanUsdPrice.toFixed(2)}</p>
+                  <p className="text-base font-black text-white">{selectedPlanForPayment.price}</p>
                   <p className="text-[11px] font-semibold text-zinc-400">{selectedStarsPrice} Stars • {selectedTonPrice} TON</p>
                 </div>
               </div>
@@ -1472,23 +1562,29 @@ export const Profile: React.FC<{ initialSection?: ProfileSection }> = ({ initial
                 <ChevronRight className="w-5 h-5 text-[#0098EA]" />
               </button>
 
-              <button
-                onClick={handleCardPayment}
-                className="w-full bg-[#FFC233]/10 border border-[#FFC233]/25 rounded-3xl p-5 flex items-center justify-between group active:scale-[0.98] transition-all"
-              >
-                <div className="flex items-center gap-4">
-                  <div className="w-12 h-12 rounded-2xl bg-[#FFC233] flex items-center justify-center">
-                    <CreditCard className="w-6 h-6 text-black" />
+              {showCardRail && (
+                <button
+                  onClick={handleCardPayment}
+                  className="w-full bg-[#FFC233]/10 border border-[#FFC233]/25 rounded-3xl p-5 flex items-center justify-between group active:scale-[0.98] transition-all"
+                >
+                  <div className="flex items-center gap-4">
+                    <div className="w-12 h-12 rounded-2xl bg-[#FFC233] flex items-center justify-center">
+                      <CreditCard className="w-6 h-6 text-black" />
+                    </div>
+                    <div className="text-left">
+                      <p className="text-base font-black text-white">Bank Card</p>
+                      <p className="text-xs font-semibold text-zinc-400">
+                        {Number(selectedPlanForPayment.usdPrice || 0) > 0
+                          ? `$${Number(selectedPlanForPayment.usdPrice).toFixed(2)}`
+                          : selectedPlanForPayment.price} • Card, Apple Pay &amp; more
+                      </p>
+                    </div>
                   </div>
-                  <div className="text-left">
-                    <p className="text-base font-black text-white">Bank Card</p>
-                    <p className="text-xs font-semibold text-zinc-400">${selectedPlanUsdPrice.toFixed(2)} • Card, Apple Pay & more</p>
-                  </div>
-                </div>
-                <ChevronRight className="w-5 h-5 text-[#FFC233]" />
-              </button>
+                  <ChevronRight className="w-5 h-5 text-[#FFC233]" />
+                </button>
+              )}
 
-              {chapaConfig?.enabled && chapaConfig?.eligible && selectedChapaPrice && (
+              {showChapaRail && selectedChapaPrice && (
                 <button
                   onClick={handleChapaPayment}
                   className="w-full bg-emerald-500/10 border border-emerald-500/25 rounded-3xl p-5 flex items-center justify-between group active:scale-[0.98] transition-all"

@@ -284,7 +284,7 @@ export const Matches: React.FC<MatchesProps> = ({ onTabChange }) => {
               <div className="space-y-3 rounded-[24px] border border-[var(--border)] bg-[var(--surface-1)] p-6 text-center">
                 <Lock className="mx-auto h-8 w-8 text-[var(--primary)]" />
                 <h3 className="text-sm font-black text-white uppercase tracking-wider">Live matches are premium only</h3>
-                <p className="text-xs text-zinc-500">Upgrade to Monthly Basic or Monthly Pro to view live match cards and run live AI analysis.</p>
+                <p className="text-xs text-zinc-500">Upgrade to 30-Day Basic or 30-Day Pro to view live match cards and run live AI analysis.</p>
               </div>
             ) : null}
 

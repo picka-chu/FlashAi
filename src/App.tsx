@@ -172,7 +172,7 @@ export default function App() {
       case "matches":
         return <Matches onTabChange={setActiveTab} />;
       case "analyze":
-        return <Analyze onTabChange={setActiveTab} />;
+        return <Analyze onTabChange={(tab) => setActiveTab(tab as TabType)} />;
       case "history":
         return <History />;
       case "profile":

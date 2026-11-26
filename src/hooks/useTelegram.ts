@@ -133,9 +133,25 @@ export const useTelegram = () => {
     };
   }, [tg]);
 
+  type HapticType =
+    | "light"
+    | "medium"
+    | "heavy"
+    | "rigid"
+    | "soft"
+    | "success"
+    | "warning"
+    | "error";
+
   const hapticFeedback = useCallback(
-    (type: "light" | "medium" | "heavy" | "rigid" | "soft" = "medium") => {
-      if (tg?.HapticFeedback) tg.HapticFeedback.impactOccurred(type);
+    (type: HapticType = "medium") => {
+      if (!tg?.HapticFeedback) return;
+      // Impact styles and notification types are different Telegram APIs.
+      if (type === "success" || type === "warning" || type === "error") {
+        tg.HapticFeedback.notificationOccurred(type);
+      } else {
+        tg.HapticFeedback.impactOccurred(type);
+      }
     },
     [tg],
   );

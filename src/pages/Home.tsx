@@ -322,7 +322,18 @@ export const Home: React.FC<HomeProps> = ({ onTabChange }) => {
           {(newsLoading || news.length > 0) && (
             <section className="space-y-3">
               <SectionHeader title="Football news" icon={<Newspaper className="h-4 w-4 text-[var(--primary)]" />} />
-              <FootballNewsFeed articles={news} loading={newsLoading} />
+              <FootballNewsFeed
+                articles={news}
+                loading={newsLoading}
+                onOpen={(url) => {
+                  try {
+                    if (tg?.openLink) tg.openLink(url);
+                    else window.open(url, "_blank", "noopener,noreferrer");
+                  } catch {
+                    window.open(url, "_blank", "noopener,noreferrer");
+                  }
+                }}
+              />
             </section>
           )}
         </>

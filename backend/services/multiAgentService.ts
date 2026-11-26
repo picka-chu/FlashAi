@@ -26,12 +26,22 @@ import {
 } from "./apiCacheService";
 
 // ─── Model tiers ──────────────────────────────────────────────────────────────
-/** High-capability models used for deep reasoning + search grounding */
-const AGENT_MODELS  = ["gemini-2.5-flash", "gemini-2.5-flash-lite", "gemini-1.5-pro", "gemini-1.5-flash"];
-/** Models that reliably support googleSearch grounding */
-const SEARCH_MODELS = ["gemini-2.5-flash", "gemini-2.5-flash-lite", "gemini-1.5-flash"];
+/**
+ * Current-generation models first, with the previous generation kept as
+ * trailing fallbacks. If a model is retired upstream, analysis degrades to the
+ * next entry instead of failing. Verified against Google's pricing page on
+ * 26 Nov 2026: 3.x Flash doubles in price on 1 Jan 2027.
+ */
+export const AGENT_MODELS  = [
+  "gemini-3.8-flash",
+  "gemini-3.5-flash-lite",
+  "gemini-2.5-flash",
+  "gemini-2.5-flash-lite",
+];
+/** Search grounding is not GA on flash-lite, so keep a grounded-capable model first. */
+export const SEARCH_MODELS = ["gemini-3.8-flash", "gemini-2.5-flash", "gemini-2.5-flash-lite"];
 /** Vision-capable models for bet slip image analysis */
-const VISION_MODELS = ["gemini-2.5-flash-lite", "gemini-1.5-flash"];
+export const VISION_MODELS = ["gemini-3.5-flash-lite", "gemini-2.5-flash-lite"];
 
 // ─── JSON extraction (handles all Gemini response shapes) ────────────────────
 function parseBalancedJson(text: string): any | null {
