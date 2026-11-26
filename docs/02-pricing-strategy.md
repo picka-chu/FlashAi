@@ -71,7 +71,7 @@ Use the conservative current budget of **$0.06 per credit** until usage telemetr
 
 The lowest USD-equivalent revenues among the current local price points are approximately $0.34 (day), $1.09 (weekly), $2.91 (Basic) and $5.78 (Pro). Corresponding worst-market gross margins before payment fees, tax, refunds and support are approximately 82%, 67%, 67% and 68%. These clear the 65% model target, but the remaining headroom is not large on weekly and monthly tiers. Re-check `GET /api/pricing/economics?country=XX` using the actual cost-per-credit value from provider billing before increasing allowances or discounting.
 
-The economics endpoint must default to `AI_COST.currentPerAnalysis`, not the unshipped optimisation estimate. If the current cost rises, reduce credit allocations or increase prices before acquisition spend.
+The economics endpoint must default to `AI_COST.currentPerAnalysis`, not the unshipped optimisation estimate. This model covers credit-consuming match and bet-slip work only; audit and meter chat, live-analysis and every other AI-backed route before enabling paid acquisition. If any of those routes are unmetered, the margin figures are not a complete contribution-margin forecast. If the current cost rises, reduce credit allocations or increase prices before acquisition spend.
 
 ## 5. Payment and checkout rules
 

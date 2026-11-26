@@ -101,20 +101,6 @@ const PLAN_CREDITS: Record<string, number> = {
   admin: 0,
 };
 
-/**
- * Global USD fallback, used only for TON conversion and as a last resort when a
- * market has no local rail. Real prices live in backend/config/marketPricing.ts.
- */
-const PLAN_PRICE_USD: Record<string, number> = {
-  day_pass: 0.99,
-  weekly: 2.99,
-  monthly_basic: 6.99,
-  monthly_pro: 12.99,
-  credits_20: 9,
-  credits_50: 22,
-  credits_100: 44,
-  credits_250: 110,
-};
 const PAID_PLANS = new Set([
   "day_pass",
   "weekly",
@@ -1462,16 +1448,15 @@ function isPrivateTelegramInvite(taskUrl: string): boolean {
     }
   });
 
-  const getPlanUsdPrice = (planId: string): number => PLAN_PRICE_USD[String(planId || "").trim()] || 0;
+  const isPricingV2Enabled = () => String(process.env.PRICING_V2_ENABLED || "").toLowerCase() === "true";
   // Stars are pass-only; never derive a top-up price from a USD fallback.
   const getExpectedStarsAmount = (planId: string): number => PLAN_PRICE_STARS[String(planId || "").trim()] || 0;
   const getExpectedTonAmount = (planId: string, tonPerUsdRate: number, country: string = "GLOBAL"): number => {
     const offer = getOffer(country, String(planId || "").trim());
+    if (!offer) return 0;
     const market = getMarket(country);
-    const amount = offer ? offer.priceMinor / 100 : 0;
-    const usd = offer
-      ? (offer.currency === "USD" ? amount : amount / market.usdRate)
-      : getPlanUsdPrice(planId);
+    const amount = offer.priceMinor / 100;
+    const usd = offer.currency === "USD" ? amount : amount / market.usdRate;
     if (usd > 0 && Number.isFinite(tonPerUsdRate) && tonPerUsdRate > 0) {
       return Number((usd * tonPerUsdRate).toFixed(2));
     }
@@ -1984,6 +1969,7 @@ function isPrivateTelegramInvite(taskUrl: string): boolean {
           plan: "free",
           plan_expires_at: null,
           credits: packBalance,
+          credit_balance: packBalance,
           last_credit_reset: now.toISOString(),
           last_active: now.toISOString(),
         })
@@ -2030,6 +2016,7 @@ function isPrivateTelegramInvite(taskUrl: string): boolean {
         .from("users")
         .update({
           credits: currentCredits,
+          credit_balance: packBalance,
           last_credit_reset: now.toISOString(),
           last_active: now.toISOString()
         })
@@ -3715,7 +3702,7 @@ function isPrivateTelegramInvite(taskUrl: string): boolean {
       chapa: isChapaEnabled(),
       whop: WHOP_ENABLED,
       telegram_stars: true,
-      ton: country === "GLOBAL" || String(process.env.PRICING_V2_ENABLED || "").toLowerCase() === "true",
+      ton: country === "GLOBAL" || isPricingV2Enabled(),
     };
 
     const methods = getPaymentMethods(country)
@@ -3727,10 +3714,10 @@ function isPrivateTelegramInvite(taskUrl: string): boolean {
       currency: market.currency,
       source: resolved.source,
       methods,
-      default: methods[0]?.id ?? "telegram_stars",
-      card: WHOP_ENABLED ? "whop" : null,
-      stars: true,
-      ton: true,
+      default: methods[0]?.id ?? "none",
+      card: methods.some((method) => method.id === "whop") ? "whop" : null,
+      stars: methods.some((method) => method.id === "telegram_stars"),
+      ton: methods.some((method) => method.id === "ton"),
       chapa: isChapaEnabled() && country === "ET",
     });
   });
@@ -4448,6 +4435,9 @@ function isPrivateTelegramInvite(taskUrl: string): boolean {
       }
 
       const resolved = await resolveRequestCountry(c);
+      if (resolved.country !== "GLOBAL" && !isPricingV2Enabled()) {
+        return c.json({ error: "Localized TON checkout is unavailable until local pricing is enabled." }, 503);
+      }
       const tonPerUsdRate = await getTonPerUsdRate();
       const tonAmount = getExpectedTonAmount(planId, tonPerUsdRate, resolved.country);
       if (!tonAmount) {

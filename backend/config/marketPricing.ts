@@ -35,7 +35,7 @@ export interface PlanOffer {
   priceMinor: number;
   currency: CurrencyCode;
   interval: BillingInterval;
-  /** Access window in days. 0 for free. */
+  /** Access window in days. 0 for free and non-expiring credit packs. */
   durationDays: number;
   /**
    * Total credit bundle for the pass. One credit = one analysis (match or bet slip).
@@ -310,14 +310,6 @@ const PAYMENT_METHODS: Record<CountryCode, PaymentMethod[]> = {
       priority: 1,
       foreignEntityFriendly: true,
       notes: "Primary card rail for the rest of the world.",
-    },
-    {
-      id: "telegram_stars",
-      label: "Telegram Stars",
-      provider: "Telegram",
-      supportsRecurring: false,
-      priority: 2,
-      foreignEntityFriendly: true,
     },
     {
       id: "ton",

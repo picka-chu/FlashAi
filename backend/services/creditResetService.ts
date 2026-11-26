@@ -286,14 +286,19 @@ export class CreditResetService {
 
           const effectivePlan = planExpired || planWasCreditPack ? "free" : user.plan;
           let currentCredits = Number(user.credits || 0);
-          if (planExpired) {
-            // Pass credits expire; purchased top-up credits do not.
+          if (planExpired || planWasCreditPack) {
+            // Pass credits expire; only the remaining top-up balance survives.
             currentCredits = Math.min(Number(user.credit_balance || 0), currentCredits);
           }
           if (planExpired || planWasCreditPack) {
             const { error: downgradeError } = await this.supabase
               .from("users")
-              .update({ plan: "free", plan_expires_at: null, credits: currentCredits })
+              .update({
+                plan: "free",
+                plan_expires_at: null,
+                credits: currentCredits,
+                credit_balance: currentCredits,
+              })
               .eq("telegram_id", user.telegram_id);
             if (downgradeError) throw downgradeError;
           }
