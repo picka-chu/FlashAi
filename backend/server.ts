@@ -125,9 +125,8 @@ const ALLOWED_PLANS = new Set([
 ]);
 
 /**
- * Fixed Stars prices for the local markets that explicitly offer this rail.
- * Global checkout does not expose Stars because the same ladder would underprice
- * the higher global USD plans. Credit packs are not purchasable with Stars.
+ * Star prices are a single global ladder: Stars are currency-agnostic, and
+ * Telegram keeps ~35%, so these are set to net roughly the local USD price.
  */
 const PLAN_PRICE_STARS: Record<string, number> = PLAN_STARS;
 
