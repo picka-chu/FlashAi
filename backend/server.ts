@@ -1924,7 +1924,7 @@ function isPrivateTelegramInvite(taskUrl: string): boolean {
   });
 
   // --- PLAN LIMITS CONFIG ---
-  // Updated to match frontend UI promises and professional tier structure
+  // Paid access is a fixed credit pool; only the free trial refreshes daily.
   const PLAN_CONFIG: Record<string, { dailyCredits: number; name: string }> = {
     free: { dailyCredits: 3, name: "Free trial" },
     // Paid passes are finite pools; no daily replenishment is granted.
@@ -1936,9 +1936,8 @@ function isPrivateTelegramInvite(taskUrl: string): boolean {
   };
 
   /**
-   * Professional Reset/Refill Logic
-   * Ensures users get their daily quota based on plan.
-   * Credits refresh every 24 hours from last reset time.
+   * Synchronize the free-trial allowance and enforce paid-pass expiry.
+   * Paid pass balances are never replenished by this daily sync.
    */
   async function syncUserCredits(userData: any) {
     const now = new Date();
@@ -3617,6 +3616,10 @@ function isPrivateTelegramInvite(taskUrl: string): boolean {
       if (tgUser?.id && Number(telegramId || 0) && tgUser.id !== Number(telegramId || 0)) {
         return c.json({ error: "Telegram identity mismatch" }, 403);
       }
+      const resolved = await resolveRequestCountry(c);
+      if (!getPaymentMethods(resolved.country).some((method) => method.id === "telegram_stars")) {
+        return c.json({ error: "Telegram Stars checkout is not available in your market." }, 403);
+      }
 
       // Create Stars Invoice Link
       // Currency for Telegram Stars is 'XTR'
@@ -4435,6 +4438,9 @@ function isPrivateTelegramInvite(taskUrl: string): boolean {
       }
 
       const resolved = await resolveRequestCountry(c);
+      if (!getPaymentMethods(resolved.country).some((method) => method.id === "ton")) {
+        return c.json({ error: "TON checkout is not available in your market." }, 403);
+      }
       if (resolved.country !== "GLOBAL" && !isPricingV2Enabled()) {
         return c.json({ error: "Localized TON checkout is unavailable until local pricing is enabled." }, 503);
       }

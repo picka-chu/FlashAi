@@ -102,18 +102,13 @@ export interface CountryMarket {
 }
 
 /**
- * Measured Gemini cost per grounded analysis (USD), Nov 2026 list prices.
+ * Conservative budget per analysis credit (USD), based on the current grounded
+ * analysis path and the Nov 2026 Gemini price schedule. Treat this as a pricing
+ * ceiling, not a measured average: validate it against production usage logs.
+ * The $0.025 optimised value below is informational until the one-request path
+ * is deployed and its cost is confirmed in billing telemetry.
  *
- * Breakdown of the "current" path (backend/services/multiAgentService.ts):
- *   analyzeMatch            -> 1 grounded request
- *   fetchContextData        -> 1 grounded request (search-grounded context)
- *   fetchMatchDataFallback  -> 1 grounded request (only on cache miss)
- *   tokens: ~6k in @ $0.75/M + ~1.5k out @ $3.75/M ~= $0.010 per request
- *   grounding: $14 / 1,000 requests = $0.014 per request
- *   => ~$0.024 per grounded request; 3 requests ~= $0.07 worst case.
- *
- * Source: https://ai.google.dev/gemini-api/docs/pricing (read 25 Nov 2026).
- * Prices double on 1 Jan 2027 for the 3.x Flash line, so this stays conservative.
+ * Source: https://ai.google.dev/gemini-api/docs/pricing (reviewed 25 Nov 2026).
  */
 export const AI_COST = {
   /** Today's path: up to 3 grounded requests on a Flash-tier model. */
