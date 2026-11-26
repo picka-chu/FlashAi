@@ -14,7 +14,7 @@ import {
  * GET /api/pricing?country=ET
  *   Public. Returns the fixed local-currency catalog for the caller's market.
  *
- * GET /api/pricing/economics?country=ET&perAnalysis=0.015
+ * GET /api/pricing/economics?country=ET&perAnalysis=0.06
  *   Admin only. Returns worst-case margin per plan so pricing can be reviewed
  *   before a plan ships. Requires x-admin-api-key === ADMIN_API_KEY.
  */
@@ -50,7 +50,7 @@ export function registerPricingRoutes(
 
     const country = normalizeCountry(c.req.query("country"));
     const rawCost = Number(c.req.query("perAnalysis"));
-    const perAnalysis = Number.isFinite(rawCost) && rawCost > 0 ? rawCost : AI_COST.optimisedPerAnalysis;
+    const perAnalysis = Number.isFinite(rawCost) && rawCost > 0 ? rawCost : AI_COST.currentPerAnalysis;
 
     const rows = getOffers(country)
       .filter((offer) => offer.priceMinor > 0)

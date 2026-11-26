@@ -17,8 +17,8 @@ export interface PlanOfferDto {
   durationDays: number;
   /** Total credit bundle for the pass. */
   credits: number;
-  /** Max credits spendable per day (anti-abuse). */
-  dailyCap: number;
+  /** Optional daily allowance; paid offers are finite credit pools. */
+  dailyCap?: number;
   maxBetSlipImages: number;
   picksUnlocked: number;
   features: string[];
@@ -137,7 +137,7 @@ export function formatMoney(priceMinor: number, currency: string): string {
 
 export function periodLabel(offer: Pick<PlanOfferDto, "interval" | "durationDays">): string {
   if (offer.interval === "free") return "forever";
-  if (offer.interval === "credit_pack") return "90 days";
+  if (offer.interval === "credit_pack") return "No expiry";
   if (offer.durationDays === 1) return "1 day";
   if (!offer.durationDays) return offer.interval === "month" ? "30 days" : offer.interval === "week" ? "7 days" : "one pass";
   return `${offer.durationDays} days`;

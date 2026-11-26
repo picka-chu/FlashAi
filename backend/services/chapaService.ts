@@ -204,10 +204,9 @@ export async function initializeChapaCheckout(
   // Chapa validates email format - .telegram is not a valid TLD. Use a real-looking domain.
   const email = `user${params.telegramId}@flashai.app`;
 
-  // Chapa customization.title only allows: letters, numbers, hyphens, underscores, spaces, dots.
-  const safeTitle = `${CHAPA_MERCHANT_NAME} - ${params.planName}`
-    .replace(/[^a-zA-Z0-9\-_\s\.]/g, "")
-    .slice(0, 30);
+  // Chapa's hosted checkout enforces a hard 16-character maximum for title.
+  // Keep the merchant title stable and put the selected plan in the description.
+  const safeTitle = CHAPA_MERCHANT_NAME.slice(0, 16);
 
   const body = {
     amount: String(amountMajor),

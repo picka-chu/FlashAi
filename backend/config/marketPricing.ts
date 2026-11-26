@@ -35,7 +35,7 @@ export interface PlanOffer {
   priceMinor: number;
   currency: CurrencyCode;
   interval: BillingInterval;
-  /** Access window in days. 0 for free. */
+  /** Access window in days. 0 for free and non-expiring credit packs. */
   durationDays: number;
   /**
    * Total credit bundle for the pass. One credit = one analysis (match or bet slip).
@@ -43,11 +43,8 @@ export interface PlanOffer {
    * own pace within the validity window.
    */
   credits: number;
-  /**
-   * Maximum credits spendable in a single calendar day. Anti-abuse guardrail so
-   * a user cannot burn a 300-credit Pro pass in one hour.
-   */
-  dailyCap: number;
+  /** Optional daily allowance (used by the free trial only). Paid passes are credit pools. */
+  dailyCap?: number;
   /** Bet-slip images per analysis. */
   maxBetSlipImages: number;
   /** Share of picks unlocked: 1 = safe only, 2 = safe+value, 4 = full board. */
@@ -105,18 +102,13 @@ export interface CountryMarket {
 }
 
 /**
- * Measured Gemini cost per grounded analysis (USD), Nov 2026 list prices.
+ * Conservative budget per analysis credit (USD), based on the current grounded
+ * analysis path and the Nov 2026 Gemini price schedule. Treat this as a pricing
+ * ceiling, not a measured average: validate it against production usage logs.
+ * The $0.025 optimised value below is informational until the one-request path
+ * is deployed and its cost is confirmed in billing telemetry.
  *
- * Breakdown of the "current" path (backend/services/multiAgentService.ts):
- *   analyzeMatch            -> 1 grounded request
- *   fetchContextData        -> 1 grounded request (search-grounded context)
- *   fetchMatchDataFallback  -> 1 grounded request (only on cache miss)
- *   tokens: ~6k in @ $0.75/M + ~1.5k out @ $3.75/M ~= $0.010 per request
- *   grounding: $14 / 1,000 requests = $0.014 per request
- *   => ~$0.024 per grounded request; 3 requests ~= $0.07 worst case.
- *
- * Source: https://ai.google.dev/gemini-api/docs/pricing (read 25 Nov 2026).
- * Prices double on 1 Jan 2027 for the 3.x Flash line, so this stays conservative.
+ * Source: https://ai.google.dev/gemini-api/docs/pricing (reviewed 25 Nov 2026).
  */
 export const AI_COST = {
   /** Today's path: up to 3 grounded requests on a Flash-tier model. */
@@ -315,14 +307,6 @@ const PAYMENT_METHODS: Record<CountryCode, PaymentMethod[]> = {
       notes: "Primary card rail for the rest of the world.",
     },
     {
-      id: "telegram_stars",
-      label: "Telegram Stars",
-      provider: "Telegram",
-      supportsRecurring: false,
-      priority: 2,
-      foreignEntityFriendly: true,
-    },
-    {
       id: "ton",
       label: "TON",
       provider: "TON Connect",
@@ -341,6 +325,8 @@ interface PricePoints {
 }
 
 function paidOffers(currency: CurrencyCode, p: PricePoints): PlanOffer[] {
+  // Top-ups use the Basic pass's per-credit rate and round up, protecting margin.
+  const creditPackPrice = (credits: number) => Math.ceil((p.basic * credits / 16) / 100) * 100;
   return [
     {
       id: "day_pass",
@@ -349,11 +335,10 @@ function paidOffers(currency: CurrencyCode, p: PricePoints): PlanOffer[] {
       currency,
       interval: "day",
       durationDays: 1,
-      credits: 10,
-      dailyCap: 10,
+      credits: 1,
       maxBetSlipImages: 2,
       picksUnlocked: 2,
-      features: ["10 credits • use all in one day or spread out", "Safe + Value pick", "AI chat after analysis", "Nothing auto-renews"],
+      features: ["1 credit • valid for 1 day", "Safe + Value pick", "AI chat after analysis", "Nothing auto-renews"],
       recurring: false,
     },
     {
@@ -363,11 +348,10 @@ function paidOffers(currency: CurrencyCode, p: PricePoints): PlanOffer[] {
       currency,
       interval: "week",
       durationDays: 7,
-      credits: 50,
-      dailyCap: 15,
+      credits: 6,
       maxBetSlipImages: 2,
       picksUnlocked: 2,
-      features: ["50 credits • valid for 7 days", "Up to 15 credits per day", "Safe + Value picks", "AI chat after analysis"],
+      features: ["6 credits • valid for 7 days", "Use credits any time during the pass", "Safe + Value picks", "AI chat after analysis"],
       recurring: false,
     },
     {
@@ -377,13 +361,12 @@ function paidOffers(currency: CurrencyCode, p: PricePoints): PlanOffer[] {
       currency,
       interval: "month",
       durationDays: 30,
-      credits: 150,
-      dailyCap: 20,
+      credits: 16,
       maxBetSlipImages: 2,
       picksUnlocked: 2,
       features: [
-        "150 credits • valid for 30 days",
-        "Up to 20 credits per day",
+        "16 credits • valid for 30 days",
+        "Use credits any time during the pass",
         "Safe + Value picks",
         "AI chat after analysis",
         "Renew manually - no card stored",
@@ -398,17 +381,16 @@ function paidOffers(currency: CurrencyCode, p: PricePoints): PlanOffer[] {
       currency,
       interval: "month",
       durationDays: 30,
-      credits: 300,
-      dailyCap: 25,
+      credits: 31,
       maxBetSlipImages: 6,
       picksUnlocked: 4,
       features: [
-        "300 credits • valid for 30 days",
-        "Up to 25 credits per day",
+        "31 credits • valid for 30 days",
+        "Use credits any time during the pass",
         "Full board (2 Safe + 2 Value)",
         "Bet-slip image analysis (up to 6 images)",
         "Top-pick accumulator",
-        "Unlimited AI chat",
+        "AI chat after analysis",
         "Live match analysis",
       ],
       recurring: false,
@@ -419,57 +401,53 @@ function paidOffers(currency: CurrencyCode, p: PricePoints): PlanOffer[] {
     {
       id: "credits_20",
       name: "20 Credit Pack",
-      priceMinor: Math.round((p.day * 0.35) / 100) * 100, // ~35% of day pass price
+      priceMinor: creditPackPrice(20),
       currency,
       interval: "credit_pack",
-      durationDays: 90,
+      durationDays: 0,
       credits: 20,
-      dailyCap: 20,
       maxBetSlipImages: 2,
       picksUnlocked: 2,
-      features: ["20 bonus credits", "Valid for 90 days", "Stacks with any pass"],
+      features: ["20 bonus credits", "No expiry", "Stacks with any pass"],
       recurring: false,
     },
     {
       id: "credits_50",
       name: "50 Credit Pack",
-      priceMinor: Math.round((p.week * 0.35) / 100) * 100, // ~35% of weekly price
+      priceMinor: creditPackPrice(50),
       currency,
       interval: "credit_pack",
-      durationDays: 90,
+      durationDays: 0,
       credits: 50,
-      dailyCap: 20,
       maxBetSlipImages: 2,
       picksUnlocked: 2,
-      features: ["50 bonus credits", "Valid for 90 days", "Stacks with any pass"],
+      features: ["50 bonus credits", "No expiry", "Stacks with any pass"],
       recurring: false,
     },
     {
       id: "credits_100",
       name: "100 Credit Pack",
-      priceMinor: Math.round((p.basic * 0.35) / 100) * 100, // ~35% of basic price
+      priceMinor: creditPackPrice(100),
       currency,
       interval: "credit_pack",
-      durationDays: 90,
+      durationDays: 0,
       credits: 100,
-      dailyCap: 25,
       maxBetSlipImages: 6,
       picksUnlocked: 4,
-      features: ["100 bonus credits", "Valid for 90 days", "Stacks with any pass"],
+      features: ["100 bonus credits", "No expiry", "Stacks with any pass"],
       recurring: false,
     },
     {
       id: "credits_250",
       name: "250 Credit Pack",
-      priceMinor: Math.round((p.pro * 0.35) / 100) * 100, // ~35% of pro price
+      priceMinor: creditPackPrice(250),
       currency,
       interval: "credit_pack",
-      durationDays: 90,
+      durationDays: 0,
       credits: 250,
-      dailyCap: 25,
       maxBetSlipImages: 6,
       picksUnlocked: 4,
-      features: ["250 bonus credits", "Valid for 90 days", "Stacks with any pass", "Best value"],
+      features: ["250 bonus credits", "No expiry", "Stacks with any pass", "Best value"],
       recurring: false,
       badge: "best_value",
     },
@@ -647,7 +625,11 @@ export function getMarket(country: string | null | undefined): CountryMarket {
 export function getOffers(country: string | null | undefined): PlanOffer[] {
   const code = normalizeCountry(country);
   const free: PlanOffer = { ...FREE_OFFER, currency: MARKETS[code].currency };
-  return [free, ...OFFERS[code]];
+  // Top-ups are only shown where a supported checkout rail can fulfil them.
+  const marketOffers = code === "ET" || code === "GLOBAL"
+    ? OFFERS[code]
+    : OFFERS[code].filter((offer) => offer.interval !== "credit_pack");
+  return [free, ...marketOffers];
 }
 
 export function getPaymentMethods(country: string | null | undefined): PaymentMethod[] {
@@ -657,34 +639,39 @@ export function getPaymentMethods(country: string | null | undefined): PaymentMe
 export interface OfferEconomics {
   offer: PlanOffer;
   revenueUsd: number;
-  /** Worst case: user runs the pass to its hard cap. */
+  /** Worst case: user spends the entire purchased credit pool. */
+  creditsAtCap: number;
+  /** @deprecated Compatibility field; mirrors credit units, not bet-slip count. */
   analysesAtCap: number;
   costAtCapUsd: number;
   marginAtCap: number;
   healthyAtCap: boolean;
   /** Analyses the price could fund at 0% margin - the absolute ceiling. */
+  breakEvenCredits: number;
+  /** @deprecated Compatibility field. */
   breakEvenAnalyses: number;
 }
 
 export function estimateEconomics(
   offer: PlanOffer,
   country: string | null | undefined,
-  perAnalysisUsd: number = AI_COST.optimisedPerAnalysis,
+  perAnalysisUsd: number = AI_COST.currentPerAnalysis,
 ): OfferEconomics {
   const market = getMarket(country);
   const units = offer.priceMinor / 100;
   const revenueUsd = offer.currency === "USD" ? units : units / market.usdRate;
-  const days = offer.durationDays || 1;
-  const analysesAtCap = Math.min(offer.credits, offer.dailyCap * days);
-  const costAtCapUsd = analysesAtCap * perAnalysisUsd;
+  const creditsAtCap = offer.credits;
+  const costAtCapUsd = creditsAtCap * perAnalysisUsd;
   const marginAtCap = revenueUsd > 0 ? (revenueUsd - costAtCapUsd) / revenueUsd : 0;
   return {
     offer,
     revenueUsd,
-    analysesAtCap,
+    creditsAtCap,
+    analysesAtCap: creditsAtCap,
     costAtCapUsd,
     marginAtCap,
     healthyAtCap: marginAtCap >= TARGET_MARGIN,
+    breakEvenCredits: perAnalysisUsd > 0 ? Math.floor(revenueUsd / perAnalysisUsd) : 0,
     breakEvenAnalyses: perAnalysisUsd > 0 ? Math.floor(revenueUsd / perAnalysisUsd) : 0,
   };
 }
@@ -722,7 +709,7 @@ export function buildPricingPayload(country: string | null | undefined) {
     paymentMethods: getPaymentMethods(code),
     minorUnit: 2,
     localizedCopy: {
-      free: "1 analysis per day, forever",
+      free: "3 credits per day for the first 7 days; purchased credits remain available",
       popular: "Most popular",
       bestValue: "Best value",
       changePlan: "Switch plan",
