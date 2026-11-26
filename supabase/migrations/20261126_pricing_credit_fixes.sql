@@ -7,6 +7,15 @@ SET plan = 'free'
 WHERE plan IN ('credits_20', 'credits_50', 'credits_100', 'credits_250')
   AND plan_expires_at IS NULL;
 
+-- Older debits did not always decrement credit_balance. The spendable total is
+-- authoritative; clamp the pack sub-balance before enabling split-balance debits.
+UPDATE public.users
+SET credit_balance = LEAST(COALESCE(credit_balance, 0), COALESCE(credits, 0));
+
+ALTER TABLE public.users
+  ALTER COLUMN credit_balance SET DEFAULT 0,
+  ALTER COLUMN credit_balance SET NOT NULL;
+
 CREATE OR REPLACE FUNCTION public.apply_plan_purchase(
   p_telegram_id BIGINT,
   p_plan TEXT,
