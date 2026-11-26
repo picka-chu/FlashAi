@@ -3852,6 +3852,19 @@ function isPrivateTelegramInvite(taskUrl: string): boolean {
           firstName,
           lastName,
           merchantReference,
+          returnUrl: (() => {
+            const originHeader = c.req.header("origin");
+            if (!originHeader) return undefined;
+            try {
+              const origin = new URL(originHeader);
+              if (origin.protocol !== "https:" && origin.hostname !== "localhost" && origin.hostname !== "127.0.0.1") {
+                return undefined;
+              }
+              return new URL("/payments/chapa/return", origin.origin).toString();
+            } catch {
+              return undefined;
+            }
+          })(),
         });
 
         await supabase.from("chapa_payments").update({ checkout_url: checkoutUrl }).eq("id", payment.id);
@@ -3897,7 +3910,18 @@ function isPrivateTelegramInvite(taskUrl: string): boolean {
       if (error) throw error;
       if (!payment) return c.json({ error: "Payment not found" }, 404);
       if (payment.status === "success") {
-        return c.json({ status: "success", planId: payment.plan_id });
+        const { data: userRow, error: userError } = await supabase
+          .from("users")
+          .select("credits, plan")
+          .eq("telegram_id", tgUser.id)
+          .maybeSingle();
+        if (userError) throw userError;
+        return c.json({
+          status: "success",
+          planId: payment.plan_id,
+          credits: userRow?.credits ?? null,
+          userPlan: userRow?.plan ?? payment.plan_id,
+        });
       }
 
       const verified = await verifyChapaTransaction(String(payment.chapa_reference || reference));
@@ -3908,11 +3932,12 @@ function isPrivateTelegramInvite(taskUrl: string): boolean {
           !verified.merchantReference || verified.merchantReference === payment.merchant_reference;
         if (verified.amountCents === expectedCents && currencyMatches && referenceMatches) {
           await fulfillChapaPayment(payment, verified, bot);
-          const { data: userRow } = await supabase
+          const { data: userRow, error: userError } = await supabase
             .from("users")
             .select("credits, plan")
             .eq("telegram_id", tgUser.id)
             .maybeSingle();
+          if (userError) throw userError;
           return c.json({
             status: "success",
             planId: payment.plan_id,
@@ -5736,6 +5761,46 @@ ${ad.subtitle}`;
   // NOTE: the former public /api/common/cache endpoint was removed.
   // It allowed unauthenticated reads of every cache key, including phone
   // numbers, and bypassed the paid-only live-matches gate.
+
+  // Chapa returns here in a separate browser window. The return URL is only
+  // a signal to the opener; payment success is always confirmed by our API.
+  app.get("/payments/chapa/return", (c) => c.html(`<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>Returning to Flash AI</title>
+  <style>
+    body{margin:0;min-height:100vh;display:grid;place-items:center;background:#09090b;color:#fafafa;font:16px system-ui,sans-serif}
+    main{max-width:360px;padding:32px;text-align:center}
+    p{color:#a1a1aa;line-height:1.6}
+    .mark{color:#ccff00;font-size:28px;font-weight:800}
+  </style>
+</head>
+<body>
+  <main>
+    <div class="mark">Flash AI</div>
+    <h1>Returning to Flash AI</h1>
+    <p id="status">Your payment status is being checked securely. You can return to the Flash AI window.</p>
+  </main>
+  <script>
+    (() => {
+      const reference = new URLSearchParams(window.location.search).get("reference") || "";
+      const status = document.getElementById("status");
+      if (window.opener && !window.opener.closed) {
+        window.opener.postMessage(
+          { type: "flashai:chapa-return", reference },
+          window.location.origin,
+        );
+        status.textContent = "You can continue in Flash AI. This window will close automatically.";
+        window.setTimeout(() => window.close(), 350);
+      } else {
+        status.textContent = "Return to Flash AI. Your payment status will update when the app checks with Chapa.";
+      }
+    })();
+  </script>
+</body>
+</html>`));
 
   // Vite / Static Assets
   if (process.env.NODE_ENV !== "production") {

@@ -181,6 +181,7 @@ export type ChapaCheckoutParams = {
   firstName: string;
   lastName: string;
   merchantReference: string;
+  returnUrl?: string;
 };
 
 export async function initializeChapaCheckout(
@@ -197,7 +198,18 @@ export async function initializeChapaCheckout(
     "https://flash-6tuz.onrender.com"
   ).replace(/\/+$/, "");
   const callbackUrl = `${appUrl}/api/payments/chapa-webhook`;
-  const returnUrl = process.env.CHAPA_RETURN_URL || appUrl;
+  // Keep Chapa's browser return on the same frontend origin as the opener.
+  // CHAPA_RETURN_URL remains an explicit deployment override.
+  const returnUrl = new URL(
+    String(process.env.CHAPA_RETURN_URL || params.returnUrl || appUrl).trim(),
+  );
+  if (returnUrl.protocol !== "https:" && returnUrl.protocol !== "http:") {
+    throw new Error("Invalid Chapa return URL");
+  }
+  if (!returnUrl.pathname || returnUrl.pathname === "/") {
+    returnUrl.pathname = "/payments/chapa/return";
+  }
+  returnUrl.searchParams.set("reference", params.merchantReference);
 
   const amountMajor = Math.max(1, Math.round(params.amountCents / 100));
   const phone = normalizeEthiopianPhone(params.phone) || params.phone;
@@ -217,7 +229,7 @@ export async function initializeChapaCheckout(
     phone_number: phone,
     tx_ref: params.merchantReference,
     callback_url: callbackUrl,
-    return_url: returnUrl,
+    return_url: returnUrl.toString(),
     customization: {
       title: safeTitle,
       description: `${params.planName} pass`.slice(0, 100),

@@ -304,6 +304,14 @@ export const Profile: React.FC<{ initialSection?: ProfileSection }> = ({ initial
   // Payment State
   const [isViewingPaymentMethods, setIsViewingPaymentMethods] = useState(false);
   const [selectedPlanForPayment, setSelectedPlanForPayment] = useState<any>(null);
+  const [chapaPendingReference, setChapaPendingReference] = useState<string | null>(() => {
+    try {
+      return sessionStorage.getItem(CHAPA_PENDING_KEY);
+    } catch {
+      return null;
+    }
+  });
+  const chapaPopupRef = useRef<Window | null>(null);
   const [usdToTonRate, setUsdToTonRate] = useState(DEFAULT_USD_TO_TON_RATE);
   const [chapaConfig, setChapaConfig] = useState<any>(null);
   const [pricing, setPricing] = useState<PricingPayload | null>(null);
@@ -385,16 +393,17 @@ export const Profile: React.FC<{ initialSection?: ProfileSection }> = ({ initial
     };
   }, [initData]);
 
-  // Chapa redirects back to the app; verify the stored reference on focus and
-  // while the app stays open so the plan updates even without a webhook.
+  // Keep verifying in the app window while Chapa runs separately. The popup
+  // message only prompts an authenticated server verification; it never grants credits.
   useEffect(() => {
-    const pendingRef = sessionStorage.getItem(CHAPA_PENDING_KEY);
+    const pendingRef = chapaPendingReference;
     if (!pendingRef) return;
 
     const startedAt = Number(sessionStorage.getItem(CHAPA_PENDING_TS_KEY) || 0);
     if (startedAt && Date.now() - startedAt > CHAPA_PENDING_MAX_AGE_MS) {
       sessionStorage.removeItem(CHAPA_PENDING_KEY);
       sessionStorage.removeItem(CHAPA_PENDING_TS_KEY);
+      setChapaPendingReference(null);
       return;
     }
 
@@ -412,6 +421,8 @@ export const Profile: React.FC<{ initialSection?: ProfileSection }> = ({ initial
         if (['failed', 'cancelled', 'incomplete', 'expired'].includes(String(data?.status || ''))) {
           sessionStorage.removeItem(CHAPA_PENDING_KEY);
           sessionStorage.removeItem(CHAPA_PENDING_TS_KEY);
+          setChapaPendingReference(null);
+          chapaPopupRef.current = null;
           cancelled = true;
           showAlert('The Chapa payment was not completed.');
           return;
@@ -420,9 +431,13 @@ export const Profile: React.FC<{ initialSection?: ProfileSection }> = ({ initial
 
         sessionStorage.removeItem(CHAPA_PENDING_KEY);
         sessionStorage.removeItem(CHAPA_PENDING_TS_KEY);
+        setChapaPendingReference(null);
+        chapaPopupRef.current = null;
         cancelled = true;
         if (typeof data.userPlan === 'string') updatePlan(data.userPlan as any);
-        if (Number.isFinite(Number(data.credits))) updateCredits(Number(data.credits));
+        if (data.credits !== null && data.credits !== undefined && Number.isFinite(Number(data.credits))) {
+          updateCredits(Number(data.credits));
+        }
         showAlert('Payment received! Your plan is now active.');
       } catch {
         // Keep polling; transient network errors are expected in the mini app.
@@ -432,7 +447,13 @@ export const Profile: React.FC<{ initialSection?: ProfileSection }> = ({ initial
     const onFocus = () => {
       void checkPayment();
     };
+    const onMessage = (event: MessageEvent) => {
+      if (event.origin !== window.location.origin || event.source !== chapaPopupRef.current) return;
+      if (event.data?.type !== 'flashai:chapa-return' || event.data?.reference !== pendingRef) return;
+      void checkPayment();
+    };
     window.addEventListener('focus', onFocus);
+    window.addEventListener('message', onMessage);
     const interval = window.setInterval(() => {
       void checkPayment();
     }, 15000);
@@ -441,9 +462,10 @@ export const Profile: React.FC<{ initialSection?: ProfileSection }> = ({ initial
     return () => {
       cancelled = true;
       window.removeEventListener('focus', onFocus);
+      window.removeEventListener('message', onMessage);
       window.clearInterval(interval);
     };
-  }, [initData, updateCredits, updatePlan]);
+  }, [chapaPendingReference, initData, updateCredits, updatePlan]);
 
   useEffect(() => {
     if (!isViewingLegal) return;
@@ -928,12 +950,26 @@ export const Profile: React.FC<{ initialSection?: ProfileSection }> = ({ initial
     hapticFeedback('medium');
     if (!selectedPlanForPayment || !user) return;
 
+    // Open synchronously inside the click handler so browser popup blockers
+    // do not reject it after the initialize request has awaited the network.
+    const usesTelegramExternalBrowser = Boolean(tg?.openLink);
+    const checkoutWindow = usesTelegramExternalBrowser ? null : window.open('about:blank', '_blank');
+    if (!usesTelegramExternalBrowser && !checkoutWindow) {
+      showAlert('Please allow pop-ups for Flash AI to open secure Chapa checkout in a separate window.');
+      return;
+    }
+    if (checkoutWindow) {
+      checkoutWindow.document.open();
+      checkoutWindow.document.write('<!doctype html><title>Flash AI checkout</title><body style="margin:0;background:#09090b;color:#fafafa;font:16px system-ui;display:grid;place-items:center;min-height:100vh"><p>Preparing your secure Chapa checkout…</p></body>');
+      checkoutWindow.document.close();
+    }
+
     const effectiveInitData = initData || (window as any)?.Telegram?.WebApp?.initData || '';
     try {
       setPaymentProcessing({
         isLoading: true,
         title: 'Opening Chapa checkout',
-        detail: 'Redirecting to secure Ethiopian payment...',
+        detail: 'Preparing secure Ethiopian payment...',
       });
 
       const response = await fetch('/api/payments/chapa/initialize', {
@@ -950,6 +986,7 @@ export const Profile: React.FC<{ initialSection?: ProfileSection }> = ({ initial
       const data = await response.json().catch(() => ({}));
 
       if (!response.ok) {
+        checkoutWindow?.close();
         if (data?.code === 'CHAPA_PHONE_INELIGIBLE') {
           showAlert('Chapa is available for Ethiopian phone numbers only.');
           return;
@@ -962,18 +999,28 @@ export const Profile: React.FC<{ initialSection?: ProfileSection }> = ({ initial
       }
 
       if (!data.checkoutUrl) throw new Error('No checkout URL returned');
+      if (!data.reference) throw new Error('No payment reference returned');
 
-      if (data.reference) {
-        sessionStorage.setItem(CHAPA_PENDING_KEY, String(data.reference));
-        sessionStorage.setItem(CHAPA_PENDING_TS_KEY, String(Date.now()));
+      const reference = String(data.reference);
+      if (!usesTelegramExternalBrowser && (!checkoutWindow || checkoutWindow.closed)) {
+        showAlert('The checkout window was closed before it opened. Your payment has not been started; please try again.');
+        return;
       }
-      if (tg?.openLink) {
-        tg.openLink(data.checkoutUrl);
-      } else {
-        window.open(data.checkoutUrl, '_blank');
+
+      sessionStorage.setItem(CHAPA_PENDING_KEY, reference);
+      sessionStorage.setItem(CHAPA_PENDING_TS_KEY, String(Date.now()));
+      setChapaPendingReference(reference);
+
+      if (usesTelegramExternalBrowser) {
+        // Telegram opens an external browser without exposing a closable window handle.
+        tg!.openLink!(data.checkoutUrl);
+      } else if (checkoutWindow) {
+        chapaPopupRef.current = checkoutWindow;
+        checkoutWindow.location.replace(data.checkoutUrl);
       }
-      showAlert('Complete the payment in Chapa. Your plan will activate automatically.');
+      showAlert('Complete the payment in Chapa. This window will stay open and update when your payment is confirmed.');
     } catch (e: any) {
+      checkoutWindow?.close();
       console.error('Chapa payment error:', e);
       showAlert('Failed to initiate payment: ' + (e.message || 'Unknown error'));
     } finally {

@@ -3,6 +3,10 @@
     {
       "source": "/api/:path*",
       "destination": "https://flashai-siuj.onrender.com/api/:path*"
+    },
+    {
+      "source": "/payments/chapa/return",
+      "destination": "https://flashai-siuj.onrender.com/payments/chapa/return"
     }
   ]
 }
