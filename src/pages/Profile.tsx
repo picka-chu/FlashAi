@@ -1830,7 +1830,7 @@ export const Profile: React.FC<{ initialSection?: ProfileSection }> = ({ initial
                     <div className="text-left">
                       <p className="text-base font-black text-white">Chapa</p>
                       <p className="text-xs font-semibold text-zinc-400">
-                        {Number(selectedChapaPrice.etb).toLocaleString()} ETB • Telebirr, CBE Birr & cards
+                        {Number(selectedChapaPrice.etb).toLocaleString()} ETB • {chapaConfig?.inlineAvailable ? 'Telebirr, CBE Birr, Ebirr & M-Pesa in-app' : 'Telebirr, CBE Birr & cards'}
                       </p>
                     </div>
                   </div>
