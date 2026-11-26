@@ -4,7 +4,7 @@ on:
   pull_request:
     branches: [main]
   push:
-    branches: [main, "fix/**"]
+    branches: [main, "fix/**", "codex/**"]
 
 permissions:
   contents: read
@@ -16,7 +16,7 @@ concurrency:
 jobs:
   validate:
     runs-on: ubuntu-latest
-    timeout-minutes: 20
+    timeout-minutes: 25
     steps:
       - name: Check out repository
         uses: actions/checkout@v4
@@ -24,7 +24,7 @@ jobs:
       - name: Set up Node.js
         uses: actions/setup-node@v4
         with:
-          node-version: 20
+          node-version: 24
           cache: npm
 
       - name: Install dependencies
@@ -35,3 +35,12 @@ jobs:
 
       - name: Build frontend
         run: npm run build
+
+      - name: Build production container
+        run: |
+          docker build \
+            --build-arg VITE_SUPABASE_URL=${{ vars.VITE_SUPABASE_URL }} \
+            --build-arg VITE_SUPABASE_ANON_KEY=${{ vars.VITE_SUPABASE_ANON_KEY }} \
+            --build-arg VITE_TELEGRAM_BOT_USERNAME=${{ vars.VITE_TELEGRAM_BOT_USERNAME }} \
+            --build-arg VITE_USD_TO_TON_RATE=0.23 \
+            -t flash-ai:ci .

@@ -78,6 +78,10 @@ serves the built frontend from `dist/`.
   (`{"job":"morning_brief","dryRun":true}`). `GET /api/admin/ai/status` reports
   whether Gemini keys are visible to the running server.
 
+## Production launch gate
+
+Before inviting users, complete the [production launch checklist](./PRODUCTION_CHECKLIST.md). In particular, the Render Blueprint remains on the free plan until the owner explicitly chooses a paid always-on plan, and all live credentials, database migrations, Telegram settings, and payment webhooks must be verified in their provider dashboards.
+
 ## Security notes
 
 - All backend secrets stay server-side. Only `VITE_*` values are shipped to the
