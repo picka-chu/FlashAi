@@ -167,7 +167,7 @@ export async function verifyChapaTransaction(reference: string): Promise<ChapaVe
     status,
     amountCents,
     currency: String(data?.currency || "").toUpperCase(),
-    merchantReference: String(data?.tx_ref || data?.merchant_reference || reference || ""),
+    merchantReference: String(data?.tx_ref || data?.merchant_reference || ""),
     chapaReference: String(data?.reference || data?.ref_id || data?.chapa_reference || ""),
   };
 }
