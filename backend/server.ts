@@ -1561,7 +1561,7 @@ function isPrivateTelegramInvite(taskUrl: string): boolean {
       "Content-Security-Policy",
       [
         "default-src 'self'",
-        "script-src 'self' 'unsafe-inline' https://*.telegram.org https://telegram.org",
+        "script-src 'self' 'unsafe-inline' https://*.telegram.org https://telegram.org https://js.chapa.co",
         "style-src 'self' 'unsafe-inline' https://fonts.googleapis.com",
         "img-src 'self' data: blob: https:",
         [
@@ -1569,6 +1569,7 @@ function isPrivateTelegramInvite(taskUrl: string): boolean {
           "https://*.supabase.co",
           "https://api.telegram.org",
           "https://api.coingecko.com",
+          "https://inline.chapaservices.net",
           "https://toncenter.com",
           "https://*.tonconnect.io wss://*.tonconnect.io",
           "https://*.tonapi.io wss://*.tonapi.io",
@@ -3837,6 +3838,23 @@ function isPrivateTelegramInvite(taskUrl: string): boolean {
         .select("id")
         .single();
       if (insertError) throw insertError;
+
+      // Chapa's official legacy Inline.js direct-charge integration keeps
+      // wallet payment collection inside Flash AI. The public key is safe to
+      // expose; all prices and fulfillment remain server-authoritative.
+      const inlinePublicKey = String(process.env.CHAPA_PUBLIC_KEY || "")
+        .trim()
+        .replace(/^["']+|["']+$/g, "")
+        .trim();
+      if (body?.mode === "inline" && inlinePublicKey) {
+        return c.json({
+          inline: true,
+          publicKey: inlinePublicKey,
+          reference: merchantReference,
+          amountEtb: planPrice.etb,
+          currency: "ETB",
+        });
+      }
 
       const nameParts = String(userRow?.name || tgUser.username || "Flash User").trim().split(/\s+/);
       const firstName = nameParts[0] || "Flash";
