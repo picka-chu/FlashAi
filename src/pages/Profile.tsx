@@ -314,6 +314,13 @@ export const Profile: React.FC<{ initialSection?: ProfileSection }> = ({ initial
   const chapaPopupRef = useRef<Window | null>(null);
   const [usdToTonRate, setUsdToTonRate] = useState(DEFAULT_USD_TO_TON_RATE);
   const [chapaConfig, setChapaConfig] = useState<any>(null);
+  const [chapaInlineConfig, setChapaInlineConfig] = useState<{
+    publicKey: string;
+    reference: string;
+    amountEtb: number;
+    currency: string;
+  } | null>(null);
+  const [chapaVerificationSignal, setChapaVerificationSignal] = useState(0);
   const [pricing, setPricing] = useState<PricingPayload | null>(null);
   const [paymentMethods, setPaymentMethods] = useState<PaymentMethodsPayload | null>(null);
 
@@ -404,6 +411,7 @@ export const Profile: React.FC<{ initialSection?: ProfileSection }> = ({ initial
       sessionStorage.removeItem(CHAPA_PENDING_KEY);
       sessionStorage.removeItem(CHAPA_PENDING_TS_KEY);
       setChapaPendingReference(null);
+      setChapaInlineConfig(null);
       return;
     }
 
@@ -422,6 +430,7 @@ export const Profile: React.FC<{ initialSection?: ProfileSection }> = ({ initial
           sessionStorage.removeItem(CHAPA_PENDING_KEY);
           sessionStorage.removeItem(CHAPA_PENDING_TS_KEY);
           setChapaPendingReference(null);
+          setChapaInlineConfig(null);
           chapaPopupRef.current = null;
           cancelled = true;
           showAlert('The Chapa payment was not completed.');
@@ -432,6 +441,7 @@ export const Profile: React.FC<{ initialSection?: ProfileSection }> = ({ initial
         sessionStorage.removeItem(CHAPA_PENDING_KEY);
         sessionStorage.removeItem(CHAPA_PENDING_TS_KEY);
         setChapaPendingReference(null);
+        setChapaInlineConfig(null);
         chapaPopupRef.current = null;
         cancelled = true;
         if (typeof data.userPlan === 'string') updatePlan(data.userPlan as any);
@@ -465,7 +475,85 @@ export const Profile: React.FC<{ initialSection?: ProfileSection }> = ({ initial
       window.removeEventListener('message', onMessage);
       window.clearInterval(interval);
     };
-  }, [chapaPendingReference, initData, updateCredits, updatePlan]);
+  }, [chapaPendingReference, chapaVerificationSignal, initData, updateCredits, updatePlan]);
+
+  // Chapa's official Inline.js keeps supported wallet payment collection
+  // inside this Telegram Mini App. Its browser callback only triggers our
+  // authenticated backend verification; it never grants access by itself.
+  useEffect(() => {
+    if (!chapaInlineConfig) return;
+    let disposed = false;
+    let activeScript: HTMLScriptElement | null = null;
+    const initializeInlineCheckout = () => {
+      if (disposed) return;
+      const ChapaCheckout = (window as any).ChapaCheckout;
+      if (typeof ChapaCheckout !== 'function') {
+        showAlert('Chapa in-app checkout could not load. Please try again.');
+        return;
+      }
+      try {
+        const checkout = new ChapaCheckout({
+          publicKey: chapaInlineConfig.publicKey,
+          amount: String(chapaInlineConfig.amountEtb),
+          currency: chapaInlineConfig.currency,
+          tx_ref: chapaInlineConfig.reference,
+          availablePaymentMethods: ['telebirr', 'cbebirr', 'ebirr', 'mpesa'],
+          showFlag: true,
+          showPaymentMethodsNames: true,
+          customizations: {
+            buttonText: 'Pay securely',
+            successMessage: 'Payment submitted. Flash AI is confirming it securely.',
+            styles: `
+              .chapa-pay-button { background:#ccff00 !important; color:#09090b !important; border-radius:14px !important; font-weight:800 !important; }
+              .chapa-phone-input-wrapper { background:#18181b !important; border-color:#3f3f46 !important; }
+              .chapa-phone-input { background:transparent !important; color:#fff !important; }
+              .chapa-payment-method { background:#18181b !important; border-color:#3f3f46 !important; color:#fff !important; }
+              .chapa-payment-name { color:#fff !important; }
+            `,
+          },
+          onSuccessfulPayment: () => {
+            setChapaVerificationSignal((value) => value + 1);
+          },
+          onPaymentFailure: (message: any) => {
+            showAlert(`Chapa could not complete the payment: ${String(message || 'Please try again.')}`);
+          },
+        });
+        checkout.initialize('flashai-chapa-inline-form');
+      } catch (error) {
+        console.error('Chapa Inline.js initialization failed:', error);
+        showAlert('Chapa in-app checkout could not start. Please try again.');
+      }
+    };
+
+    if (typeof (window as any).ChapaCheckout === 'function') {
+      initializeInlineCheckout();
+    } else {
+      const existingScript = document.querySelector('script[data-flashai-chapa-inline]') as HTMLScriptElement | null;
+      activeScript = existingScript || document.createElement('script');
+      const onLoad = () => initializeInlineCheckout();
+      const onError = () => {
+        if (!disposed) showAlert('Chapa payment tools could not load. Check your connection and try again.');
+      };
+      activeScript.addEventListener('load', onLoad);
+      activeScript.addEventListener('error', onError);
+      if (!existingScript) {
+        activeScript.src = 'https://js.chapa.co/v1/inline.js';
+        activeScript.async = true;
+        activeScript.dataset.flashaiChapaInline = 'true';
+        document.head.appendChild(activeScript);
+      }
+    }
+
+    return () => {
+      disposed = true;
+      if (activeScript) {
+        activeScript.removeEventListener('load', initializeInlineCheckout);
+        activeScript.removeEventListener('error', () => undefined);
+      }
+      const container = document.getElementById('flashai-chapa-inline-form');
+      if (container) container.innerHTML = '';
+    };
+  }, [chapaInlineConfig]);
 
   useEffect(() => {
     if (!isViewingLegal) return;
@@ -950,17 +1038,17 @@ export const Profile: React.FC<{ initialSection?: ProfileSection }> = ({ initial
     hapticFeedback('medium');
     if (!selectedPlanForPayment || !user) return;
 
-    // Open synchronously inside the click handler so browser popup blockers
-    // do not reject it after the initialize request has awaited the network.
+    // Reserve a blank tab only for the hosted-checkout fallback. The inline
+    // integration stays in this app and closes the reservation immediately.
     const usesTelegramExternalBrowser = Boolean(tg?.openLink);
     const checkoutWindow = usesTelegramExternalBrowser ? null : window.open('about:blank', '_blank');
     if (!usesTelegramExternalBrowser && !checkoutWindow) {
-      showAlert('Please allow pop-ups for Flash AI to open secure Chapa checkout in a separate window.');
+      showAlert('Please allow pop-ups so the secure hosted checkout remains available as a fallback.');
       return;
     }
     if (checkoutWindow) {
       checkoutWindow.document.open();
-      checkoutWindow.document.write('<!doctype html><title>Flash AI checkout</title><body style="margin:0;background:#09090b;color:#fafafa;font:16px system-ui;display:grid;place-items:center;min-height:100vh"><p>Preparing your secure Chapa checkout…</p></body>');
+      checkoutWindow.document.write('<!doctype html><title>Flash AI checkout</title><body style="margin:0;background:#09090b;color:#fafafa;font:16px system-ui;display:grid;place-items:center;min-height:100vh"><p>Preparing secure payment…</p></body>');
       checkoutWindow.document.close();
     }
 
@@ -968,8 +1056,8 @@ export const Profile: React.FC<{ initialSection?: ProfileSection }> = ({ initial
     try {
       setPaymentProcessing({
         isLoading: true,
-        title: 'Opening Chapa checkout',
-        detail: 'Preparing secure Ethiopian payment...',
+        title: 'Preparing secure payment',
+        detail: 'Checking the available Chapa checkout options...',
       });
 
       const response = await fetch('/api/payments/chapa/initialize', {
@@ -981,6 +1069,7 @@ export const Profile: React.FC<{ initialSection?: ProfileSection }> = ({ initial
         body: JSON.stringify({
           telegramId: user.telegram_id,
           planId: selectedPlanForPayment.id,
+          mode: 'inline',
         }),
       });
       const data = await response.json().catch(() => ({}));
@@ -998,10 +1087,29 @@ export const Profile: React.FC<{ initialSection?: ProfileSection }> = ({ initial
         throw new Error(data?.error || 'Failed to create Chapa checkout');
       }
 
-      if (!data.checkoutUrl) throw new Error('No checkout URL returned');
       if (!data.reference) throw new Error('No payment reference returned');
-
       const reference = String(data.reference);
+
+      if (data.inline === true) {
+        checkoutWindow?.close();
+        if (!data.publicKey || !Number.isFinite(Number(data.amountEtb)) || Number(data.amountEtb) <= 0) {
+          throw new Error('Chapa returned an incomplete in-app payment configuration.');
+        }
+        sessionStorage.setItem(CHAPA_PENDING_KEY, reference);
+        sessionStorage.setItem(CHAPA_PENDING_TS_KEY, String(Date.now()));
+        setChapaPendingReference(reference);
+        setChapaVerificationSignal((value) => value + 1);
+        setChapaInlineConfig({
+          publicKey: String(data.publicKey),
+          reference,
+          amountEtb: Number(data.amountEtb),
+          currency: String(data.currency || 'ETB'),
+        });
+        showAlert('Complete your payment here in Flash AI. Your plan activates only after our server verifies the transaction with Chapa.');
+        return;
+      }
+
+      if (!data.checkoutUrl) throw new Error('No secure checkout URL returned');
       if (!usesTelegramExternalBrowser && (!checkoutWindow || checkoutWindow.closed)) {
         showAlert('The checkout window was closed before it opened. Your payment has not been started; please try again.');
         return;
@@ -1012,13 +1120,12 @@ export const Profile: React.FC<{ initialSection?: ProfileSection }> = ({ initial
       setChapaPendingReference(reference);
 
       if (usesTelegramExternalBrowser) {
-        // Telegram opens an external browser without exposing a closable window handle.
         tg!.openLink!(data.checkoutUrl);
       } else if (checkoutWindow) {
         chapaPopupRef.current = checkoutWindow;
         checkoutWindow.location.replace(data.checkoutUrl);
       }
-      showAlert('Complete the payment in Chapa. This window will stay open and update when your payment is confirmed.');
+      showAlert('Complete the payment in Chapa. Flash AI will update your plan after server-side verification.');
     } catch (e: any) {
       checkoutWindow?.close();
       console.error('Chapa payment error:', e);
@@ -1742,6 +1849,36 @@ export const Profile: React.FC<{ initialSection?: ProfileSection }> = ({ initial
               </button>
             </div>
           </div>
+
+          {chapaInlineConfig && (
+            <div className="fixed inset-0 z-[160] bg-black/95 backdrop-blur-xl flex items-center justify-center px-4 py-6">
+              <div className="w-full max-w-md max-h-full overflow-y-auto rounded-[28px] border border-zinc-800 bg-zinc-950 p-5 shadow-2xl">
+                <div className="flex items-start justify-between gap-4 mb-4">
+                  <div>
+                    <p className="text-[10px] font-black uppercase tracking-[0.2em] text-emerald-400">Secure Chapa checkout</p>
+                    <h2 className="mt-1 text-xl font-black text-white">Pay inside Flash AI</h2>
+                    <p className="mt-1 text-xs text-zinc-400">
+                      {Number(chapaInlineConfig.amountEtb).toLocaleString()} {chapaInlineConfig.currency}
+                    </p>
+                  </div>
+                  <button
+                    type="button"
+                    onClick={() => setChapaInlineConfig(null)}
+                    className="rounded-full border border-zinc-700 p-2 text-zinc-300 hover:bg-zinc-800"
+                    aria-label="Close Chapa checkout"
+                  >
+                    <X className="h-4 w-4" />
+                  </button>
+                </div>
+                <div id="flashai-chapa-inline-form" className="min-h-[190px]" />
+                <div className="mt-4 rounded-2xl border border-zinc-800 bg-zinc-900/70 p-3">
+                  <p className="text-[11px] leading-relaxed text-zinc-400">
+                    Your payment is processed by Chapa. Flash AI checks the transaction directly with Chapa before activating your plan. Never share your OTP or PIN with anyone.
+                  </p>
+                </div>
+              </div>
+            </div>
+          )}
 
           {paymentProcessing.isLoading && (
             <div className="fixed inset-0 z-[140] bg-black/80 backdrop-blur-sm flex items-center justify-center px-6">
