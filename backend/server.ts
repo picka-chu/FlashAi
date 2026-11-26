@@ -1315,14 +1315,30 @@ function isPrivateTelegramInvite(taskUrl: string): boolean {
     let phone: string | null = null;
 
     if (tgUser?.id) {
-      const { data, error } = await supabase
-        .from("users")
-        .select("country_code, phone")
-        .eq("telegram_id", tgUser.id)
-        .maybeSingle();
-      if (error) console.error("Country lookup error:", error.message);
-      override = data?.country_code ?? null;
-      phone = data?.phone ?? null;
+      let userRow: any = null;
+      let userError: any = null;
+      try {
+        ({ data: userRow, error: userError } = await supabase
+          .from("users")
+          .select("country_code, phone")
+          .eq("telegram_id", tgUser.id)
+          .maybeSingle());
+        // If the country_code column doesn't exist yet (migration not applied),
+        // fall back to selecting just phone so the rest of the app keeps working.
+        if (userError && /column users\.country_code does not exist/i.test(userError.message || "")) {
+          ({ data: userRow, error: userError } = await supabase
+            .from("users")
+            .select("phone")
+            .eq("telegram_id", tgUser.id)
+            .maybeSingle());
+        }
+      } catch {
+        userRow = null;
+        userError = null;
+      }
+      if (userError) console.error("Country lookup error:", userError.message);
+      override = userRow?.country_code ?? null;
+      phone = userRow?.phone ?? null;
     }
 
     return resolveCountry({
@@ -1361,6 +1377,11 @@ function isPrivateTelegramInvite(taskUrl: string): boolean {
       .update({ country_code: country })
       .eq("telegram_id", tgUser.id);
     if (error) {
+      // country_code column may not exist yet (migration not applied).
+      // Country is still resolved from phone/IP/language, so this is non-fatal.
+      if (/column users\.country_code does not exist/i.test(error.message || "")) {
+        return c.json({ country, currency: getMarket(country).currency, note: "country_code column pending migration" });
+      }
       console.error("Country save error:", error.message);
       return c.json({ error: "Could not save country" }, 500);
     }
@@ -2881,9 +2902,10 @@ function isPrivateTelegramInvite(taskUrl: string): boolean {
         isAdminUser = Boolean(isBootstrapAdmin || existingUser?.role === "admin");
 
         const payloadReferrer =
-          startPayload && !isNaN(Number(startPayload)) && Number(startPayload) !== telegramId
-            ? Number(startPayload)
+          startPayload
+            ? Number(String(startPayload).replace(/^ref_/, ''))
             : null;
+        const cleanReferrer = Number.isFinite(payloadReferrer) && payloadReferrer !== telegramId ? payloadReferrer : null;
 
         const profilePhoto = await getTelegramProfilePhotoUrl(telegramId, bot);
         await supabase.from("users").upsert({
@@ -2893,7 +2915,7 @@ function isPrivateTelegramInvite(taskUrl: string): boolean {
           photo_url: profilePhoto || null,
           // Never clear or replace an existing referrer (a plain /start has no
           // payload; an old referral link must not be re-attributed later).
-          referrer_id: existingUser?.referrer_id ?? payloadReferrer,
+          referrer_id: existingUser?.referrer_id ?? cleanReferrer,
           role: isAdminUser ? 'admin' : 'user',
           last_active: new Date().toISOString()
         }, { onConflict: 'telegram_id' });
@@ -3426,7 +3448,7 @@ function isPrivateTelegramInvite(taskUrl: string): boolean {
         const rewardAmount = Number(transaction?.amount || 0);
         return total + (Number.isFinite(rewardAmount) ? rewardAmount : 0);
       }, 0);
-      const referralLink = `https://t.me/${botUsername}?start=${tgUser.id}`;
+      const referralLink = `https://t.me/${botUsername}?startapp=ref_${tgUser.id}`;
 
       return c.json({
         totalReferred,

@@ -69,7 +69,7 @@ export const SignUpSheet: React.FC<SignUpSheetProps> = ({ isOpen, onClose }) => 
   const openLegalDocument = (type: 'privacy' | 'terms') => {
     hapticFeedback('light');
     const botUsername = (import.meta.env.VITE_TELEGRAM_BOT_USERNAME || 'FlashAiBot').replace('@', '');
-    tg?.openTelegramLink?.(`https://t.me/${botUsername}`);
+    tg?.openLink?.(`https://t.me/${botUsername}`);
   };
 
   return (
