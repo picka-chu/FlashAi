@@ -89,10 +89,10 @@ console.log("✅ Supabase service role key initialized for backend operations.")
 
 const PLAN_CREDITS: Record<string, number> = {
   free: 3,
-  day_pass: 10,
-  weekly: 50,
-  monthly_basic: 150,
-  monthly_pro: 300,
+  day_pass: 1,
+  weekly: 6,
+  monthly_basic: 16,
+  monthly_pro: 31,
   // Credit packs just add credits - no daily reset, plan stays the same
   credits_20: 20,
   credits_50: 50,
@@ -110,12 +110,11 @@ const PLAN_PRICE_USD: Record<string, number> = {
   weekly: 2.99,
   monthly_basic: 6.99,
   monthly_pro: 12.99,
-  credits_20: 1.99,
-  credits_50: 4.99,
-  credits_100: 8.99,
-  credits_250: 19.99,
+  credits_20: 9,
+  credits_50: 22,
+  credits_100: 44,
+  credits_250: 110,
 };
-const USD_TO_STARS_RATE = 50;
 const PAID_PLANS = new Set([
   "day_pass",
   "weekly",
@@ -1464,11 +1463,16 @@ function isPrivateTelegramInvite(taskUrl: string): boolean {
   });
 
   const getPlanUsdPrice = (planId: string): number => PLAN_PRICE_USD[String(planId || "").trim()] || 0;
-  const getExpectedStarsAmount = (planId: string): number => PLAN_PRICE_STARS[String(planId || "").trim()] || Math.ceil(getPlanUsdPrice(planId) * USD_TO_STARS_RATE);
-  const getExpectedTonAmount = (planId: string, tonPerUsdRate: number): number => {
-    const normalizedPlanId = String(planId || "").trim();
-    const usd = getPlanUsdPrice(normalizedPlanId);
-    if (usd && Number.isFinite(tonPerUsdRate) && tonPerUsdRate > 0) {
+  // Stars are pass-only; never derive a top-up price from a USD fallback.
+  const getExpectedStarsAmount = (planId: string): number => PLAN_PRICE_STARS[String(planId || "").trim()] || 0;
+  const getExpectedTonAmount = (planId: string, tonPerUsdRate: number, country: string = "GLOBAL"): number => {
+    const offer = getOffer(country, String(planId || "").trim());
+    const market = getMarket(country);
+    const amount = offer ? offer.priceMinor / 100 : 0;
+    const usd = offer
+      ? (offer.currency === "USD" ? amount : amount / market.usdRate)
+      : getPlanUsdPrice(planId);
+    if (usd > 0 && Number.isFinite(tonPerUsdRate) && tonPerUsdRate > 0) {
       return Number((usd * tonPerUsdRate).toFixed(2));
     }
     return 0;
@@ -1937,11 +1941,12 @@ function isPrivateTelegramInvite(taskUrl: string): boolean {
   // --- PLAN LIMITS CONFIG ---
   // Updated to match frontend UI promises and professional tier structure
   const PLAN_CONFIG: Record<string, { dailyCredits: number; name: string }> = {
-    free: { dailyCredits: 1, name: "Free" },
-    day_pass: { dailyCredits: 2, name: "Match Day Pass" },
-    weekly: { dailyCredits: 2, name: "7-Day Pass" },
-    monthly_basic: { dailyCredits: 2, name: "30-Day Basic" },
-    monthly_pro: { dailyCredits: 4, name: "30-Day Pro" },
+    free: { dailyCredits: 3, name: "Free trial" },
+    // Paid passes are finite pools; no daily replenishment is granted.
+    day_pass: { dailyCredits: 0, name: "Match Day Pass" },
+    weekly: { dailyCredits: 0, name: "7-Day Pass" },
+    monthly_basic: { dailyCredits: 0, name: "30-Day Basic" },
+    monthly_pro: { dailyCredits: 0, name: "30-Day Pro" },
     admin: { dailyCredits: 999, name: "Administrator" }
   };
 
@@ -1954,9 +1959,16 @@ function isPrivateTelegramInvite(taskUrl: string): boolean {
     const now = new Date();
     const planExpiresAt = userData.plan_expires_at ? new Date(userData.plan_expires_at) : null;
     let effectivePlan = userData.plan || "free";
+    let passExpired = false;
 
-    // Auto-downgrade expired subscriptions (all paid tiers, not just the
-    // current monthly names).
+    // A credit pack is a top-up, not an entitlement. Normalize legacy rows.
+    if (/^credits_(20|50|100|250)$/.test(effectivePlan)) {
+      effectivePlan = "free";
+      await supabase.from("users").update({ plan: "free" }).eq("telegram_id", userData.telegram_id);
+    }
+
+    // On pass expiry, discard unused pass credits but preserve the remaining
+    // purchased top-up sub-balance. Consumption keeps the two balances aligned.
     if (
       effectivePlan !== "free" &&
       effectivePlan !== "admin" &&
@@ -1964,14 +1976,19 @@ function isPrivateTelegramInvite(taskUrl: string): boolean {
       planExpiresAt.getTime() <= now.getTime()
     ) {
       effectivePlan = "free";
+      passExpired = true;
+      const packBalance = Math.min(Number(userData.credit_balance || 0), Number(userData.credits || 0));
       const { error: downgradeError } = await supabase
         .from("users")
-        .update({ plan: "free", plan_expires_at: null, last_active: now.toISOString() })
+        .update({
+          plan: "free",
+          plan_expires_at: null,
+          credits: packBalance,
+          last_credit_reset: now.toISOString(),
+          last_active: now.toISOString(),
+        })
         .eq("telegram_id", userData.telegram_id);
-      
-      if (downgradeError) {
-        console.error("Subscription downgrade error:", downgradeError.message);
-      }
+      if (downgradeError) console.error("Subscription downgrade error:", downgradeError.message);
     }
 
     const lastCreditReset = userData.last_credit_reset ? new Date(userData.last_credit_reset) : null;
@@ -1979,9 +1996,10 @@ function isPrivateTelegramInvite(taskUrl: string): boolean {
     // Reset once per calendar day in the configured timezone (matches the
     // scheduled reset service instead of using a rolling 24h window).
     const shouldReset =
-      !lastCreditReset || getCreditDateKey(lastCreditReset) < getCreditDateKey(now);
+      passExpired || !lastCreditReset || getCreditDateKey(lastCreditReset) < getCreditDateKey(now);
 
-    let currentCredits = Number(userData.credits || 0);
+    const packBalance = Math.min(Number(userData.credit_balance || 0), Number(userData.credits || 0));
+    let currentCredits = passExpired ? packBalance : Number(userData.credits || 0);
     const plan = effectivePlan;
     const config = PLAN_CONFIG[plan] || PLAN_CONFIG.free;
     let dailyQuota = config.dailyCredits;
@@ -1993,6 +2011,8 @@ function isPrivateTelegramInvite(taskUrl: string): boolean {
       const isWithinFreeWindow = createdAt ? accountAgeMs <= (7 * 24 * 60 * 60 * 1000) : false;
       if (!isWithinFreeWindow) {
         dailyQuota = 0;
+        // Free-trial credits stop after day seven; purchased top-ups survive.
+        currentCredits = packBalance;
       }
     }
 
@@ -2196,15 +2216,22 @@ function isPrivateTelegramInvite(taskUrl: string): boolean {
       }
 
       // 3. Deduct Credits
+      const storedPackBalance = Number(user.credit_balance || 0);
+      const remainingPackBalance = Math.min(storedPackBalance, credits);
+      const passCredits = Math.max(0, credits - remainingPackBalance);
+      const packCost = Math.max(0, cost - passCredits);
       const { data: updatedUser, error: updateError } = await supabase
         .from("users")
-        .update({ 
+        .update({
           credits: credits - cost,
+          credit_balance: storedPackBalance - packCost,
           last_active: new Date().toISOString()
         })
         .eq("telegram_id", telegramId)
         .eq("credits", credits)
+        .eq("credit_balance", storedPackBalance)
         .gte("credits", cost)
+        .gte("credit_balance", packCost)
         .select("credits")
         .maybeSingle();
 
@@ -2350,15 +2377,22 @@ function isPrivateTelegramInvite(taskUrl: string): boolean {
       }
 
       // 3. Deduct Credits
+      const storedPackBalance = Number(user.credit_balance || 0);
+      const remainingPackBalance = Math.min(storedPackBalance, credits);
+      const passCredits = Math.max(0, credits - remainingPackBalance);
+      const packCost = Math.max(0, cost - passCredits);
       const { data: updatedUser, error: updateError } = await supabase
         .from("users")
-        .update({ 
+        .update({
           credits: credits - cost,
+          credit_balance: storedPackBalance - packCost,
           last_active: new Date().toISOString()
         })
         .eq("telegram_id", telegramId)
         .eq("credits", credits)
+        .eq("credit_balance", storedPackBalance)
         .gte("credits", cost)
+        .gte("credit_balance", packCost)
         .select("credits")
         .maybeSingle();
 
@@ -3681,7 +3715,7 @@ function isPrivateTelegramInvite(taskUrl: string): boolean {
       chapa: isChapaEnabled(),
       whop: WHOP_ENABLED,
       telegram_stars: true,
-      ton: true,
+      ton: country === "GLOBAL" || String(process.env.PRICING_V2_ENABLED || "").toLowerCase() === "true",
     };
 
     const methods = getPaymentMethods(country)
@@ -4413,8 +4447,9 @@ function isPrivateTelegramInvite(taskUrl: string): boolean {
         return c.json({ error: "Unsupported plan" }, 400);
       }
 
+      const resolved = await resolveRequestCountry(c);
       const tonPerUsdRate = await getTonPerUsdRate();
-      const tonAmount = getExpectedTonAmount(planId, tonPerUsdRate);
+      const tonAmount = getExpectedTonAmount(planId, tonPerUsdRate, resolved.country);
       if (!tonAmount) {
         return c.json({ error: "Unsupported plan for TON payment" }, 400);
       }

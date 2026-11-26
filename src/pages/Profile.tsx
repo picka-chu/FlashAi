@@ -77,12 +77,11 @@ const PLANS = [
     period: '1 day',
     interval: 'day' as const,
     durationDays: 1,
-    credits: 10,
-    dailyCap: 10,
+    credits: 1,
     icon: Zap,
     color: 'text-emerald-400',
     bgColor: 'bg-emerald-400/10',
-    features: ['10 credits • use all today or spread out', 'Safe + Value pick', 'AI chat after analysis', 'Nothing auto-renews'],
+    features: ['1 credit • valid for 1 day', 'Safe + Value pick', 'AI chat after analysis', 'Nothing auto-renews'],
     starsPrice: 30,
   },
   {
@@ -93,12 +92,11 @@ const PLANS = [
     period: '7 days',
     interval: 'week' as const,
     durationDays: 7,
-    credits: 50,
-    dailyCap: 15,
+    credits: 6,
     icon: Star,
     color: 'text-sky-400',
     bgColor: 'bg-sky-400/10',
-    features: ['50 credits • valid for 7 days', 'Up to 15 credits per day', 'Safe + Value picks', 'AI chat after analysis'],
+    features: ['6 credits • valid for 7 days', 'Use credits any time during the pass', 'Safe + Value picks', 'AI chat after analysis'],
     starsPrice: 95,
   },
   {
@@ -109,12 +107,11 @@ const PLANS = [
     period: '30 days',
     interval: 'month' as const,
     durationDays: 30,
-    credits: 150,
-    dailyCap: 20,
+    credits: 16,
     icon: ShieldCheck,
     color: 'text-[#ccff00]',
     bgColor: 'bg-[#ccff00]/10',
-    features: ['150 credits • valid for 30 days', 'Up to 20 credits per day', 'Safe + Value picks', 'AI chat after analysis', 'Renew manually - no card stored'],
+    features: ['16 credits • valid for 30 days', 'Use credits any time during the pass', 'Safe + Value picks', 'AI chat after analysis', 'Renew manually - no card stored'],
     starsPrice: 240,
     popular: true,
   },
@@ -126,77 +123,72 @@ const PLANS = [
     period: '30 days',
     interval: 'month' as const,
     durationDays: 30,
-    credits: 300,
-    dailyCap: 25,
+    credits: 31,
     icon: Crown,
     color: 'text-amber-400',
     bgColor: 'bg-amber-400/10',
-    features: ['300 credits • valid for 30 days', 'Up to 25 credits per day', 'Full board (2 Safe + 2 Value)', 'Bet-slip image analysis (up to 6 images)', 'Top-pick accumulator', 'Unlimited AI chat', 'Live match analysis'],
+    features: ['31 credits • valid for 30 days', 'Use credits any time during the pass', 'Full board (2 Safe + 2 Value)', 'Bet-slip image analysis (up to 6 images)', 'Top-pick accumulator', 'AI chat after analysis', 'Live match analysis'],
     starsPrice: 480,
   },
   // Standalone credit packs - no pass required, just top up your balance
   {
     id: 'credits_20',
     name: '20 Credit Pack',
-    usdPrice: 1.99,
-    price: '$1.99',
-    period: '90 days',
+    usdPrice: 9,
+    price: '$9.00',
+    period: 'No expiry',
     interval: 'credit_pack' as const,
-    durationDays: 90,
+    durationDays: 0,
     credits: 20,
-    dailyCap: 20,
     icon: Zap,
     color: 'text-sky-400',
     bgColor: 'bg-sky-400/10',
-    features: ['20 bonus credits', 'Valid for 90 days', 'Stacks with any pass'],
+    features: ['20 bonus credits', 'No expiry', 'Stacks with any pass'],
     starsPrice: 0,
   },
   {
     id: 'credits_50',
     name: '50 Credit Pack',
-    usdPrice: 4.99,
-    price: '$4.99',
-    period: '90 days',
+    usdPrice: 22,
+    price: '$22.00',
+    period: 'No expiry',
     interval: 'credit_pack' as const,
-    durationDays: 90,
+    durationDays: 0,
     credits: 50,
-    dailyCap: 20,
     icon: Zap,
     color: 'text-sky-400',
     bgColor: 'bg-sky-400/10',
-    features: ['50 bonus credits', 'Valid for 90 days', 'Stacks with any pass'],
+    features: ['50 bonus credits', 'No expiry', 'Stacks with any pass'],
     starsPrice: 0,
   },
   {
     id: 'credits_100',
     name: '100 Credit Pack',
-    usdPrice: 8.99,
-    price: '$8.99',
-    period: '90 days',
+    usdPrice: 44,
+    price: '$44.00',
+    period: 'No expiry',
     interval: 'credit_pack' as const,
-    durationDays: 90,
+    durationDays: 0,
     credits: 100,
-    dailyCap: 25,
     icon: ShieldCheck,
     color: 'text-[#ccff00]',
     bgColor: 'bg-[#ccff00]/10',
-    features: ['100 bonus credits', 'Valid for 90 days', 'Stacks with any pass'],
+    features: ['100 bonus credits', 'No expiry', 'Stacks with any pass'],
     starsPrice: 0,
   },
   {
     id: 'credits_250',
     name: '250 Credit Pack',
-    usdPrice: 19.99,
-    price: '$19.99',
-    period: '90 days',
+    usdPrice: 110,
+    price: '$110.00',
+    period: 'No expiry',
     interval: 'credit_pack' as const,
-    durationDays: 90,
+    durationDays: 0,
     credits: 250,
-    dailyCap: 25,
     icon: Crown,
     color: 'text-amber-400',
     bgColor: 'bg-amber-400/10',
-    features: ['250 bonus credits', 'Valid for 90 days', 'Stacks with any pass', 'Best value'],
+    features: ['250 bonus credits', 'No expiry', 'Stacks with any pass', 'Best value'],
     starsPrice: 0,
   }
 ];
@@ -680,9 +672,12 @@ export const Profile: React.FC<{ initialSection?: ProfileSection }> = ({ initial
    * Live catalog when the API answered, legacy cards otherwise. The API is
    * authoritative because it is the only place that knows the user's country.
    */
+  const fallbackPlans = pricing?.enabled
+    ? PLANS
+    : PLANS.filter((plan) => plan.interval !== 'credit_pack');
   const displayPlans = pricing?.enabled && pricing.offers?.length
     ? pricing.offers.map(toDisplayPlan)
-    : PLANS;
+    : fallbackPlans;
 
   // Whop is the card rail for GLOBAL only; local markets use their wallet rail
   // or Stars. Default to showing it when the methods call has not answered yet.
@@ -1650,7 +1645,7 @@ export const Profile: React.FC<{ initialSection?: ProfileSection }> = ({ initial
                 <ChevronRight className="w-5 h-5 text-[#0098EA]" />
               </button>
 
-              {showCardRail && (
+              {showCardRail && selectedPlanForPayment.interval !== 'credit_pack' && (
                 <button
                   onClick={handleCardPayment}
                   className="w-full bg-[#FFC233]/10 border border-[#FFC233]/25 rounded-3xl p-5 flex items-center justify-between group active:scale-[0.98] transition-all"

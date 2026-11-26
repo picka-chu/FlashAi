@@ -32,10 +32,11 @@ interface PlanConfig {
 
 const PLAN_CONFIG: Record<string, PlanConfig> = {
   free: { dailyCredits: 3, name: "Free Trial (7 days)" },
-  weekly: { dailyCredits: 10, name: "Weekly" },
-  monthly: { dailyCredits: 16, name: "Monthly" },
-  monthly_basic: { dailyCredits: 10, name: "Monthly Basic" },
-  monthly_pro: { dailyCredits: 16, name: "Monthly Pro" },
+  // Paid passes are credit pools and must not be replenished each day.
+  day_pass: { dailyCredits: 0, name: "Match Day Pass" },
+  weekly: { dailyCredits: 0, name: "7-Day Pass" },
+  monthly_basic: { dailyCredits: 0, name: "30-Day Basic" },
+  monthly_pro: { dailyCredits: 0, name: "30-Day Pro" },
   admin: { dailyCredits: 999, name: "Administrator" },
 };
 
@@ -251,7 +252,7 @@ export class CreditResetService {
       while (hasMore) {
         const { data: users, error } = await this.supabase
           .from("users")
-          .select("telegram_id, plan, credits, created_at, last_credit_reset, plan_expires_at")
+          .select("telegram_id, plan, credits, credit_balance, created_at, last_credit_reset, plan_expires_at")
           .order("telegram_id", { ascending: true })
           .range(offset, offset + this.batchSize - 1);
 
@@ -271,32 +272,37 @@ export class CreditResetService {
         for (const user of users) {
           stats.totalUsersProcessed++;
 
+          const planWasCreditPack = /^credits_(20|50|100|250)$/.test(String(user.plan || ""));
+          const planExpired =
+            user.plan !== "admin" &&
+            user.plan_expires_at &&
+            new Date(user.plan_expires_at).getTime() <= Date.now();
           const lastReset = user.last_credit_reset ? new Date(user.last_credit_reset) : null;
-          if (!this.shouldResetUserCredits(lastReset)) {
+          const needsReset = planExpired || planWasCreditPack || this.shouldResetUserCredits(lastReset);
+          if (!needsReset) {
             stats.usersSkipped++;
             continue;
           }
 
-          // Expired paid plans fall back to the free tier instead of
-          // continuing to receive paid-plan quotas forever.
-          const planExpired =
-            user.plan !== "admin" &&
-            user.plan_expires_at &&
-            new Date(user.plan_expires_at).getTime() < Date.now();
-          const effectivePlan = planExpired ? "free" : user.plan;
-
+          const effectivePlan = planExpired || planWasCreditPack ? "free" : user.plan;
+          let currentCredits = Number(user.credits || 0);
           if (planExpired) {
-            await this.supabase
+            // Pass credits expire; purchased top-up credits do not.
+            currentCredits = Math.min(Number(user.credit_balance || 0), currentCredits);
+          }
+          if (planExpired || planWasCreditPack) {
+            const { error: downgradeError } = await this.supabase
               .from("users")
-              .update({ plan: "free", plan_expires_at: null })
+              .update({ plan: "free", plan_expires_at: null, credits: currentCredits })
               .eq("telegram_id", user.telegram_id);
+            if (downgradeError) throw downgradeError;
           }
 
           const result = await this.resetUserCredits(
             user.telegram_id,
             effectivePlan,
             user.created_at,
-            user.credits
+            currentCredits
           );
 
           if (result.success) {
