@@ -3755,6 +3755,7 @@ function isPrivateTelegramInvite(taskUrl: string): boolean {
         enabled: true,
         eligible,
         hasPhone,
+        inlineAvailable: Boolean(String(process.env.CHAPA_PUBLIC_KEY || "").trim()),
         country: resolved.country,
         currency: pricing.currency,
         rate: pricing.rate,
