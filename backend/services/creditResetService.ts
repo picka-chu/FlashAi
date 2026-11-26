@@ -35,6 +35,7 @@ const PLAN_CONFIG: Record<string, PlanConfig> = {
   // Paid passes are credit pools and must not be replenished each day.
   day_pass: { dailyCredits: 0, name: "Match Day Pass" },
   weekly: { dailyCredits: 0, name: "7-Day Pass" },
+  monthly: { dailyCredits: 0, name: "Legacy monthly pass" },
   monthly_basic: { dailyCredits: 0, name: "30-Day Basic" },
   monthly_pro: { dailyCredits: 0, name: "30-Day Pro" },
   admin: { dailyCredits: 999, name: "Administrator" },
