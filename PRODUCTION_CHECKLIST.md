@@ -48,7 +48,7 @@ Only configure optional integrations that have been created and tested. For paym
 - [ ] Check mobile layout, accessibility basics, loading/error states, and browser console/network errors.
 - [ ] Set up uptime/error monitoring, log review, incident contact, and a rollback procedure.
 
-## What this repository change covers
+## Applied production hardening\n\n- [x] Applied `20261126170816_production_api_privilege_hardening` to the production Supabase project. Browser roles can read only `ads`, `faqs`, and `tasks`; they have no table write access, no access to backend-only tables or sequences, and no public RPC execution. The backend `service_role` retains its existing access. Future `postgres`-owned migrations inherit least-privilege defaults.\n- [ ] Re-run the end-to-end Telegram, signup, credits, subscription, and payment checks after this database change.\n\n## What this repository change covers
 
 The production container now builds the frontend in a separate stage, installs runtime dependencies separately, runs as the unprivileged Node user, uses direct Node startup, and exposes a lightweight container health check. CI now builds the actual production Docker image in addition to type-checking and building the frontend.
 
