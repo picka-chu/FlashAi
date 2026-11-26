@@ -88,11 +88,16 @@ const supabase = createClient(supabaseUrl, supabaseKey);
 console.log("✅ Supabase service role key initialized for backend operations.");
 
 const PLAN_CREDITS: Record<string, number> = {
-  free: 1,
-  day_pass: 2,
-  weekly: 2,
-  monthly_basic: 2,
-  monthly_pro: 4,
+  free: 3,
+  day_pass: 10,
+  weekly: 50,
+  monthly_basic: 150,
+  monthly_pro: 300,
+  // Credit packs just add credits - no daily reset, plan stays the same
+  credits_20: 20,
+  credits_50: 50,
+  credits_100: 100,
+  credits_250: 250,
   admin: 0,
 };
 
@@ -105,10 +110,34 @@ const PLAN_PRICE_USD: Record<string, number> = {
   weekly: 2.99,
   monthly_basic: 6.99,
   monthly_pro: 12.99,
+  credits_20: 1.99,
+  credits_50: 4.99,
+  credits_100: 8.99,
+  credits_250: 19.99,
 };
 const USD_TO_STARS_RATE = 50;
-const PAID_PLANS = new Set(["day_pass", "weekly", "monthly_basic", "monthly_pro"]);
-const ALLOWED_PLANS = new Set(["free", "day_pass", "weekly", "monthly_basic", "monthly_pro", "admin"]);
+const PAID_PLANS = new Set([
+  "day_pass",
+  "weekly",
+  "monthly_basic",
+  "monthly_pro",
+  "credits_20",
+  "credits_50",
+  "credits_100",
+  "credits_250",
+]);
+const ALLOWED_PLANS = new Set([
+  "free",
+  "day_pass",
+  "weekly",
+  "monthly_basic",
+  "monthly_pro",
+  "credits_20",
+  "credits_50",
+  "credits_100",
+  "credits_250",
+  "admin",
+]);
 
 /**
  * Star prices are a single global ladder: Stars are currency-agnostic, and
@@ -121,6 +150,11 @@ const PLAN_DURATION_DAYS: Record<string, number> = {
   weekly: 7,
   monthly_basic: 30,
   monthly_pro: 30,
+  // Credit packs: 0 duration = don't extend plan expiry, just add credits
+  credits_20: 0,
+  credits_50: 0,
+  credits_100: 0,
+  credits_250: 0,
 };
 const MAX_MATCH_STRING_LENGTH = 200;
 

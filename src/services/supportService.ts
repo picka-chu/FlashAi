@@ -20,7 +20,7 @@ export const INITIAL_FAQS: FAQ[] = [
   },
   {
     question: 'What are the differences between the plans?',
-    answer: 'Free gives 1 analysis per day forever. Day Pass gives 2 analyses for one match day. 7-Day Pass gives 2 analyses per day for 7 days. 30-Day Basic gives 2 analyses per day for 30 days with Flash AI Lite. 30-Day Pro gives 4 analyses per day for 30 days with Flash AI Pro, bundles, and top-pick accumulators. All paid passes are fixed-price in your local currency and expire at the end of the period.',
+    answer: 'Free gives 3 credits per day forever. Day Pass gives 10 credits for 1 day. 7-Day Pass gives 50 credits for 7 days. 30-Day Basic gives 150 credits for 30 days. 30-Day Pro gives 300 credits for 30 days with live analysis and up to 6 bet-slip images. All passes are fixed-price in your local currency and expire at the end of the period. You can also buy standalone credit packs (20/50/100/250 credits) to top up anytime.',
     category: 'subscription',
   },
   {

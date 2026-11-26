@@ -15,9 +15,18 @@
 
 export type CountryCode = "ET" | "KE" | "NG" | "GH" | "TZ" | "UG" | "ZA" | "GLOBAL";
 export type CurrencyCode = "ETB" | "KES" | "NGN" | "GHS" | "TZS" | "UGX" | "ZAR" | "USD";
-export type PlanId = "free" | "day_pass" | "weekly" | "monthly_basic" | "monthly_pro";
+export type PlanId =
+  | "free"
+  | "day_pass"
+  | "weekly"
+  | "monthly_basic"
+  | "monthly_pro"
+  | "credits_20"
+  | "credits_50"
+  | "credits_100"
+  | "credits_250";
 
-export type BillingInterval = "free" | "day" | "week" | "month";
+export type BillingInterval = "free" | "day" | "week" | "month" | "credit_pack";
 
 export interface PlanOffer {
   id: PlanId;
@@ -28,14 +37,17 @@ export interface PlanOffer {
   interval: BillingInterval;
   /** Access window in days. 0 for free. */
   durationDays: number;
-  /** Analyses per day (the user-facing allowance). */
-  dailyAnalyses: number;
   /**
-   * Hard cost ceiling for the whole pass. Marketing says "up to N/day"; this
-   * is the fair-use number that stops a single user from running the plan at a
-   * loss. Enforced server-side (see docs/02-pricing-strategy.md, "Fair use").
+   * Total credit bundle for the pass. One credit = one analysis (match or bet slip).
+   * Unlike the old daily-reset model, credits are a pool the user spends at their
+   * own pace within the validity window.
    */
-  monthlyAnalysesCap: number;
+  credits: number;
+  /**
+   * Maximum credits spendable in a single calendar day. Anti-abuse guardrail so
+   * a user cannot burn a 300-credit Pro pass in one hour.
+   */
+  dailyCap: number;
   /** Bet-slip images per analysis. */
   maxBetSlipImages: number;
   /** Share of picks unlocked: 1 = safe only, 2 = safe+value, 4 = full board. */
@@ -337,11 +349,11 @@ function paidOffers(currency: CurrencyCode, p: PricePoints): PlanOffer[] {
       currency,
       interval: "day",
       durationDays: 1,
-      dailyAnalyses: 2,
-      monthlyAnalysesCap: 2,
+      credits: 10,
+      dailyCap: 10,
       maxBetSlipImages: 2,
       picksUnlocked: 2,
-      features: ["2 analyses today", "Safe + Value pick", "Nothing auto-renews"],
+      features: ["10 credits • use all in one day or spread out", "Safe + Value pick", "AI chat after analysis", "Nothing auto-renews"],
       recurring: false,
     },
     {
@@ -351,11 +363,11 @@ function paidOffers(currency: CurrencyCode, p: PricePoints): PlanOffer[] {
       currency,
       interval: "week",
       durationDays: 7,
-      dailyAnalyses: 2,
-      monthlyAnalysesCap: 14,
+      credits: 50,
+      dailyCap: 15,
       maxBetSlipImages: 2,
       picksUnlocked: 2,
-      features: ["2 analyses/day for 7 days", "Safe + Value picks", "AI chat after analysis"],
+      features: ["50 credits • valid for 7 days", "Up to 15 credits per day", "Safe + Value picks", "AI chat after analysis"],
       recurring: false,
     },
     {
@@ -365,13 +377,13 @@ function paidOffers(currency: CurrencyCode, p: PricePoints): PlanOffer[] {
       currency,
       interval: "month",
       durationDays: 30,
-      dailyAnalyses: 2,
-      monthlyAnalysesCap: 40,
+      credits: 150,
+      dailyCap: 20,
       maxBetSlipImages: 2,
       picksUnlocked: 2,
       features: [
-        "Up to 2 analyses/day",
-        "40 analyses per 30-day pass",
+        "150 credits • valid for 30 days",
+        "Up to 20 credits per day",
         "Safe + Value picks",
         "AI chat after analysis",
         "Renew manually - no card stored",
@@ -386,23 +398,86 @@ function paidOffers(currency: CurrencyCode, p: PricePoints): PlanOffer[] {
       currency,
       interval: "month",
       durationDays: 30,
-      dailyAnalyses: 4,
-      monthlyAnalysesCap: 80,
-      maxBetSlipImages: 4,
+      credits: 300,
+      dailyCap: 25,
+      maxBetSlipImages: 6,
       picksUnlocked: 4,
       features: [
-        "Up to 4 analyses/day",
-        "80 analyses per 30-day pass",
+        "300 credits • valid for 30 days",
+        "Up to 25 credits per day",
         "Full board (2 Safe + 2 Value)",
-        "Bet-slip image analysis",
+        "Bet-slip image analysis (up to 6 images)",
         "Top-pick accumulator",
         "Unlimited AI chat",
+        "Live match analysis",
       ],
+      recurring: false,
+      badge: "best_value",
+    },
+    // Standalone credit packs - no expiry, just add credits to balance.
+    // Users can buy these anytime to top up without a pass.
+    {
+      id: "credits_20",
+      name: "20 Credit Pack",
+      priceMinor: Math.round((p.day * 0.35) / 100) * 100, // ~35% of day pass price
+      currency,
+      interval: "credit_pack",
+      durationDays: 90,
+      credits: 20,
+      dailyCap: 20,
+      maxBetSlipImages: 2,
+      picksUnlocked: 2,
+      features: ["20 bonus credits", "Valid for 90 days", "Stacks with any pass"],
+      recurring: false,
+    },
+    {
+      id: "credits_50",
+      name: "50 Credit Pack",
+      priceMinor: Math.round((p.week * 0.35) / 100) * 100, // ~35% of weekly price
+      currency,
+      interval: "credit_pack",
+      durationDays: 90,
+      credits: 50,
+      dailyCap: 20,
+      maxBetSlipImages: 2,
+      picksUnlocked: 2,
+      features: ["50 bonus credits", "Valid for 90 days", "Stacks with any pass"],
+      recurring: false,
+    },
+    {
+      id: "credits_100",
+      name: "100 Credit Pack",
+      priceMinor: Math.round((p.basic * 0.35) / 100) * 100, // ~35% of basic price
+      currency,
+      interval: "credit_pack",
+      durationDays: 90,
+      credits: 100,
+      dailyCap: 25,
+      maxBetSlipImages: 6,
+      picksUnlocked: 4,
+      features: ["100 bonus credits", "Valid for 90 days", "Stacks with any pass"],
+      recurring: false,
+    },
+    {
+      id: "credits_250",
+      name: "250 Credit Pack",
+      priceMinor: Math.round((p.pro * 0.35) / 100) * 100, // ~35% of pro price
+      currency,
+      interval: "credit_pack",
+      durationDays: 90,
+      credits: 250,
+      dailyCap: 25,
+      maxBetSlipImages: 6,
+      picksUnlocked: 4,
+      features: ["250 bonus credits", "Valid for 90 days", "Stacks with any pass", "Best value"],
       recurring: false,
       badge: "best_value",
     },
   ];
 }
+
+export const MIN_CREDIT_PACK = 10;
+export const MAX_CREDIT_PACK = 1000;
 
 export const MARKETS: Record<CountryCode, CountryMarket> = {
   ET: {
@@ -530,11 +605,11 @@ export const FREE_OFFER: PlanOffer = {
   currency: "USD",
   interval: "free",
   durationDays: 0,
-  dailyAnalyses: 1,
-  monthlyAnalysesCap: 30,
+  credits: 3,
+  dailyCap: 3,
   maxBetSlipImages: 1,
   picksUnlocked: 1,
-  features: ["1 analysis/day", "1 free pick", "History and live scores"],
+  features: ["3 credits per day", "1 free pick", "History and live scores"],
   recurring: false,
 };
 
@@ -600,7 +675,7 @@ export function estimateEconomics(
   const units = offer.priceMinor / 100;
   const revenueUsd = offer.currency === "USD" ? units : units / market.usdRate;
   const days = offer.durationDays || 1;
-  const analysesAtCap = Math.min(offer.dailyAnalyses * days, offer.monthlyAnalysesCap || Number.MAX_SAFE_INTEGER);
+  const analysesAtCap = Math.min(offer.credits, offer.dailyCap * days);
   const costAtCapUsd = analysesAtCap * perAnalysisUsd;
   const marginAtCap = revenueUsd > 0 ? (revenueUsd - costAtCapUsd) / revenueUsd : 0;
   return {

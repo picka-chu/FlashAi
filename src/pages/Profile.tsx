@@ -61,10 +61,12 @@ const PLANS = [
     period: 'forever',
     interval: 'free' as const,
     durationDays: 0,
+    credits: 3,
+    dailyCap: 3,
     icon: Zap,
     color: 'text-zinc-400',
     bgColor: 'bg-zinc-900',
-    features: ['1 analysis/day', '1 free pick', 'History and live scores'],
+    features: ['3 credits per day', '1 free pick', 'History and live scores'],
     starsPrice: 0,
   },
   {
@@ -75,10 +77,12 @@ const PLANS = [
     period: '1 day',
     interval: 'day' as const,
     durationDays: 1,
+    credits: 10,
+    dailyCap: 10,
     icon: Zap,
     color: 'text-emerald-400',
     bgColor: 'bg-emerald-400/10',
-    features: ['2 analyses today', 'Full pick board for one match day', 'AI chat after analysis'],
+    features: ['10 credits • use all today or spread out', 'Safe + Value pick', 'AI chat after analysis', 'Nothing auto-renews'],
     starsPrice: 30,
   },
   {
@@ -89,10 +93,12 @@ const PLANS = [
     period: '7 days',
     interval: 'week' as const,
     durationDays: 7,
+    credits: 50,
+    dailyCap: 15,
     icon: Star,
     color: 'text-sky-400',
     bgColor: 'bg-sky-400/10',
-    features: ['2 analyses/day for 7 days', 'Safe + value picks', 'AI chat after analysis'],
+    features: ['50 credits • valid for 7 days', 'Up to 15 credits per day', 'Safe + Value picks', 'AI chat after analysis'],
     starsPrice: 95,
   },
   {
@@ -103,10 +109,12 @@ const PLANS = [
     period: '30 days',
     interval: 'month' as const,
     durationDays: 30,
+    credits: 150,
+    dailyCap: 20,
     icon: ShieldCheck,
     color: 'text-[#ccff00]',
     bgColor: 'bg-[#ccff00]/10',
-    features: ['2 analyses/day for 30 days', 'Flash AI Lite (Gemini Flash)', '1 bundle (1 safe + 1 value bet)', 'AI chat after analysis'],
+    features: ['150 credits • valid for 30 days', 'Up to 20 credits per day', 'Safe + Value picks', 'AI chat after analysis', 'Renew manually - no card stored'],
     starsPrice: 240,
     popular: true,
   },
@@ -118,11 +126,78 @@ const PLANS = [
     period: '30 days',
     interval: 'month' as const,
     durationDays: 30,
+    credits: 300,
+    dailyCap: 25,
     icon: Crown,
     color: 'text-amber-400',
     bgColor: 'bg-amber-400/10',
-    features: ['4 analyses/day for 30 days', 'Flash AI Pro (advanced reasoning tier)', '2 bundles (2 safe + 2 value bets)', 'Top-pick accumulators', 'Unlimited AI chat'],
+    features: ['300 credits • valid for 30 days', 'Up to 25 credits per day', 'Full board (2 Safe + 2 Value)', 'Bet-slip image analysis (up to 6 images)', 'Top-pick accumulator', 'Unlimited AI chat', 'Live match analysis'],
     starsPrice: 480,
+  },
+  // Standalone credit packs - no pass required, just top up your balance
+  {
+    id: 'credits_20',
+    name: '20 Credit Pack',
+    usdPrice: 1.99,
+    price: '$1.99',
+    period: '90 days',
+    interval: 'credit_pack' as const,
+    durationDays: 90,
+    credits: 20,
+    dailyCap: 20,
+    icon: Zap,
+    color: 'text-sky-400',
+    bgColor: 'bg-sky-400/10',
+    features: ['20 bonus credits', 'Valid for 90 days', 'Stacks with any pass'],
+    starsPrice: 0,
+  },
+  {
+    id: 'credits_50',
+    name: '50 Credit Pack',
+    usdPrice: 4.99,
+    price: '$4.99',
+    period: '90 days',
+    interval: 'credit_pack' as const,
+    durationDays: 90,
+    credits: 50,
+    dailyCap: 20,
+    icon: Zap,
+    color: 'text-sky-400',
+    bgColor: 'bg-sky-400/10',
+    features: ['50 bonus credits', 'Valid for 90 days', 'Stacks with any pass'],
+    starsPrice: 0,
+  },
+  {
+    id: 'credits_100',
+    name: '100 Credit Pack',
+    usdPrice: 8.99,
+    price: '$8.99',
+    period: '90 days',
+    interval: 'credit_pack' as const,
+    durationDays: 90,
+    credits: 100,
+    dailyCap: 25,
+    icon: ShieldCheck,
+    color: 'text-[#ccff00]',
+    bgColor: 'bg-[#ccff00]/10',
+    features: ['100 bonus credits', 'Valid for 90 days', 'Stacks with any pass'],
+    starsPrice: 0,
+  },
+  {
+    id: 'credits_250',
+    name: '250 Credit Pack',
+    usdPrice: 19.99,
+    price: '$19.99',
+    period: '90 days',
+    interval: 'credit_pack' as const,
+    durationDays: 90,
+    credits: 250,
+    dailyCap: 25,
+    icon: Crown,
+    color: 'text-amber-400',
+    bgColor: 'bg-amber-400/10',
+    features: ['250 bonus credits', 'Valid for 90 days', 'Stacks with any pass', 'Best value'],
+    starsPrice: 0,
   }
 ];
 
@@ -132,6 +207,10 @@ const PLAN_VISUALS: Record<string, { icon: any; color: string; bgColor: string }
   weekly: { icon: Star, color: 'text-sky-400', bgColor: 'bg-sky-400/10' },
   monthly_basic: { icon: ShieldCheck, color: 'text-[#ccff00]', bgColor: 'bg-[#ccff00]/10' },
   monthly_pro: { icon: Crown, color: 'text-amber-400', bgColor: 'bg-amber-400/10' },
+  credits_20: { icon: Zap, color: 'text-sky-400', bgColor: 'bg-sky-400/10' },
+  credits_50: { icon: Zap, color: 'text-sky-400', bgColor: 'bg-sky-400/10' },
+  credits_100: { icon: ShieldCheck, color: 'text-[#ccff00]', bgColor: 'bg-[#ccff00]/10' },
+  credits_250: { icon: Crown, color: 'text-amber-400', bgColor: 'bg-amber-400/10' },
 };
 
 /** Turn a server offer into the shape the existing cards already render. */
@@ -154,8 +233,11 @@ const CHAPA_PENDING_KEY = 'flashai_chapa_pending_ref';
 const CHAPA_PENDING_TS_KEY = 'flashai_chapa_pending_ts';
 const CHAPA_PENDING_MAX_AGE_MS = 30 * 60 * 1000;
 
-/** Stars come from the server ladder; the fallback keeps old cached plans working. */
-const getPriceInStars = (plan: any) => Number(plan?.starsPrice || Math.ceil(Number(plan?.usdPrice || 0) * 50));
+/** Stars come from the server ladder; credit packs aren't purchasable with Stars. */
+const getPriceInStars = (plan: any) => {
+  if (plan?.interval === 'credit_pack') return 0;
+  return Number(plan?.starsPrice ?? Math.ceil(Number(plan?.usdPrice || 0) * 50));
+};
 const getPriceInTon = (plan: any, usdToTonRate: number) => {
   // Accept both TON-per-USD (0.23) and legacy USD-per-TON (6.86) values.
   const rate = usdToTonRate > 1 ? 1 / usdToTonRate : usdToTonRate;
@@ -1449,6 +1531,12 @@ export const Profile: React.FC<{ initialSection?: ProfileSection }> = ({ initial
                       <div>
                         <h3 className="text-xl font-black text-white">{plan.name}</h3>
                         <p className="text-xs font-bold text-zinc-500">{plan.period}</p>
+                        {plan.credits && plan.credits > 0 && (
+                          <p className="text-[10px] font-black text-[#ccff00] mt-0.5">
+                            {plan.credits} credits{' '}
+                            {plan.interval === 'credit_pack' ? '• bonus pack' : '• per pass'}
+                          </p>
+                        )}
                       </div>
                     </div>
                     <div className="text-right">

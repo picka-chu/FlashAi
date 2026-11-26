@@ -13,10 +13,12 @@ export interface PlanOfferDto {
   /** Minor units of `currency` (santim, kobo, cents). */
   priceMinor: number;
   currency: string;
-  interval: "free" | "day" | "week" | "month";
+  interval: "free" | "day" | "week" | "month" | "credit_pack";
   durationDays: number;
-  dailyAnalyses: number;
-  monthlyAnalysesCap: number;
+  /** Total credit bundle for the pass. */
+  credits: number;
+  /** Max credits spendable per day (anti-abuse). */
+  dailyCap: number;
   maxBetSlipImages: number;
   picksUnlocked: number;
   features: string[];
@@ -135,6 +137,7 @@ export function formatMoney(priceMinor: number, currency: string): string {
 
 export function periodLabel(offer: Pick<PlanOfferDto, "interval" | "durationDays">): string {
   if (offer.interval === "free") return "forever";
+  if (offer.interval === "credit_pack") return "90 days";
   if (offer.durationDays === 1) return "1 day";
   if (!offer.durationDays) return offer.interval === "month" ? "30 days" : offer.interval === "week" ? "7 days" : "one pass";
   return `${offer.durationDays} days`;
