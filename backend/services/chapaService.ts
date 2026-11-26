@@ -195,6 +195,7 @@ export async function initializeChapaCheckout(
   const appUrl = (
     process.env.CHAPA_APP_URL ||
     process.env.APP_URL ||
+    process.env.RENDER_EXTERNAL_URL ||
     "https://flash-6tuz.onrender.com"
   ).replace(/\/+$/, "");
   const callbackUrl = `${appUrl}/api/payments/chapa-webhook`;
