@@ -2723,6 +2723,35 @@ function isPrivateTelegramInvite(taskUrl: string): boolean {
 
   if (botToken) {
     bot = new Telegraf(botToken);
+
+    // Production uses Telegram webhooks rather than long polling. During a
+    // zero-downtime Render deploy, old and new instances can overlap briefly;
+    // polling from both instances causes Telegram 409 getUpdates conflicts.
+    const telegramWebhookSecret = crypto
+      .createHash("sha256")
+      .update(botToken)
+      .digest("base64url");
+
+    app.post("/api/telegram/webhook", async (c) => {
+      const suppliedSecret = c.req.header("X-Telegram-Bot-Api-Secret-Token") || "";
+      const expected = Buffer.from(telegramWebhookSecret);
+      const supplied = Buffer.from(suppliedSecret);
+      if (
+        supplied.length !== expected.length ||
+        !crypto.timingSafeEqual(supplied, expected)
+      ) {
+        return c.json({ error: "Unauthorized" }, 401);
+      }
+
+      try {
+        await bot!.handleUpdate(await c.req.json());
+        return c.json({ ok: true });
+      } catch (error) {
+        console.error("Telegram webhook update failed:", error);
+        return c.json({ error: "Webhook processing failed" }, 500);
+      }
+    });
+
     const notifications = new NotificationService(supabase, bot);
 
     const formatQuietHours = (start: number, end: number) => {
@@ -5919,8 +5948,18 @@ ${ad.subtitle}`;
 
     const startTelegramBot = async (): Promise<void> => {
       try {
-        await bot!.launch();
-        console.log("✅ Telegram bot polling started.");
+        if (process.env.NODE_ENV === "production") {
+          if (!/^https:\/\//i.test(appUrl)) {
+            throw new Error("Production Telegram webhook requires a public HTTPS APP_URL.");
+          }
+          await bot!.telegram.setWebhook(`${appUrl}/api/telegram/webhook`, {
+            secret_token: telegramWebhookSecret,
+          });
+          console.log("✅ Telegram bot webhook registered.");
+        } else {
+          await bot!.launch();
+          console.log("✅ Telegram bot polling started.");
+        }
 
         if (!telegramSchedulersStarted) {
           telegramSchedulersStarted = true;
