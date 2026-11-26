@@ -672,8 +672,7 @@ export const Profile: React.FC<{ initialSection?: ProfileSection }> = ({ initial
    * Live catalog when the API answered, legacy cards otherwise. The API is
    * authoritative because it is the only place that knows the user's country.
    */
-  const packsAvailable = Boolean(pricing?.enabled && (pricing.country === 'ET' || pricing.country === 'GLOBAL'));
-  const fallbackPlans = PLANS.filter((plan) => plan.interval !== 'credit_pack' || packsAvailable);
+  const fallbackPlans = PLANS.filter((plan) => plan.interval !== 'credit_pack');
   const displayPlans = pricing?.enabled && pricing.offers?.length
     ? pricing.offers.map(toDisplayPlan)
     : fallbackPlans;

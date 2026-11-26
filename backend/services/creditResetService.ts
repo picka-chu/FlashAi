@@ -278,7 +278,12 @@ export class CreditResetService {
             user.plan_expires_at &&
             new Date(user.plan_expires_at).getTime() <= Date.now();
           const lastReset = user.last_credit_reset ? new Date(user.last_credit_reset) : null;
-          const needsReset = planExpired || planWasCreditPack || this.shouldResetUserCredits(lastReset);
+          const isFreeTier = planExpired || planWasCreditPack || user.plan === "free";
+          const freeTrialExpired = Boolean(
+            isFreeTier && user.created_at &&
+            Date.now() - new Date(user.created_at).getTime() > 7 * 24 * 60 * 60 * 1000
+          );
+          const needsReset = planExpired || planWasCreditPack || freeTrialExpired || this.shouldResetUserCredits(lastReset);
           if (!needsReset) {
             stats.usersSkipped++;
             continue;
@@ -286,16 +291,16 @@ export class CreditResetService {
 
           const effectivePlan = planExpired || planWasCreditPack ? "free" : user.plan;
           let currentCredits = Number(user.credits || 0);
-          if (planExpired || planWasCreditPack) {
-            // Pass credits expire; only the remaining top-up balance survives.
+          if (planExpired || planWasCreditPack || freeTrialExpired) {
+            // Pass/free-trial credits expire; only the remaining top-up balance survives.
             currentCredits = Math.min(Number(user.credit_balance || 0), currentCredits);
           }
-          if (planExpired || planWasCreditPack) {
+          if (planExpired || planWasCreditPack || freeTrialExpired) {
             const { error: downgradeError } = await this.supabase
               .from("users")
               .update({
                 plan: "free",
-                plan_expires_at: null,
+                plan_expires_at: planExpired ? null : user.plan_expires_at,
                 credits: currentCredits,
                 credit_balance: currentCredits,
               })

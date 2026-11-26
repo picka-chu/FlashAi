@@ -2211,7 +2211,7 @@ function isPrivateTelegramInvite(taskUrl: string): boolean {
         .from("users")
         .update({
           credits: credits - cost,
-          credit_balance: storedPackBalance - packCost,
+          credit_balance: remainingPackBalance - packCost,
           last_active: new Date().toISOString()
         })
         .eq("telegram_id", telegramId)
@@ -2372,7 +2372,7 @@ function isPrivateTelegramInvite(taskUrl: string): boolean {
         .from("users")
         .update({
           credits: credits - cost,
-          credit_balance: storedPackBalance - packCost,
+          credit_balance: remainingPackBalance - packCost,
           last_active: new Date().toISOString()
         })
         .eq("telegram_id", telegramId)
