@@ -143,6 +143,7 @@ const PLAN_DURATION_DAYS: Record<string, number> = {
   credits_250: 0,
 };
 const MAX_MATCH_STRING_LENGTH = 200;
+const MIN_ODDS = Number(process.env.MIN_ODDS || 1.40);
 
 const isGeminiConfigError = (message: string) =>
   /no gemini api keys|api key not valid|api_key_invalid|api key not set|api key is missing|invalid api key/i.test(
@@ -2310,14 +2311,31 @@ function isPrivateTelegramInvite(taskUrl: string): boolean {
       // Free: 1 pick, Basic: 2 picks, Pro/Admin: up to 5 picks.
       // The board always contains at most 2 safe + 2 value picks, so Pro sees
       // the full 4 while Basic gets 1 safe + 1 value and Free gets 1 safe.
+      // Odds floor: drop any pick below MIN_ODDS so users never see 1.20 chalk.
       try {
         if (result && Array.isArray(result.predictions)) {
           const plan = user.plan || "free";
           const cap = plan === "monthly_pro" || plan === "admin" ? 5 : (plan === "monthly_basic" ? 2 : 1);
-          const allPicks = result.predictions;
-          const safePicks = allPicks.filter((pick: any) => pick?.type === "safe");
-          const valuePicks = allPicks.filter((pick: any) => pick?.type === "value");
-          const otherPicks = allPicks.filter((pick: any) => pick?.type !== "safe" && pick?.type !== "value");
+
+          // Filter out picks below the odds floor (keeps null-odds picks for transparency)
+          const filteredPicks = result.predictions.filter((pick: any) => {
+            if (!pick?.odds) return true; // keep picks where odds unknown
+            return Number(pick.odds) >= MIN_ODDS;
+          });
+
+          // Recalculate edge from AI probability vs implied probability from odds
+          const withEdge = filteredPicks.map((pick: any) => {
+            if (pick.odds && pick.probability !== null && pick.probability !== undefined) {
+              const impliedProb = Math.round((1 / Number(pick.odds)) * 100);
+              const aiProb = Number(pick.probability);
+              pick.edge = Math.round((aiProb - impliedProb) * 10) / 10; // one decimal
+            }
+            return pick;
+          });
+
+          const safePicks = withEdge.filter((pick: any) => pick?.type === "safe");
+          const valuePicks = withEdge.filter((pick: any) => pick?.type === "value");
+          const otherPicks = withEdge.filter((pick: any) => pick?.type !== "safe" && pick?.type !== "value");
           const prioritized = cap <= 2
             ? [safePicks[0], valuePicks[0], ...safePicks.slice(1), ...valuePicks.slice(1), ...otherPicks]
             : [...safePicks, ...valuePicks, ...otherPicks];

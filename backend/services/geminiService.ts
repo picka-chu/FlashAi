@@ -209,9 +209,20 @@ Review the FULL market list internally, but return ONLY the 4 strongest verified
 - Combos: 2-3 leg builds from the strongest non-correlated picks
 
 SELECTION RULES:
-- safePicks: exactly 2 highest-probability, lowest-variance picks from any market (1X2 favourite, Double Chance, DNB, Over 1.5). Prefer probability >= 65.
-- valuePicks: exactly 2 picks where estimated probability clearly exceeds the market-implied probability. Include the edge in percentage points.
-- The 2 safe picks and 2 value picks must cover different markets or clear angles; never repeat the same selection twice.
+- safePicks: exactly 2 picks with balanced risk. Odds MUST be between 1.40 and 3.00.
+  Do NOT return heavy favorites below 1.40 (e.g. 1.20 chalk) — users want a real payout,
+  not a razor-thin return. Prefer probability >= 65 and edge >= 0.
+- valuePicks: exactly 2 picks where odds are 2.00 or higher AND estimated probability
+  clearly exceeds the market-implied probability. Include the edge in percentage points.
+- The 2 safe picks and 2 value picks must cover different markets or clear angles;
+  never repeat the same selection twice.
+- ODDS FLOOR: If no qualifying pick exists for a market at 1.40+ odds, skip that market.
+  Never return odds below 1.40. Better to return fewer picks than bad odds.
+
+EDGE TRANSPARENCY:
+- edge = (AI estimated probability) − (implied probability from odds).
+- If edge is negative or zero, do not include the pick as a value pick.
+- Show the user both the model probability and the edge so they can judge value.
 
 CANONICAL MARKET LABELS (use exactly these styles; never put team names in the market field):
 - "1X2 - Home", "1X2 - Draw", "1X2 - Away"
