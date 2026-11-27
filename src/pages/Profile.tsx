@@ -790,6 +790,8 @@ export const Profile: React.FC<{ initialSection?: ProfileSection }> = ({ initial
   // Whop is the card rail for GLOBAL only; local markets use their wallet rail
   // or Stars. Default to showing it when the methods call has not answered yet.
   const showCardRail = paymentMethods ? paymentMethods.card === 'whop' : true;
+  const showStarsRail = paymentMethods ? paymentMethods.stars : true;
+  const showTonRail = paymentMethods ? paymentMethods.ton : true;
   const showChapaRail = Boolean(chapaConfig?.enabled && chapaConfig?.eligible);
 
   const handleTonPayment = async () => {
@@ -1764,37 +1766,41 @@ export const Profile: React.FC<{ initialSection?: ProfileSection }> = ({ initial
             </div>
 
             <div className="space-y-3">
-              <button
-                onClick={handleStarsPayment}
-                className="w-full bg-[#0088cc]/12 border border-[#0088cc]/30 rounded-3xl p-5 flex items-center justify-between group active:scale-[0.98] transition-all"
-              >
-                <div className="flex items-center gap-4">
-                  <div className="w-12 h-12 rounded-2xl bg-[#0088cc] flex items-center justify-center">
-                    <StarsIcon className="w-6 h-6 text-white" />
+              {showStarsRail && selectedPlanForPayment.interval !== 'credit_pack' && (
+                <button
+                  onClick={handleStarsPayment}
+                  className="w-full bg-[#0088cc]/12 border border-[#0088cc]/30 rounded-3xl p-5 flex items-center justify-between group active:scale-[0.98] transition-all"
+                >
+                  <div className="flex items-center gap-4">
+                    <div className="w-12 h-12 rounded-2xl bg-[#0088cc] flex items-center justify-center">
+                      <StarsIcon className="w-6 h-6 text-white" />
+                    </div>
+                    <div className="text-left">
+                      <p className="text-base font-black text-white">Telegram Stars</p>
+                      <p className="text-xs font-semibold text-zinc-400">{selectedStarsPrice} Stars • Fast in-app checkout</p>
+                    </div>
                   </div>
-                  <div className="text-left">
-                    <p className="text-base font-black text-white">Telegram Stars</p>
-                    <p className="text-xs font-semibold text-zinc-400">{selectedStarsPrice} Stars • Fast in-app checkout</p>
-                  </div>
-                </div>
-                <ChevronRight className="w-5 h-5 text-[#0088cc]" />
-              </button>
+                  <ChevronRight className="w-5 h-5 text-[#0088cc]" />
+                </button>
+              )}
 
-              <button
-                onClick={handleTonPayment}
-                className="w-full bg-[#0098EA]/12 border border-[#0098EA]/25 rounded-3xl p-5 flex items-center justify-between group active:scale-[0.98] transition-all"
-              >
-                <div className="flex items-center gap-4">
-                  <div className="w-12 h-12 rounded-2xl bg-gradient-to-br from-[#0098EA] to-[#0077B5] flex items-center justify-center">
-                    <Wallet className="w-6 h-6 text-white" />
+              {showTonRail && (
+                <button
+                  onClick={handleTonPayment}
+                  className="w-full bg-[#0098EA]/12 border border-[#0098EA]/25 rounded-3xl p-5 flex items-center justify-between group active:scale-[0.98] transition-all"
+                >
+                  <div className="flex items-center gap-4">
+                    <div className="w-12 h-12 rounded-2xl bg-gradient-to-br from-[#0098EA] to-[#0077B5] flex items-center justify-center">
+                      <Wallet className="w-6 h-6 text-white" />
+                    </div>
+                    <div className="text-left">
+                      <p className="text-base font-black text-white">TON Wallet</p>
+                      <p className="text-xs font-semibold text-zinc-400">{selectedTonPrice} TON • Pay securely on-chain</p>
+                    </div>
                   </div>
-                  <div className="text-left">
-                    <p className="text-base font-black text-white">TON Wallet</p>
-                    <p className="text-xs font-semibold text-zinc-400">{selectedTonPrice} TON • Pay securely on-chain</p>
-                  </div>
-                </div>
-                <ChevronRight className="w-5 h-5 text-[#0098EA]" />
-              </button>
+                  <ChevronRight className="w-5 h-5 text-[#0098EA]" />
+                </button>
+              )}
 
               {showCardRail && selectedPlanForPayment.interval !== 'credit_pack' && (
                 <button

@@ -1,4 +1,4 @@
-import React, { useState, useEffect } from 'react';
+﻿import React, { useState, useEffect } from 'react';
 import { motion, AnimatePresence } from 'motion/react';
 import { 
   LayoutDashboard, 
@@ -127,7 +127,7 @@ export const Admin: React.FC = () => {
     };
   };
 
-  // Sync sizeFields → newAd on every sizeFields change so the preview updates live
+  // Sync sizeFields â†’ newAd on every sizeFields change so the preview updates live
   useEffect(() => {
     const parsed = flushSizeFields(sizeFields);
     setNewAd(prev => ({ ...prev, ...parsed }));
@@ -1010,7 +1010,7 @@ export const Admin: React.FC = () => {
                       </div>
                       <div className="min-w-0">
                         <p className="text-sm font-black text-white truncate">{task.title}</p>
-                        <p className="text-[10px] font-bold text-zinc-500 uppercase tracking-widest">+{task.reward} CREDITS · {task.active === false ? 'INACTIVE' : 'ACTIVE'}</p>
+                        <p className="text-[10px] font-bold text-zinc-500 uppercase tracking-widest">+{task.reward} CREDITS Â· {task.active === false ? 'INACTIVE' : 'ACTIVE'}</p>
                       </div>
                     </div>
                     <div className="flex items-center gap-2 shrink-0">
@@ -1131,7 +1131,7 @@ export const Admin: React.FC = () => {
                           <p className="text-sm font-black text-white leading-tight">{ad.title || 'Flash Promotion'}</p>
                           <p className="text-[10px] font-bold text-zinc-500 uppercase tracking-widest mt-1 line-clamp-1">{ad.subtitle || 'No description'}</p>
                           <span className={`inline-block mt-1.5 px-2 py-0.5 rounded-full text-[9px] font-black uppercase tracking-widest ${ad.active !== false ? 'bg-green-500/15 text-green-400' : 'bg-zinc-700/50 text-zinc-500'}`}>
-                            {ad.active !== false ? '● Active' : '○ Inactive'}
+                            {ad.active !== false ? 'â— Active' : 'â—‹ Inactive'}
                           </span>
                         </div>
                         <div className="flex gap-2">
@@ -1148,7 +1148,7 @@ export const Admin: React.FC = () => {
                             }}
                             className={`w-10 h-10 rounded-xl flex items-center justify-center transition-all text-xs font-black ${ad.active !== false ? 'bg-green-500/10 text-green-400 hover:bg-green-500 hover:text-white' : 'bg-zinc-700/30 text-zinc-500 hover:bg-zinc-600 hover:text-white'}`}
                           >
-                            {ad.active !== false ? '●' : '○'}
+                            {ad.active !== false ? 'â—' : 'â—‹'}
                           </button>
                           <button
                             onClick={() => {
@@ -1370,6 +1370,8 @@ export const Admin: React.FC = () => {
                          className="flex-1 bg-zinc-800 border border-zinc-700 rounded-xl px-3 py-2 text-[10px] font-black uppercase text-zinc-200"
                        >
                          <option value="free">Free Trial</option>
+                         <option value="day_pass">Day Pass</option>
+                         <option value="weekly">Weekly Pass</option>
                          <option value="monthly_basic">Monthly Basic</option>
                          <option value="monthly_pro">Monthly Pro</option>
                          <option value="admin">Admin</option>
@@ -1537,7 +1539,7 @@ export const Admin: React.FC = () => {
                       <div>
                         <p className="text-sm font-black text-white">{report.subject}</p>
                         <p className="text-[10px] font-bold text-zinc-500 uppercase tracking-widest mt-1">
-                          {report.category} • {report.name || 'Unknown'} • ID {report.telegram_id}
+                          {report.category} â€¢ {report.name || 'Unknown'} â€¢ ID {report.telegram_id}
                         </p>
                       </div>
                       <span className="px-2 py-1 rounded-lg bg-zinc-800 text-[10px] font-black uppercase text-zinc-300">{report.status}</span>

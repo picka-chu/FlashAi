@@ -48,13 +48,14 @@ ALTER TABLE public.users
   ADD COLUMN IF NOT EXISTS last_active TIMESTAMPTZ,
   ADD COLUMN IF NOT EXISTS is_suspended BOOLEAN NOT NULL DEFAULT FALSE,
   ADD COLUMN IF NOT EXISTS country_code TEXT,
+  ADD COLUMN IF NOT EXISTS credit_balance INTEGER NOT NULL DEFAULT 0,
   ADD COLUMN IF NOT EXISTS updated_at TIMESTAMPTZ NOT NULL DEFAULT now();
 
 -- Normalize the plan check constraint across older databases.
 ALTER TABLE public.users DROP CONSTRAINT IF EXISTS users_plan_check;
 ALTER TABLE public.users
   ADD CONSTRAINT users_plan_check
-  CHECK (plan IN ('free', 'day_pass', 'weekly', 'monthly', 'monthly_basic', 'monthly_pro', 'admin'));
+  CHECK (plan IN ('free', 'day_pass', 'weekly', 'monthly', 'monthly_basic', 'monthly_pro', 'admin', 'credits_20', 'credits_50', 'credits_100', 'credits_250'));
 
 -- 2) Content
 CREATE TABLE IF NOT EXISTS public.faqs (
@@ -456,33 +457,37 @@ LANGUAGE plpgsql
 SECURITY DEFINER
 SET search_path = public
 AS $$
+DECLARE
+  is_credit_pack BOOLEAN := COALESCE(p_duration_days, 0) = 0;
 BEGIN
   INSERT INTO public.users (
-    telegram_id,
-    name,
-    plan,
-    credits,
-    plan_expires_at,
-    last_credit_reset,
-    last_active
+    telegram_id, name, plan, credits, credit_balance,
+    plan_expires_at, last_credit_reset, last_active
   )
   VALUES (
     p_telegram_id,
     'User',
-    p_plan,
+    CASE WHEN is_credit_pack THEN 'free' ELSE p_plan END,
     GREATEST(0, COALESCE(p_credits, 0)),
-    CASE
-      WHEN p_duration_days > 0 THEN now() + make_interval(days => p_duration_days)
-      ELSE NULL
-    END,
+    CASE WHEN is_credit_pack THEN GREATEST(0, COALESCE(p_credits, 0)) ELSE 0 END,
+    CASE WHEN NOT is_credit_pack THEN now() + make_interval(days => p_duration_days) ELSE NULL END,
     now(),
     now()
   )
   ON CONFLICT (telegram_id) DO UPDATE
-  SET plan = EXCLUDED.plan,
+  SET plan = CASE
+        WHEN NOT is_credit_pack THEN EXCLUDED.plan
+        WHEN public.users.plan IN ('credits_20', 'credits_50', 'credits_100', 'credits_250') THEN 'free'
+        ELSE public.users.plan
+      END,
       credits = GREATEST(0, COALESCE(public.users.credits, 0) + COALESCE(p_credits, 0)),
+      credit_balance = GREATEST(
+        0,
+        COALESCE(public.users.credit_balance, 0)
+          + CASE WHEN is_credit_pack THEN COALESCE(p_credits, 0) ELSE 0 END
+      ),
       plan_expires_at = CASE
-        WHEN p_duration_days > 0 THEN
+        WHEN NOT is_credit_pack THEN
           GREATEST(COALESCE(public.users.plan_expires_at, now()), now())
             + make_interval(days => p_duration_days)
         ELSE public.users.plan_expires_at

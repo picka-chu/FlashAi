@@ -49,3 +49,6 @@ services:
         sync: false
       - key: NOTIFICATIONS_ENABLED
         value: "true"
+      # Country-aware pricing and credit catalog must be ON in production.
+      - key: PRICING_V2_ENABLED
+        value: "true"

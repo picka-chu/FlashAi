@@ -20,7 +20,7 @@ import { NotificationService, escapeHtml, normalizeTimezone } from "./services/n
 import { InMemoryRateLimiter } from "./middleware/rateLimit";
 import { registerLeaderboardRoutes } from "./routes/leaderboard";
 import { registerPricingRoutes } from "./routes/pricing.js";
-import { getTelegramUserFromInitData, validateTelegramInitData, getVerifiedTelegramUser } from "./middleware/auth";
+import { getTelegramUserFromInitData, validateTelegramInitData, getVerifiedTelegramUser, getStartParamFromInitData } from "./middleware/auth";
 import { getGeminiKeyStatus } from "./services/apiCacheService.js";
 import {
   buildMerchantReference,
@@ -1948,6 +1948,11 @@ function isPrivateTelegramInvite(taskUrl: string): boolean {
     let effectivePlan = userData.plan || "free";
     let passExpired = false;
 
+    // Whether the DB already has the credit_balance column (from the
+    // 20261126_pricing_credit_fixes migration). If not, we gracefully skip
+    // pack-balance tracking until the migration is applied.
+    const hasCreditBalance = Object.prototype.hasOwnProperty.call(userData, "credit_balance");
+
     // A credit pack is a top-up, not an entitlement. Normalize legacy rows.
     if (/^credits_(20|50|100|250)$/.test(effectivePlan)) {
       effectivePlan = "free";
@@ -1965,16 +1970,17 @@ function isPrivateTelegramInvite(taskUrl: string): boolean {
       effectivePlan = "free";
       passExpired = true;
       const packBalance = Math.min(Number(userData.credit_balance || 0), Number(userData.credits || 0));
+      const downgradePayload: Record<string, any> = {
+        plan: "free",
+        plan_expires_at: null,
+        credits: packBalance,
+        last_credit_reset: now.toISOString(),
+        last_active: now.toISOString(),
+      };
+      if (hasCreditBalance) downgradePayload.credit_balance = packBalance;
       const { error: downgradeError } = await supabase
         .from("users")
-        .update({
-          plan: "free",
-          plan_expires_at: null,
-          credits: packBalance,
-          credit_balance: packBalance,
-          last_credit_reset: now.toISOString(),
-          last_active: now.toISOString(),
-        })
+        .update(downgradePayload)
         .eq("telegram_id", userData.telegram_id);
       if (downgradeError) console.error("Subscription downgrade error:", downgradeError.message);
     }
@@ -2013,15 +2019,16 @@ function isPrivateTelegramInvite(taskUrl: string): boolean {
         }
         // If currentCredits >= dailyQuota, keep them (user has bonus/rollover credits)
       }
-      
+
+      const resetPayload: Record<string, any> = {
+        credits: currentCredits,
+        last_credit_reset: now.toISOString(),
+        last_active: now.toISOString(),
+      };
+      if (hasCreditBalance) resetPayload.credit_balance = packBalance;
       const { error: resetError } = await supabase
         .from("users")
-        .update({
-          credits: currentCredits,
-          credit_balance: packBalance,
-          last_credit_reset: now.toISOString(),
-          last_active: now.toISOString()
-        })
+        .update(resetPayload)
         .eq("telegram_id", userData.telegram_id);
 
       if (resetError) {
@@ -2030,6 +2037,58 @@ function isPrivateTelegramInvite(taskUrl: string): boolean {
     }
     
     return currentCredits;
+  }
+
+  /**
+   * Deduct an analysis cost with optimistic concurrency: spend pass credits
+   * first, then the purchased credit-pack sub-balance.
+   *
+   * If `credit_balance` is missing (the 20261126_pricing_credit_fixes migration
+   * has not been applied yet), fall back to the legacy single-balance debit so
+   * the app keeps working instead of failing every analysis.
+   */
+  async function deductAnalysisCredits(
+    telegramId: number,
+    user: any,
+    credits: number,
+    cost: number,
+  ) {
+    const hasPackBalance = Object.prototype.hasOwnProperty.call(user, "credit_balance");
+
+    if (!hasPackBalance) {
+      const { data, error } = await supabase
+        .from("users")
+        .update({
+          credits: credits - cost,
+          last_active: new Date().toISOString(),
+        })
+        .eq("telegram_id", telegramId)
+        .eq("credits", credits)
+        .gte("credits", cost)
+        .select("credits")
+        .maybeSingle();
+      return { data, error, schemaFallback: true };
+    }
+
+    const storedPackBalance = Number(user.credit_balance || 0);
+    const remainingPackBalance = Math.min(storedPackBalance, credits);
+    const passCredits = Math.max(0, credits - remainingPackBalance);
+    const packCost = Math.max(0, cost - passCredits);
+    const { data, error } = await supabase
+      .from("users")
+      .update({
+        credits: credits - cost,
+        credit_balance: remainingPackBalance - packCost,
+        last_active: new Date().toISOString(),
+      })
+      .eq("telegram_id", telegramId)
+      .eq("credits", credits)
+      .eq("credit_balance", storedPackBalance)
+      .gte("credits", cost)
+      .gte("credit_balance", packCost)
+      .select("credits")
+      .maybeSingle();
+    return { data, error, schemaFallback: false };
   }
 
   // --- AI ANALYSIS ENDPOINTS (CREDIT CONSUMING) ---
@@ -2205,24 +2264,12 @@ function isPrivateTelegramInvite(taskUrl: string): boolean {
       }
 
       // 3. Deduct Credits
-      const storedPackBalance = Number(user.credit_balance || 0);
-      const remainingPackBalance = Math.min(storedPackBalance, credits);
-      const passCredits = Math.max(0, credits - remainingPackBalance);
-      const packCost = Math.max(0, cost - passCredits);
-      const { data: updatedUser, error: updateError } = await supabase
-        .from("users")
-        .update({
-          credits: credits - cost,
-          credit_balance: remainingPackBalance - packCost,
-          last_active: new Date().toISOString()
-        })
-        .eq("telegram_id", telegramId)
-        .eq("credits", credits)
-        .eq("credit_balance", storedPackBalance)
-        .gte("credits", cost)
-        .gte("credit_balance", packCost)
-        .select("credits")
-        .maybeSingle();
+      const { data: updatedUser, error: updateError } = await deductAnalysisCredits(
+        telegramId,
+        user,
+        credits,
+        cost,
+      );
 
       if (updateError) {
         console.error("CRITICAL: Credit deduction error:", updateError);
@@ -2314,6 +2361,9 @@ function isPrivateTelegramInvite(taskUrl: string): boolean {
       const plan = user.plan || "free";
       const maxImagesByPlan: Record<string, number> = {
         free: 1,
+        day_pass: 2,
+        weekly: 2,
+        monthly: 2,
         monthly_basic: 2,
         monthly_pro: 6,
         admin: 10,
@@ -2366,24 +2416,12 @@ function isPrivateTelegramInvite(taskUrl: string): boolean {
       }
 
       // 3. Deduct Credits
-      const storedPackBalance = Number(user.credit_balance || 0);
-      const remainingPackBalance = Math.min(storedPackBalance, credits);
-      const passCredits = Math.max(0, credits - remainingPackBalance);
-      const packCost = Math.max(0, cost - passCredits);
-      const { data: updatedUser, error: updateError } = await supabase
-        .from("users")
-        .update({
-          credits: credits - cost,
-          credit_balance: remainingPackBalance - packCost,
-          last_active: new Date().toISOString()
-        })
-        .eq("telegram_id", telegramId)
-        .eq("credits", credits)
-        .eq("credit_balance", storedPackBalance)
-        .gte("credits", cost)
-        .gte("credit_balance", packCost)
-        .select("credits")
-        .maybeSingle();
+      const { data: updatedUser, error: updateError } = await deductAnalysisCredits(
+        telegramId,
+        user,
+        credits,
+        cost,
+      );
 
       if (updateError) {
         console.error("CRITICAL: Betslip credit deduction error:", updateError);
@@ -3306,6 +3344,16 @@ function isPrivateTelegramInvite(taskUrl: string): boolean {
       const tgUser = getTelegramUserFromInitData(initData || "");
       if (!tgUser?.id) return c.json({ error: "Missing Telegram user payload" }, 400);
 
+      // Referral attribution for `?startapp=ref_<id>` links. Telegram signs the
+      // start parameter into initData, so this is trustworthy after validation.
+      const startParam = getStartParamFromInitData(initData || "");
+      const startReferrerMatch = /^ref_(\d+)$/.exec(String(startParam || "").trim());
+      const startReferrerId = startReferrerMatch ? Number(startReferrerMatch[1]) : null;
+      const cleanStartReferrer =
+        Number.isFinite(startReferrerId) && startReferrerId && startReferrerId !== tgUser.id
+          ? startReferrerId
+          : null;
+
       const isBootstrapAdmin = Boolean(bootstrapAdminId && tgUser.id === bootstrapAdminId);
 
       const { data: existing, error: fetchError } = await supabase
@@ -3321,12 +3369,28 @@ function isPrivateTelegramInvite(taskUrl: string): boolean {
           name: `${tgUser.first_name || ""}${tgUser.last_name ? ` ${tgUser.last_name}` : ""}`.trim() || tgUser.username || "User",
           username: tgUser.username || "",
           photo_url: tgUser.photo_url || null,
+          referrer_id: cleanStartReferrer,
           role: isBootstrapAdmin ? "admin" : "user",
           plan: isBootstrapAdmin ? "admin" : "free",
           credits: isBootstrapAdmin ? 999 : signupCredits,
           last_active: new Date().toISOString(),
         });
         if (insertError) throw insertError;
+      }
+
+      // A user who opened the Mini App before registering has no referrer yet.
+      // Attribute once, and never overwrite an existing referrer or re-attribute
+      // a user who has already completed signup.
+      if (existing && !existing.referrer_id && !existing.phone && cleanStartReferrer) {
+        const { error: referrerError } = await supabase
+          .from("users")
+          .update({ referrer_id: cleanStartReferrer })
+          .eq("telegram_id", tgUser.id)
+          .is("referrer_id", null)
+          .is("phone", null);
+        if (referrerError) {
+          console.warn("Referral attribution skipped:", referrerError.message);
+        }
       }
 
       if (existing && isBootstrapAdmin && existing.role !== "admin") {
@@ -3532,7 +3596,7 @@ function isPrivateTelegramInvite(taskUrl: string): boolean {
         const rewardAmount = Number(transaction?.amount || 0);
         return total + (Number.isFinite(rewardAmount) ? rewardAmount : 0);
       }, 0);
-      const referralLink = `https://t.me/${botUsername}?startapp=ref_${tgUser.id}`;
+      const referralLink = `https://t.me/${botUsername}?start=ref_${tgUser.id}`;
 
       return c.json({
         totalReferred,
@@ -5261,7 +5325,7 @@ ${ad.subtitle}`;
     const { telegramId, planId } = await c.req.json().catch(() => ({} as any));
     const targetTelegramId = Number(telegramId || 0);
     const targetPlan = String(planId || "").trim();
-    const allowedPlans = new Set(["free", "monthly_basic", "monthly_pro", "admin"]);
+    const allowedPlans = ALLOWED_PLANS;
 
     if (!targetTelegramId || !allowedPlans.has(targetPlan)) {
       return c.json({ error: "Valid telegramId and planId are required" }, 400);
@@ -5270,9 +5334,7 @@ ${ad.subtitle}`;
     try {
       const nowIso = new Date().toISOString();
 
-      if (targetPlan === "monthly_basic" || targetPlan === "monthly_pro") {
-        await applyPlanCredits(targetTelegramId, targetPlan);
-      } else if (targetPlan === "admin") {
+      if (targetPlan === "admin") {
         const { error } = await supabase
           .from("users")
           .update({
@@ -5284,21 +5346,21 @@ ${ad.subtitle}`;
           })
           .eq("telegram_id", targetTelegramId);
         if (error) throw error;
-      } else {
-        const planExpiresAt = targetPlan === "free"
-          ? null
-          : new Date(Date.now() + 30 * 24 * 60 * 60 * 1000).toISOString();
-
+      } else if (targetPlan === "free") {
         const { error } = await supabase
           .from("users")
           .update({
-            plan: targetPlan,
-            ...(targetPlan === "free" ? { plan_expires_at: null } : { plan_expires_at: planExpiresAt }),
+            plan: "free",
+            plan_expires_at: null,
             last_active: nowIso,
             last_credit_reset: nowIso,
           })
           .eq("telegram_id", targetTelegramId);
         if (error) throw error;
+      } else {
+        // Paid passes, day passes and credit packs all use the same atomic
+        // purchase path so admin comps match what checkout grants.
+        await applyPlanCredits(targetTelegramId, targetPlan);
       }
 
       return c.json({ success: true });

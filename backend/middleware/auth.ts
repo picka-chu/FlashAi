@@ -77,6 +77,20 @@ export function getTelegramUserFromInitData(initData: string): any {
 }
 
 /**
+ * Reads the Mini App `start_param` from validated initData. This is how a
+ * referral deep link (`?startapp=ref_123`) reaches the backend: Telegram signs
+ * the parameter into initData, so it can be trusted after validation.
+ */
+export function getStartParamFromInitData(initData: string): string | null {
+  try {
+    const params = new URLSearchParams(initData);
+    return params.get("start_param");
+  } catch {
+    return null;
+  }
+}
+
+/**
  * Convenience helper: validate initData and return the Telegram user in one
  * call, or null when the payload is invalid.
  */

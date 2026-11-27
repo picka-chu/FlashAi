@@ -152,7 +152,7 @@ export const Analyze: React.FC<{ onTabChange?: (tab: string) => void }> = ({ onT
     if (!files) return;
     const maxImagesByPlan: Record<string, number> = {
       free: 1,
-      day_pass: 1,
+      day_pass: 2,
       weekly: 2,
       monthly_basic: 2,
       monthly_pro: 6,
@@ -423,7 +423,7 @@ export const Analyze: React.FC<{ onTabChange?: (tab: string) => void }> = ({ onT
             const encodedMsg = encodeURIComponent(message);
             const botUsername = (import.meta.env.VITE_TELEGRAM_BOT_USERNAME || 'FlashAiBot').replace('@', '');
             const refLink = user?.telegram_id
-              ? `https://t.me/${botUsername}?startapp=ref_${user.telegram_id}`
+              ? `https://t.me/${botUsername}?start=ref_${user.telegram_id}`
               : window.location.href;
             tg.openLink(`https://t.me/share/url?url=${encodeURIComponent(refLink)}&text=${encodedMsg}`);
             showAlert('Opening Telegram to share...');
