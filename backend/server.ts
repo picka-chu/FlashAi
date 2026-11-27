@@ -2307,13 +2307,12 @@ function isPrivateTelegramInvite(taskUrl: string): boolean {
       }
 
       // 2.5. Shape result based on plan
-      // Free: 1 pick, Basic: 2 picks, Pro/Admin: up to 5 picks.
-      // The board always contains at most 2 safe + 2 value picks, so Pro sees
-      // the full 4 while Basic gets 1 safe + 1 value and Free gets 1 safe.
+      // Free: 2 picks, Basic: 2 picks, Pro/Admin: up to 5 picks.
+      // The board always contains at most 2 safe + 2 value picks.
       try {
         if (result && Array.isArray(result.predictions)) {
           const plan = user.plan || "free";
-          const cap = plan === "monthly_pro" || plan === "admin" ? 5 : (plan === "monthly_basic" ? 2 : 1);
+          const cap = plan === "monthly_pro" || plan === "admin" ? 5 : 2;
           const allPicks = result.predictions;
           const safePicks = allPicks.filter((pick: any) => pick?.type === "safe");
           const valuePicks = allPicks.filter((pick: any) => pick?.type === "value");
