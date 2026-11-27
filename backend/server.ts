@@ -143,7 +143,7 @@ const PLAN_DURATION_DAYS: Record<string, number> = {
   credits_250: 0,
 };
 const MAX_MATCH_STRING_LENGTH = 200;
-const MIN_ODDS = Number(process.env.MIN_ODDS || 1.40);
+const MIN_ODDS = Number(process.env.MIN_ODDS || 1.25);
 
 const isGeminiConfigError = (message: string) =>
   /no gemini api keys|api key not valid|api_key_invalid|api key not set|api key is missing|invalid api key/i.test(
