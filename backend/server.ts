@@ -21,7 +21,7 @@ import { InMemoryRateLimiter } from "./middleware/rateLimit";
 import { registerLeaderboardRoutes } from "./routes/leaderboard";
 import { registerPricingRoutes } from "./routes/pricing.js";
 import { getTelegramUserFromInitData, validateTelegramInitData, getVerifiedTelegramUser, getStartParamFromInitData } from "./middleware/auth";
-import { getGeminiKeyStatus } from "./services/apiCacheService.js";
+import { getGeminiKeyStatus, apiKeyManager, isQuotaExhaustedError } from "./services/apiCacheService.js";
 import {
   buildMerchantReference,
   getChapaPricing,
@@ -1215,6 +1215,44 @@ async function startServer() {
   const rateLimiter = new InMemoryRateLimiter(RATE_LIMIT_WINDOW_MS, RATE_LIMIT_MAX);
   const expensiveRateLimiter = new InMemoryRateLimiter(RATE_LIMIT_WINDOW_MS, EXPENSIVE_RATE_LIMIT_MAX);
 
+  // ─── Beta production guards ─────────────────────────────────────────────────
+  const BETA_MODE = String(process.env.BETA_MODE || "true").toLowerCase() === "true";
+  // Per-user per-minute analysis cap (beta: 5 analyses/minute per user)
+  const BETA_ANALYSIS_PER_MIN = Number(process.env.BETA_ANALYSIS_PER_MIN || 5);
+  // Global concurrent analysis semaphore (protects 6 Gemini keys from overload)
+  const BETA_MAX_CONCURRENT_ANALYSES = Number(process.env.BETA_MAX_CONCURRENT_ANALYSES || 10);
+  let concurrentAnalysisCount = 0;
+  const analysisQueue: Array<{ resolve: () => void; reject: (err: Error) => void }> = [];
+
+  const acquireAnalysisSlot = async (): Promise<void> => {
+    if (concurrentAnalysisCount < BETA_MAX_CONCURRENT_ANALYSES) {
+      concurrentAnalysisCount += 1;
+      return;
+    }
+    return new Promise((resolve, reject) => {
+      analysisQueue.push({ resolve, reject });
+      // Timeout waiting for a slot
+      setTimeout(() => {
+        const idx = analysisQueue.indexOf({ resolve, reject } as any);
+        if (idx >= 0) {
+          analysisQueue.splice(idx, 1);
+          reject(new Error("Analysis queue full — server at capacity"));
+        }
+      }, 20_000);
+    });
+  };
+
+  const releaseAnalysisSlot = () => {
+    concurrentAnalysisCount = Math.max(0, concurrentAnalysisCount - 1);
+    const next = analysisQueue.shift();
+    if (next) {
+      concurrentAnalysisCount += 1;
+      next.resolve();
+    }
+  };
+
+  const isAnalysisExhausted = () => concurrentAnalysisCount >= BETA_MAX_CONCURRENT_ANALYSES && analysisQueue.length >= 20;
+
   /**
    * Resolve the client IP. Forwarded headers are only trusted when the app is
    * explicitly deployed behind a trusted proxy (TRUST_PROXY=true), otherwise a
@@ -1588,7 +1626,24 @@ function isPrivateTelegramInvite(taskUrl: string): boolean {
   });
 
   // API Routes
-  app.get("/api/health", (c) => c.json({ status: "ok" }));
+  app.get("/api/health", async (c) => {
+    const gemini = getGeminiKeyStatus();
+    return c.json({
+      status: gemini.exhausted ? "degraded" : "ok",
+      beta: BETA_MODE,
+      gemini: {
+        configured: gemini.configured,
+        totalKeys: gemini.totalKeys,
+        availableKeys: gemini.availableKeys,
+        exhausted: gemini.exhausted,
+      },
+      concurrency: {
+        active: concurrentAnalysisCount,
+        limit: BETA_MAX_CONCURRENT_ANALYSES,
+      },
+      timestamp: new Date().toISOString(),
+    });
+  });
 
   app.get("/api/tonconnect-manifest.json", (c) => {
     const url = new URL(c.req.url);
@@ -2091,6 +2146,25 @@ function isPrivateTelegramInvite(taskUrl: string): boolean {
     return { data, error, schemaFallback: false };
   }
 
+  // Per-user per-minute analysis tracker (beta guard)
+  const userAnalysisMinTracker = new Map<string, { count: number; resetAt: number }>();
+  const checkUserAnalysisPerMin = (telegramId: number): boolean => {
+    const now = Date.now();
+    const key = `ua:${telegramId}`;
+    const current = userAnalysisMinTracker.get(key);
+    if (!current || now > current.resetAt) {
+      if (!current && userAnalysisMinTracker.size >= 50_000) {
+        const oldestKey = userAnalysisMinTracker.keys().next().value;
+        if (oldestKey !== undefined) userAnalysisMinTracker.delete(oldestKey);
+      }
+      userAnalysisMinTracker.set(key, { count: 1, resetAt: now + 60 * 1000 });
+      return false;
+    }
+    current.count += 1;
+    userAnalysisMinTracker.set(key, current);
+    return current.count > BETA_ANALYSIS_PER_MIN;
+  };
+
   // --- AI ANALYSIS ENDPOINTS (CREDIT CONSUMING) ---
   
   app.post("/api/analyze", async (c) => {
@@ -2106,6 +2180,28 @@ function isPrivateTelegramInvite(taskUrl: string): boolean {
     }
     if (guardExpensiveEndpoint(c)) {
       return c.json({ error: "Too many analysis requests. Please try again shortly." }, 429);
+    }
+
+    const tgUser = initData ? getTelegramUserFromInitData(initData) : null;
+    if (!tgUser) return c.json({ error: "User not identified" }, 401);
+
+    // Beta: per-user per-minute analysis cap
+    if (BETA_MODE && checkUserAnalysisPerMin(tgUser.id)) {
+      return c.json({ error: "Analysis rate limit reached. Please slow down and try again shortly." }, 429);
+    }
+
+    // Beta: check if all Gemini keys are exhausted
+    if (BETA_MODE && apiKeyManager.isExhausted()) {
+      return c.json({ error: "AI analysis temporarily at capacity. Please retry in a few minutes." }, 503);
+    }
+
+    // Beta: acquire global concurrency slot
+    if (BETA_MODE) {
+      try {
+        await acquireAnalysisSlot();
+      } catch (err: any) {
+        return c.json({ error: err.message || "Server at capacity. Please retry shortly." }, 503);
+      }
     }
 
     try {
@@ -2299,6 +2395,10 @@ function isPrivateTelegramInvite(taskUrl: string): boolean {
         return c.json({ error: "AI analysis is not configured correctly. Verify GEMINI_API_KEY on the server." }, 503);
       }
       return c.json({ error: "Failed to perform analysis" }, 500);
+    } finally {
+      if (BETA_MODE) {
+        releaseAnalysisSlot();
+      }
     }
   });
 
@@ -2315,6 +2415,28 @@ function isPrivateTelegramInvite(taskUrl: string): boolean {
     }
     if (guardExpensiveEndpoint(c)) {
       return c.json({ error: "Too many analysis requests. Please try again shortly." }, 429);
+    }
+
+    const tgUserBetslip = initData ? getTelegramUserFromInitData(initData) : null;
+    if (!tgUserBetslip) return c.json({ error: "User not identified" }, 401);
+
+    // Beta: per-user per-minute analysis cap
+    if (BETA_MODE && checkUserAnalysisPerMin(tgUserBetslip.id)) {
+      return c.json({ error: "Analysis rate limit reached. Please slow down and try again shortly." }, 429);
+    }
+
+    // Beta: check if all Gemini keys are exhausted
+    if (BETA_MODE && apiKeyManager.isExhausted()) {
+      return c.json({ error: "AI analysis temporarily at capacity. Please retry in a few minutes." }, 503);
+    }
+
+    // Beta: acquire global concurrency slot
+    if (BETA_MODE) {
+      try {
+        await acquireAnalysisSlot();
+      } catch (err: any) {
+        return c.json({ error: err.message || "Server at capacity. Please retry shortly." }, 503);
+      }
     }
 
     try {
@@ -2439,6 +2561,10 @@ function isPrivateTelegramInvite(taskUrl: string): boolean {
           ? "AI analysis is not configured correctly. Verify GEMINI_API_KEY on the server."
           : "Failed to analyze bet slip",
       }, 500);
+    } finally {
+      if (BETA_MODE) {
+        releaseAnalysisSlot();
+      }
     }
   });
 
@@ -2454,6 +2580,28 @@ function isPrivateTelegramInvite(taskUrl: string): boolean {
     }
     if (guardExpensiveEndpoint(c)) {
       return c.json({ error: "Too many analysis requests. Please try again shortly." }, 429);
+    }
+
+    const tgUserLive = initData ? getTelegramUserFromInitData(initData) : null;
+    if (!tgUserLive?.id) return c.json({ error: "User not identified" }, 401);
+
+    // Beta: per-user per-minute analysis cap
+    if (BETA_MODE && checkUserAnalysisPerMin(tgUserLive.id)) {
+      return c.json({ error: "Analysis rate limit reached. Please slow down and try again shortly." }, 429);
+    }
+
+    // Beta: check if all Gemini keys are exhausted
+    if (BETA_MODE && apiKeyManager.isExhausted()) {
+      return c.json({ error: "AI analysis temporarily at capacity. Please retry in a few minutes." }, 503);
+    }
+
+    // Beta: acquire global concurrency slot
+    if (BETA_MODE) {
+      try {
+        await acquireAnalysisSlot();
+      } catch (err: any) {
+        return c.json({ error: err.message || "Server at capacity. Please retry shortly." }, 503);
+      }
     }
 
     try {
@@ -2562,17 +2710,13 @@ function isPrivateTelegramInvite(taskUrl: string): boolean {
         };
       }
 
-      const { data: updatedUser, error: updateError } = await supabase
-        .from("users")
-        .update({
-          credits: credits - cost,
-          last_active: new Date().toISOString()
-        })
-        .eq("telegram_id", tgUser.id)
-        .eq("credits", credits)
-        .gte("credits", cost)
-        .select("credits")
-        .maybeSingle();
+      // Deduct Credits (uses credit-balance-aware path)
+      const { data: updatedUser, error: updateError } = await deductAnalysisCredits(
+        tgUserLive.id,
+        user,
+        credits,
+        cost,
+      );
 
       if (updateError) {
         console.error("CRITICAL: Live analysis credit deduction error:", updateError);
@@ -2595,6 +2739,10 @@ function isPrivateTelegramInvite(taskUrl: string): boolean {
           ? "AI analysis is not configured correctly. Verify GEMINI_API_KEY on the server."
           : "Failed to analyze live match",
       }, 500);
+    } finally {
+      if (BETA_MODE) {
+        releaseAnalysisSlot();
+      }
     }
   });
 

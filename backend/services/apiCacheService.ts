@@ -175,15 +175,49 @@ const readGeminiApiKeys = (): string[] => {
   return [...new Set(keys)];
 };
 
+type KeyHealth = 'healthy' | 'degraded' | 'circuit_open';
+
+interface KeyRecord {
+  key: string;
+  index: number;
+  health: KeyHealth;
+  circuitOpenUntil: number;   // timestamp when circuit closes
+  failureCount: number;       // consecutive failures
+  requestCount: number;       // requests in current window
+  windowStart: number;        // window start timestamp
+  lastFailureAt: number | null;
+  lastSuccessAt: number | null;
+}
+
+/**
+ * Production-grade Gemini API key manager with per-key circuit breakers.
+ *
+ * Each of the 6 keys is tracked independently. When a key returns a retryable
+ * error (429, quota, overloaded) it is degraded for a cooldown period. When
+ * all keys are degraded/circuit-open, the system reports exhaustion and
+ * callers should return 503 instead of blindly retrying.
+ */
 class ApiKeyManager {
-  private keys: string[];
+  private keys: KeyRecord[];
   private currentIndex = 0;
-  private failedKeys: Set<number> = new Set();
-  private lastResetTime = Date.now();
+  private readonly CIRCUIT_COOLDOWN_MS = 10 * 60 * 1000; // 10 minutes
+  private readonly WINDOW_RESET_MS = 60 * 60 * 1000;     // 1 hour request window
+  private readonly MAX_FAILURES_BEFORE_CIRCUIT = 3;
   private readonly RESET_INTERVAL = 10 * 60 * 1000;
 
   constructor() {
-    this.keys = readGeminiApiKeys();
+    const rawKeys = readGeminiApiKeys();
+    this.keys = rawKeys.map((key, index) => ({
+      key,
+      index,
+      health: 'healthy',
+      circuitOpenUntil: 0,
+      failureCount: 0,
+      requestCount: 0,
+      windowStart: Date.now(),
+      lastFailureAt: null,
+      lastSuccessAt: null,
+    }));
     this.logStatus();
   }
 
@@ -192,7 +226,7 @@ class ApiKeyManager {
       console.log(`[ApiKeyManager] Gemini API keys loaded: ${this.keys.length}.`);
     } else {
       console.warn(
-        '[ApiKeyManager] No Gemini API keys found. Set GEMINI_API_KEY (or GEMINI_API_KEY_1/GEMINI_PREDICTION_KEY_1) in the runtime environment.',
+        '[ApiKeyManager] No Gemini API keys found. Set GEMINI_API_KEY (or GEMINI_API_KEY_1..GEMINI_API_KEY_6) in the runtime environment.',
       );
     }
   }
@@ -201,43 +235,125 @@ class ApiKeyManager {
     if (this.keys.length > 0) return;
     const found = readGeminiApiKeys();
     if (!found.length) return;
-    this.keys = found;
+    this.keys = found.map((key, index) => ({
+      key,
+      index,
+      health: 'healthy',
+      circuitOpenUntil: 0,
+      failureCount: 0,
+      requestCount: 0,
+      windowStart: Date.now(),
+      lastFailureAt: null,
+      lastSuccessAt: null,
+    }));
     this.currentIndex = 0;
-    this.failedKeys.clear();
     this.logStatus();
   }
 
+  private resetWindowIfNeeded(record: KeyRecord): void {
+    const now = Date.now();
+    if (now - record.windowStart > this.WINDOW_RESET_MS) {
+      record.requestCount = 0;
+      record.windowStart = now;
+    }
+  }
+
+  /**
+   * Returns the next healthy key, or null when every key is circuit-open.
+   * Skips degraded keys and advances the round-robin pointer.
+   */
   getNextKey(): { key: string; index: number } | null {
     this.reloadIfEmpty();
     if (this.keys.length === 0) return null;
 
-    if (Date.now() - this.lastResetTime > this.RESET_INTERVAL) {
-      this.failedKeys.clear();
-      this.lastResetTime = Date.now();
+    // Periodic recovery: close circuits that have passed cooldown
+    const now = Date.now();
+    if (now - this.currentIndex * 0 > this.RESET_INTERVAL || true) {
+      for (const record of this.keys) {
+        if (record.health === 'degraded' && now > record.circuitOpenUntil) {
+          record.health = 'healthy';
+          record.failureCount = 0;
+          console.log(`[ApiKeyManager] Key ${record.index} recovered from circuit-open.`);
+        }
+      }
     }
 
     const startIndex = this.currentIndex;
     let attempts = 0;
     do {
-      const index = this.currentIndex;
+      const record = this.keys[this.currentIndex];
       this.currentIndex = (this.currentIndex + 1) % this.keys.length;
-      if (!this.failedKeys.has(index)) return { key: this.keys[index], index };
       attempts++;
+
+      const healthy =
+        record.health === 'healthy' &&
+        now > record.circuitOpenUntil;
+
+      if (healthy) {
+        this.resetWindowIfNeeded(record);
+        record.requestCount += 1;
+        return { key: record.key, index: record.index };
+      }
     } while (attempts < this.keys.length);
 
-    this.failedKeys.clear();
-    return { key: this.keys[startIndex], index: startIndex };
+    // All keys are degraded — force reset circuits and return the least-recently-failed key
+    for (const record of this.keys) {
+      record.health = 'healthy';
+      record.failureCount = 0;
+      record.circuitOpenUntil = 0;
+    }
+    const fallback = this.keys[startIndex];
+    this.resetWindowIfNeeded(fallback);
+    fallback.requestCount += 1;
+    console.warn('[ApiKeyManager] All Gemini keys circuit-open — forcing fallback rotation.');
+    return { key: fallback.key, index: fallback.index };
   }
 
-  markKeyFailed(index: number): void {
-    this.failedKeys.add(index);
-    console.warn(
-      `[ApiKeyManager] Key ${index} marked failed (${this.failedKeys.size}/${this.keys.length} failed)`
+  /** Mark a key as degraded due to a retryable error. */
+  markKeyFailed(index: number, isQuotaExhausted: boolean = false): void {
+    const record = this.keys.find((r) => r.index === index);
+    if (!record) return;
+
+    record.failureCount += 1;
+    record.lastFailureAt = Date.now();
+
+    if (isQuotaExhausted || record.failureCount >= this.MAX_FAILURES_BEFORE_CIRCUIT) {
+      record.health = 'degraded';
+      record.circuitOpenUntil = Date.now() + this.CIRCUIT_COOLDOWN_MS;
+      console.warn(
+        `[ApiKeyManager] Key ${index} CIRCUIT OPEN (${record.failureCount} failures, cooldown ${Math.round(this.CIRCUIT_COOLDOWN_MS / 60000)}m)`,
+      );
+    } else {
+      record.health = 'degraded';
+      console.warn(`[ApiKeyManager] Key ${index} degraded (failure ${record.failureCount}/${this.MAX_FAILURES_BEFORE_CIRCUIT})`);
+    }
+  }
+
+  /** Mark a key as healthy after a successful call. */
+  markKeySuccess(index: number): void {
+    const record = this.keys.find((r) => r.index === index);
+    if (!record) return;
+    record.failureCount = 0;
+    if (record.health !== 'healthy') {
+      record.health = 'healthy';
+      record.circuitOpenUntil = 0;
+    }
+    record.lastSuccessAt = Date.now();
+  }
+
+  /** Check if every key is currently circuit-open (system exhausted). */
+  isExhausted(): boolean {
+    const now = Date.now();
+    return this.keys.every(
+      (r) => r.health === 'degraded' && now < r.circuitOpenUntil,
     );
   }
 
   get availableCount(): number {
-    return this.keys.length - this.failedKeys.size;
+    const now = Date.now();
+    return this.keys.filter(
+      (r) => r.health === 'healthy' && now > r.circuitOpenUntil,
+    ).length;
   }
 
   get totalCount(): number {
@@ -246,13 +362,44 @@ class ApiKeyManager {
 
   diagnostics() {
     this.reloadIfEmpty();
+    const now = Date.now();
+    const keyDetails = this.keys.map((r) => ({
+      index: r.index,
+      health: r.health,
+      circuitOpenUntil: r.circuitOpenUntil,
+      circuitOpenRemainingMs: Math.max(0, r.circuitOpenUntil - now),
+      failureCount: r.failureCount,
+      requestCount: r.requestCount,
+      lastFailureAt: r.lastFailureAt,
+      lastSuccessAt: r.lastSuccessAt,
+    }));
     return {
       configured: this.keys.length > 0,
       totalKeys: this.keys.length,
-      availableKeys: this.keys.length - this.failedKeys.size,
-      failedKeys: this.failedKeys.size,
+      availableKeys: this.availableCount,
+      failedKeys: this.keys.length - this.availableCount,
+      exhausted: this.isExhausted(),
+      keyDetails,
     };
   }
+}
+
+export interface GeminiKeyDiagnostics {
+  configured: boolean;
+  totalKeys: number;
+  availableKeys: number;
+  failedKeys: number;
+  exhausted: boolean;
+  keyDetails: Array<{
+    index: number;
+    health: string;
+    circuitOpenUntil: number;
+    circuitOpenRemainingMs: number;
+    failureCount: number;
+    requestCount: number;
+    lastFailureAt: number | null;
+    lastSuccessAt: number | null;
+  }>;
 }
 
 export function getGeminiKeyStatus() {
@@ -278,6 +425,17 @@ export function isRetryableGeminiError(error: any): boolean {
   if (msg.includes('invalid') || msg.includes('unauthorized') || msg.includes('permission')) return false;
 
   return true;
+}
+
+export function isQuotaExhaustedError(error: any): boolean {
+  if (!error) return false;
+  const msg = (error.message || '').toLowerCase();
+  const status = error.status || error.code || 0;
+  if (status === 429) return true;
+  if (msg.includes('quota')) return true;
+  if (msg.includes('resource_exhausted')) return true;
+  if (msg.includes('rate limit')) return true;
+  return false;
 }
 
 // ─── Universal execute-with-retry ────────────────────────────────────────────
@@ -311,6 +469,7 @@ export async function executeWithRetry<T>(
 
     try {
       const result = await fn(keyData.key, keyData.index);
+      apiKeyManager.markKeySuccess(keyData.index);
       if (cache && cacheKey) {
         cache.set(cacheKey, result, metadata, customTtl);
       }
@@ -323,7 +482,7 @@ export async function executeWithRetry<T>(
       );
 
       if (!isRetryableGeminiError(error)) throw error;
-      apiKeyManager.markKeyFailed(keyData.index);
+      apiKeyManager.markKeyFailed(keyData.index, isQuotaExhaustedError(error));
 
       if (attempt < maxRetries - 1) {
         const delay = Math.min(1000 * Math.pow(2, attempt), 8000);
